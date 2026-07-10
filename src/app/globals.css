@@ -1,0 +1,313 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --ink: #160c05;
+  --panel: #29170c;
+  --panel-raised: #382013;
+  --line: #6d4a2c;
+  --paper: #f3e5c7;
+  --muted: #c3aa82;
+  --brass: #e0a64e;
+  --teal: #9caf79;
+  --red: #d27358;
+  --blue: #7fa7b2;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  min-height: 100%;
+  background: var(--ink);
+  color: var(--paper);
+}
+
+body {
+  margin: 0;
+  background:
+    linear-gradient(rgba(23, 10, 3, 0.56), rgba(23, 10, 3, 0.73)),
+    url('/images/calostrynn-map.png') center / cover no-repeat fixed;
+  font-family: Inter, Segoe UI, system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  color: var(--paper);
+}
+
+h1,
+h2,
+h3,
+.fantasy-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  text-wrap: balance;
+}
+
+::selection {
+  background: rgba(224, 166, 78, 0.42);
+}
+
+.app-shell {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.app-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.28;
+  background:
+    radial-gradient(circle at 50% 15%, transparent 0, rgba(38, 15, 3, 0.12) 42%, rgba(16, 6, 1, 0.58) 100%),
+    repeating-linear-gradient(112deg, rgba(255,255,255,0.012) 0 1px, transparent 1px 7px);
+}
+
+.app-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.campaign-header,
+.campaign-nav {
+  border-color: rgba(226, 174, 91, 0.24);
+  background:
+    linear-gradient(180deg, rgba(42, 22, 10, 0.96), rgba(24, 12, 5, 0.96)),
+    rgba(24, 12, 5, 0.96);
+  box-shadow: 0 10px 30px rgba(15, 6, 1, 0.34);
+  contain: layout paint;
+}
+
+.surface {
+  border: 1px solid rgba(224, 166, 78, 0.28);
+  background:
+    linear-gradient(145deg, rgba(56, 31, 15, 0.95), rgba(29, 15, 7, 0.96)),
+    rgba(32, 17, 8, 0.95);
+  box-shadow: 0 16px 38px rgba(20, 7, 1, 0.28), inset 0 1px rgba(255, 236, 199, 0.06);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 18rem;
+}
+
+.surface-soft {
+  border: 1px solid rgba(224, 166, 78, 0.2);
+  background: rgba(25, 12, 5, 0.66);
+  box-shadow: inset 0 1px rgba(255, 236, 199, 0.035);
+}
+
+.field {
+  width: 100%;
+  border-radius: 0.9rem;
+  border: 1px solid var(--line);
+  background: rgba(21, 10, 4, 0.84);
+  padding: 0.8rem 0.95rem;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.field:focus {
+  border-color: rgba(224, 166, 78, 0.82);
+  background: #241207;
+  box-shadow: 0 0 0 3px rgba(224, 166, 78, 0.14);
+}
+
+.primary-button {
+  border: 1px solid rgba(255, 222, 152, 0.34);
+  background: linear-gradient(135deg, #e2b25f, #a96628);
+  color: #201006;
+  box-shadow: 0 8px 22px rgba(105, 53, 14, 0.26), inset 0 1px rgba(255, 242, 205, 0.3);
+}
+
+.teal-button {
+  border: 1px solid rgba(222, 231, 174, 0.26);
+  background: linear-gradient(135deg, #b1bd82, #70844f);
+  color: #15200d;
+}
+
+.eyebrow {
+  color: var(--brass);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.rule-title {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.rule-title::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, rgba(224, 166, 78, 0.6), transparent);
+}
+
+.stat-bar {
+  overflow: hidden;
+  height: 0.48rem;
+  border-radius: 999px;
+  background: #170a03;
+}
+
+.stat-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 180ms ease;
+}
+
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #8a6038 #251208;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: 1rem;
+  background: rgba(15, 6, 1, 0.78);
+}
+
+.modal-backdrop > * {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
+.rarity-card,
+.inventory-slot {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  contain: layout paint;
+  border-width: 2px;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.28), 0 6px 16px rgba(10, 4, 1, 0.18);
+}
+
+.rarity-common { border-color: #b7a890; background: linear-gradient(145deg, rgba(124, 106, 83, .3), rgba(31, 17, 8, .92)); }
+.rarity-uncommon { border-color: #76d0a5; background: linear-gradient(145deg, rgba(42, 133, 88, .34), rgba(20, 43, 28, .92)); }
+.rarity-rare { border-color: #70baff; background: linear-gradient(145deg, rgba(38, 105, 176, .38), rgba(19, 33, 63, .94)); }
+.rarity-epic { border-color: #c68cff; background: linear-gradient(145deg, rgba(126, 67, 174, .42), rgba(45, 20, 66, .94)); }
+
+.rarity-legendary {
+  border-color: #ffd166;
+  background:
+    linear-gradient(140deg, rgba(74, 41, 8, .95), rgba(151, 92, 22, .58), rgba(67, 36, 7, .96), rgba(197, 133, 42, .5), rgba(74, 41, 8, .95));
+}
+
+.rarity-legendary::before,
+.rarity-mythical::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: .28;
+  background-size: 280% 280%;
+  transform: translateZ(0);
+}
+
+.rarity-legendary::before {
+  background: linear-gradient(120deg, #8f5615, #e0a64e, #ffe09a, #9b641c, #d18b2c, #8f5615);
+}
+
+.rarity-mythical {
+  border-color: #e46bff;
+  background: linear-gradient(135deg, rgba(98, 37, 94, .82), rgba(34, 73, 91, .84), rgba(91, 57, 22, .82), rgba(67, 31, 81, .84));
+  box-shadow: 0 0 18px rgba(198, 140, 255, .24), inset 0 0 22px rgba(255, 209, 102, .1);
+}
+
+.rarity-mythical::before {
+  opacity: .38;
+  background: linear-gradient(120deg, #ff5678, #ff9f55, #ffcf58, #8de0a2, #62cfe6, #7898ff, #bd7cff, #ff62d0, #ff5678);
+}
+
+.rarity-card[data-animate='true']::before {
+  animation: rarity-shift 14s linear infinite;
+}
+
+@keyframes rarity-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.inventory-enchanted::after {
+  content: '';
+  position: absolute;
+  inset: -18%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .44;
+  background: linear-gradient(105deg, transparent 18%, rgba(115, 255, 232, .44) 45%, transparent 72%);
+  transform: translateX(-30%) rotate(-4deg);
+}
+
+.inventory-slot > *,
+.rarity-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.inventory-slot-target {
+  border-color: var(--brass) !important;
+  box-shadow: 0 0 0 3px rgba(224, 166, 78, 0.18), 0 0 18px rgba(224, 166, 78, 0.2);
+}
+
+.map-grid-bg {
+  background-color: #211207;
+  background-image:
+    linear-gradient(to right, rgba(239, 204, 143, 0.22) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(239, 204, 143, 0.22) 1px, transparent 1px),
+    radial-gradient(circle at 48% 40%, rgba(155, 175, 121, 0.09), transparent 36%);
+}
+
+@media (max-width: 767px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  .app-shell::before {
+    position: absolute;
+    opacity: 0.2;
+  }
+
+  .surface {
+    box-shadow: 0 10px 24px rgba(20, 7, 1, 0.24), inset 0 1px rgba(255, 236, 199, 0.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
