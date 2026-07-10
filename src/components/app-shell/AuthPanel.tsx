@@ -2,18 +2,17 @@
 
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
-import { BookOpen, Map, ScrollText } from 'lucide-react';
+import { BookOpen, Crown, Map, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { TextField } from '@/components/ui/Field';
-import { createClient } from '@/lib/supabase/client';
 
 export function AuthPanel() {
-  const supabase = createClient();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [claimDm, setClaimDm] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -21,8 +20,8 @@ export function AuthPanel() {
     event.preventDefault();
     setMessage('');
 
-    if (!supabase) {
-      setMessage('Preview mode: Supabase is not connected yet. Use the demo dashboard.');
+    if (!username.trim() || !password) {
+      setMessage('Enter a username and password.');
       return;
     }
 
@@ -32,13 +31,22 @@ export function AuthPanel() {
     }
 
     setBusy(true);
-    const result = mode === 'login'
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password, options: { data: { display_name: displayName || email.split('@')[0] } } });
+    const response = await fetch(mode === 'login' ? '/api/auth/login' : '/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        displayName,
+        password,
+        confirmPassword,
+        claimDm
+      })
+    });
+    const result = await response.json().catch(() => ({}));
     setBusy(false);
 
-    if (result.error) {
-      setMessage(result.error.message);
+    if (!response.ok) {
+      setMessage(result.error ?? 'Something went wrong.');
       return;
     }
 
@@ -80,13 +88,19 @@ export function AuthPanel() {
 
             <div className="grid gap-3">
               {mode === 'signup' && <TextField value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Display name" />}
-              <TextField required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" />
-              <TextField required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
-              {mode === 'signup' && <TextField required type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Confirm password" />}
+              <TextField required autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
+              <TextField required type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
+              {mode === 'signup' && <TextField required type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Confirm password" />}
+              {mode === 'signup' && (
+                <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                  <input type="checkbox" checked={claimDm} onChange={(event) => setClaimDm(event.target.checked)} className="h-4 w-4 accent-[#d1a85b]" />
+                  <span className="flex items-center gap-2"><Crown size={16} className="text-[var(--brass)]" /> Claim Dungeon Master seat</span>
+                </label>
+              )}
             </div>
 
             <Button variant="primary" disabled={busy} className="mt-4 w-full">
-              {busy ? 'Working…' : mode === 'login' ? 'Enter the table' : 'Create account'}
+              {busy ? 'Working...' : mode === 'login' ? 'Enter the table' : 'Create account'}
             </Button>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">

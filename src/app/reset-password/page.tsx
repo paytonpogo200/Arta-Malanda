@@ -8,7 +8,7 @@ export default function ResetPasswordPage() {
         <p className="eyebrow mb-3">Account recovery</p>
         <h1 className="text-3xl font-black">Reset password</h1>
         <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-          This clean rebuild has the recovery screen reserved. Once the fresh Supabase project is connected, password reset emails will route here.
+          Username accounts do not use email recovery. Password reset tools will live in the DM account panel once account management is wired in.
         </p>
         <Link className="primary-button mt-5 inline-flex rounded-xl px-4 py-3 text-sm font-black" href="/login">Back to login</Link>
       </Card>

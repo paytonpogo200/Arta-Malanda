@@ -56,6 +56,11 @@ function DashboardInner() {
     if (activeBattle && !isDm) setTab('battle');
   }, [activeBattle, isDm]);
 
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    window.location.href = '/login';
+  }
+
   return (
     <main className="app-shell min-h-screen">
       <header className="campaign-header sticky top-0 z-40 border-b px-4 py-3">
@@ -71,9 +76,9 @@ function DashboardInner() {
             <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => dispatch({ type: 'profile/toggle-role' })}>
               {isDm ? 'View as player' : 'View as DM'}
             </Button>
-            <a className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]" href="/login" aria-label="Log out">
+            <button type="button" onClick={logout} className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]" aria-label="Log out">
               <LogOut size={18} />
-            </a>
+            </button>
           </div>
         </div>
       </header>
