@@ -42,11 +42,17 @@ export function AuthPanel() {
         claimDm
       })
     });
-    const result = await response.json().catch(() => ({}));
+    const responseText = await response.text();
+    let result: { error?: string; details?: string; hint?: string; code?: string } = {};
+    try {
+      result = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      result = { error: responseText || `${response.status} ${response.statusText}` };
+    }
     setBusy(false);
 
     if (!response.ok) {
-      setMessage(result.error ?? 'Something went wrong.');
+      setMessage([result.error, result.details, result.hint, result.code ? `Code: ${result.code}` : ''].filter(Boolean).join(' '));
       return;
     }
 
