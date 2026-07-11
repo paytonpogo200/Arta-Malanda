@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { characterFromClassTemplate, normalizeCharacter } from '@/features/characters/data';
+import { normalizeCharacter } from '@/features/characters/data';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
-import { CLASS_TEMPLATES } from '@/lib/constants/classes';
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,13 +15,11 @@ export async function POST(request: NextRequest) {
     const classKey = String(body.classKey ?? '').trim();
     const ownerUserId = body.ownerUserId ? String(body.ownerUserId) : null;
     const personalPassives = String(body.personalPassives ?? '').trim();
+    const tokenColor = String(body.tokenColor ?? '').trim() || null;
 
     if (!name) {
       return NextResponse.json({ error: 'Name the character first.' }, { status: 400 });
     }
-
-    const template = CLASS_TEMPLATES.find((entry) => entry.key === classKey) ?? CLASS_TEMPLATES[0];
-    const character = characterFromClassTemplate(template, ownerUserId, name, personalPassives);
 
     const supabase = createAuthDatabaseClient();
     if (!supabase) {
@@ -31,21 +28,11 @@ export async function POST(request: NextRequest) {
 
     const { data, error } = await supabase.rpc('create_campaign_character', {
       p_session_token: token,
-      p_name: character.name,
-      p_owner_user_id: character.ownerUserId,
-      p_class_key: character.classKey,
-      p_class_name: character.className,
-      p_level: character.level,
-      p_max_hp: character.maxHp,
-      p_current_hp: character.currentHp,
-      p_max_mana: character.maxMana,
-      p_current_mana: character.currentMana,
-      p_inventory_slots: character.inventorySlots,
-      p_spell_slots: character.spellSlots,
-      p_attributes: character.attributes,
-      p_class_passives: character.classPassives,
-      p_personal_passives: character.personalPassives,
-      p_token_color: character.tokenColor
+      p_name: name,
+      p_owner_user_id: ownerUserId,
+      p_class_key: classKey,
+      p_personal_passives: personalPassives,
+      p_token_color: tokenColor
     });
 
     if (error) {

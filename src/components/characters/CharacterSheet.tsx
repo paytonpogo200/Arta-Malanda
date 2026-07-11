@@ -4,17 +4,22 @@ import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Heart, Loader2, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
-import { TextAreaField, TextField } from '@/components/ui/Field';
+import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type Profile } from '@/lib/types';
+import type { CampaignProfile } from '@/features/characters/data';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
 type CharacterSheetProps = {
   character: Character;
   profile: Profile;
+  profiles: CampaignProfile[];
+  classes: ClassTemplate[];
   onSaved: (character: Character) => void;
 };
+
+const LOCATION_PRESETS = ['Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
 
 function labelClasses(value: number) {
   if (value > 0) return 'text-[var(--teal)]';
@@ -22,7 +27,12 @@ function labelClasses(value: number) {
   return 'text-[var(--paper)]';
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, onSaved }: CharacterSheetProps) {
+function ownerLabel(profile: CampaignProfile | undefined) {
+  if (!profile) return 'Unassigned';
+  return profile.displayName || profile.username || 'Player';
+}
+
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [saving, setSaving] = useState(false);
@@ -30,6 +40,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   const isDm = profile.role === 'dm';
   const owned = character.ownerUserId === profile.id;
+  const classTemplate = useMemo(() => classes.find((entry) => entry.key === character.classKey), [character.classKey, classes]);
 
   useEffect(() => {
     setDraft(character);
@@ -65,7 +76,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           attributes: draft.attributes,
           personalPassives: draft.personalPassives,
           tokenColor: draft.tokenColor,
-          locationName: draft.locationName
+          locationName: draft.locationName,
+          ownerUserId: draft.ownerUserId,
+          classKey: draft.classKey,
+          className: draft.className,
+          classPassives: draft.classPassives
         })
       });
       const payload = await response.json().catch(() => ({}));
@@ -81,6 +96,29 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
     } finally {
       setSaving(false);
     }
+  }
+
+  function applyClassTemplate(classKey: string) {
+    const template = classes.find((entry) => entry.key === classKey);
+    if (!template) {
+      setDraft({ ...draft, classKey });
+      return;
+    }
+
+    setDraft({
+      ...draft,
+      classKey: template.key,
+      className: template.name,
+      maxHp: template.baseHp,
+      currentHp: template.baseHp,
+      maxMana: template.baseMana,
+      currentMana: template.baseMana,
+      inventorySlots: template.inventorySlots,
+      spellSlots: template.spellSlots,
+      attributes: template.attributes,
+      classPassives: template.passives,
+      tokenColor: template.tokenColor
+    });
   }
 
   return (
@@ -115,11 +153,35 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
         {editing ? (
           <form id="character-edit-form" onSubmit={save} className="mt-5 grid gap-3">
-            <div className="grid gap-2 sm:grid-cols-[1fr_9rem_8rem]">
+            <div className="grid gap-2 sm:grid-cols-[1fr_9rem]">
               <TextField value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
               <NumberInput aria-label="Level" value={draft.level} min={1} onValueChange={(level) => setDraft({ ...draft, level })} />
-              <TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
             </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Assigned player</span>
+                <SelectField value={draft.ownerUserId ?? ''} onChange={(event) => setDraft({ ...draft, ownerUserId: event.target.value || null })}>
+                  <option value="">Unassigned</option>
+                  {profiles.map((entry) => <option key={entry.id} value={entry.id}>{ownerLabel(entry)}</option>)}
+                </SelectField>
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Class</span>
+                <SelectField value={draft.classKey} onChange={(event) => applyClassTemplate(event.target.value)}>
+                  {classes.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
+                </SelectField>
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span>
+                <SelectField value={LOCATION_PRESETS.includes(draft.locationName) ? draft.locationName : 'custom'} onChange={(event) => setDraft({ ...draft, locationName: event.target.value === 'custom' ? draft.locationName : event.target.value })}>
+                  {LOCATION_PRESETS.map((location) => <option key={location} value={location}>{location}</option>)}
+                  <option value="custom">Custom</option>
+                </SelectField>
+              </label>
+            </div>
+            {!LOCATION_PRESETS.includes(draft.locationName) && (
+              <TextField value={draft.locationName} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })} placeholder="Custom location" />
+            )}
             <div className="grid gap-2 sm:grid-cols-4">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Current HP</span><NumberInput value={draft.currentHp} min={0} onValueChange={(currentHp) => setDraft({ ...draft, currentHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Max HP</span><NumberInput value={draft.maxHp} min={0} onValueChange={(maxHp) => setDraft({ ...draft, maxHp })} /></label>
@@ -129,7 +191,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             <div className="grid gap-2 sm:grid-cols-3">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory slots</span><NumberInput value={draft.inventorySlots} min={0} onValueChange={(inventorySlots) => setDraft({ ...draft, inventorySlots })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Spell slots</span><NumberInput value={draft.spellSlots} min={0} onValueChange={(spellSlots) => setDraft({ ...draft, spellSlots })} /></label>
-              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span><TextField value={draft.locationName} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })} /></label>
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Class color</span><TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} /></label>
             </div>
             <Card className="p-3">
               <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Attributes & Skills</h3></div>
@@ -173,14 +235,37 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           </Card>
 
           <Card>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory & Loadout</h3></div>
-            <div className="grid gap-2 text-sm text-[var(--muted)]">
-              <p>Database inventory rebuild begins after the sheet foundation is stable.</p>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Capacity</h3></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Inventory slots</p>
+                <p className="mt-1 text-lg font-black text-[var(--paper)]">{character.inventorySlots}</p>
+              </div>
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Spell slots</p>
+                <p className="mt-1 text-lg font-black text-[var(--paper)]">{character.spellSlots}</p>
+              </div>
             </div>
           </Card>
         </div>
 
         <div className="space-y-4">
+          <Card>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Class</h3></div>
+            <div className="grid gap-2 text-sm text-[var(--muted)]">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Role</p>
+                  <p className="mt-1 font-black text-[var(--paper)]">{classTemplate?.role || character.className}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Armor</p>
+                  <p className="mt-1 font-black text-[var(--paper)]">{classTemplate?.armor || '—'}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+
           <Card>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Passives</h3></div>
             <div className="space-y-3">

@@ -8,20 +8,22 @@ import { Card } from '@/components/ui/Card';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeLedgerPayload, type CampaignProfile } from '@/features/characters/data';
 import { CLASS_TEMPLATES } from '@/lib/constants/classes';
-import type { Character, Profile } from '@/lib/types';
+import type { Character, ClassTemplate, Profile } from '@/lib/types';
 
 type CreationDraft = {
   name: string;
   classKey: string;
   ownerUserId: string;
   personalPassives: string;
+  tokenColor: string;
 };
 
 const EMPTY_DRAFT: CreationDraft = {
   name: '',
   classKey: CLASS_TEMPLATES[0]?.key ?? '',
   ownerUserId: '',
-  personalPassives: ''
+  personalPassives: '',
+  tokenColor: CLASS_TEMPLATES[0]?.tokenColor ?? '#9caf79'
 };
 
 function ownerLabel(profile: CampaignProfile | undefined) {
@@ -31,6 +33,7 @@ function ownerLabel(profile: CampaignProfile | undefined) {
 
 export function CharacterLedger({ profile }: { profile: Profile }) {
   const [profiles, setProfiles] = useState<CampaignProfile[]>([]);
+  const [classes, setClasses] = useState<ClassTemplate[]>(CLASS_TEMPLATES);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [creating, setCreating] = useState(false);
@@ -55,10 +58,12 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
 
       const ledger = normalizeLedgerPayload(payload);
       setProfiles(ledger.profiles);
+      setClasses(ledger.classes.length ? ledger.classes : CLASS_TEMPLATES);
       setCharacters(ledger.characters);
       setSelectedId((current) => current || ledger.characters[0]?.id || '');
       setDraft((current) => ({
         ...current,
+        classKey: current.classKey || ledger.classes[0]?.key || CLASS_TEMPLATES[0]?.key || '',
         ownerUserId: current.ownerUserId || ledger.profiles[0]?.id || profile.id
       }));
     } catch (loadError) {
@@ -73,6 +78,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   }, [loadLedger]);
 
   const profileById = useMemo(() => new Map(profiles.map((entry) => [entry.id, entry])), [profiles]);
+  const selectedClass = useMemo(() => classes.find((entry) => entry.key === draft.classKey) ?? classes[0], [classes, draft.classKey]);
 
   const orderedCharacters = useMemo(() => {
     return [...characters].sort((a, b) => {
@@ -105,7 +111,12 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       const character = payload.character as Character;
       setCharacters((current) => [...current, character]);
       setSelectedId(character.id);
-      setDraft({ ...EMPTY_DRAFT, ownerUserId: draft.ownerUserId });
+      setDraft({
+        ...EMPTY_DRAFT,
+        classKey: selectedClass?.key ?? EMPTY_DRAFT.classKey,
+        ownerUserId: draft.ownerUserId,
+        tokenColor: selectedClass?.tokenColor ?? EMPTY_DRAFT.tokenColor
+      });
       setCreating(false);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'The character could not be created.');
@@ -143,13 +154,35 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
           {creating && (
             <form onSubmit={createCharacter} className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
               <TextField autoFocus placeholder="Character name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-              <SelectField value={draft.classKey} onChange={(event) => setDraft({ ...draft, classKey: event.target.value })}>
-                {CLASS_TEMPLATES.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
+              <SelectField
+                value={draft.classKey}
+                onChange={(event) => {
+                  const template = classes.find((entry) => entry.key === event.target.value);
+                  setDraft({ ...draft, classKey: event.target.value, tokenColor: template?.tokenColor ?? draft.tokenColor });
+                }}
+              >
+                {classes.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
               </SelectField>
               <SelectField value={draft.ownerUserId} onChange={(event) => setDraft({ ...draft, ownerUserId: event.target.value })}>
                 {profiles.map((entry) => <option key={entry.id} value={entry.id}>{ownerLabel(entry)}</option>)}
                 {!profiles.length && <option value={profile.id}>{profile.displayName}</option>}
               </SelectField>
+              <div className="grid gap-2 sm:grid-cols-[1fr_4.5rem]">
+                <TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
+                <div className="grid min-h-12 place-items-center rounded-xl border border-white/20" style={{ backgroundColor: draft.tokenColor }}>
+                  <UserRound size={20} />
+                </div>
+              </div>
+              {selectedClass && (
+                <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">
+                  <div className="grid grid-cols-2 gap-2">
+                    <span><b className="text-[var(--paper)]">HP</b> {selectedClass.baseHp}</span>
+                    <span><b className="text-[var(--paper)]">Mana</b> {selectedClass.baseMana}</span>
+                    <span><b className="text-[var(--paper)]">Inventory</b> {selectedClass.inventorySlots}</span>
+                    <span><b className="text-[var(--paper)]">Spells</b> {selectedClass.spellSlots}</span>
+                  </div>
+                </div>
+              )}
               <TextAreaField rows={3} placeholder="Personal passives (optional)" value={draft.personalPassives} onChange={(event) => setDraft({ ...draft, personalPassives: event.target.value })} />
               <Button variant="teal" disabled={!draft.name.trim() || saving}>
                 {saving ? <span className="flex items-center justify-center gap-2"><Loader2 size={15} className="animate-spin" /> Creating</span> : 'Create'}
@@ -200,7 +233,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       </aside>
 
       {selectedCharacter ? (
-        <CharacterSheet character={selectedCharacter} profile={profile} onSaved={updateCharacter} />
+        <CharacterSheet character={selectedCharacter} profile={profile} profiles={profiles} classes={classes} onSaved={updateCharacter} />
       ) : (
         <Card>No characters yet.</Card>
       )}

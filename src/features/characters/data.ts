@@ -7,6 +7,7 @@ export type CampaignProfile = Profile & {
 export type CharacterLedgerPayload = {
   profile: CampaignProfile;
   profiles: CampaignProfile[];
+  classes: ClassTemplate[];
   characters: Character[];
 };
 
@@ -31,6 +32,26 @@ function normalizeAttributes(value: unknown): CharacterAttributes {
 function normalizeTextList(value: unknown) {
   if (!Array.isArray(value)) return TEXT_LIST_FALLBACK;
   return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+export function normalizeClassTemplate(value: unknown): ClassTemplate {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+
+  return {
+    id: String(source.id ?? source.key ?? ''),
+    key: String(source.key ?? ''),
+    name: String(source.name ?? 'Adventurer'),
+    role: String(source.role ?? ''),
+    armor: String(source.armor ?? ''),
+    identity: String(source.identity ?? ''),
+    inventorySlots: numberFrom(source.inventorySlots, 12),
+    spellSlots: numberFrom(source.spellSlots, 0),
+    baseHp: numberFrom(source.baseHp, 100),
+    baseMana: numberFrom(source.baseMana, 0),
+    attributes: normalizeAttributes(source.attributes),
+    passives: normalizeTextList(source.passives),
+    tokenColor: String(source.tokenColor ?? '#9caf79')
+  };
 }
 
 export function normalizeCharacter(value: unknown): Character {
@@ -72,11 +93,13 @@ export function normalizeProfile(value: unknown): CampaignProfile {
 export function normalizeLedgerPayload(value: unknown): CharacterLedgerPayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const profiles = Array.isArray(source.profiles) ? source.profiles.map(normalizeProfile).filter((profile) => profile.id) : [];
+  const classes = Array.isArray(source.classes) ? source.classes.map(normalizeClassTemplate).filter((template) => template.key) : [];
   const characters = Array.isArray(source.characters) ? source.characters.map(normalizeCharacter).filter((character) => character.id) : [];
 
   return {
     profile: normalizeProfile(source.profile),
     profiles,
+    classes,
     characters
   };
 }
