@@ -1,29 +1,40 @@
 'use client';
 
 import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Heart, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
-import { InventoryPanel } from '@/components/inventory/InventoryPanel';
+import { Heart, Loader2, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
-import { useCampaignDispatch, useCampaignState } from '@/features/campaign/CampaignProvider';
 
-export const CharacterSheet = memo(function CharacterSheet({ character }: { character: Character }) {
-  const state = useCampaignState();
-  const dispatch = useCampaignDispatch();
+type CharacterSheetProps = {
+  character: Character;
+  profile: Profile;
+  onSaved: (character: Character) => void;
+};
+
+function labelClasses(value: number) {
+  if (value > 0) return 'text-[var(--teal)]';
+  if (value < 0) return 'text-[var(--red)]';
+  return 'text-[var(--paper)]';
+}
+
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, onSaved }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const canEdit = state.profile.role === 'dm' || character.ownerUserId === state.profile.id;
-  const owned = character.ownerUserId === state.profile.id;
+  const isDm = profile.role === 'dm';
+  const owned = character.ownerUserId === profile.id;
 
   useEffect(() => {
     setDraft(character);
     setEditing(false);
+    setError('');
   }, [character]);
 
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
@@ -32,10 +43,44 @@ export const CharacterSheet = memo(function CharacterSheet({ character }: { char
     value: character.attributes[key] ?? 0
   })), [character.attributes]);
 
-  function save(event: FormEvent) {
+  async function save(event: FormEvent) {
     event.preventDefault();
-    dispatch({ type: 'character/update', characterId: character.id, patch: draft });
-    setEditing(false);
+    if (!isDm || saving) return;
+    setSaving(true);
+    setError('');
+
+    try {
+      const response = await fetch(`/api/characters/${character.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: draft.name,
+          level: draft.level,
+          maxHp: draft.maxHp,
+          currentHp: draft.currentHp,
+          maxMana: draft.maxMana,
+          currentMana: draft.currentMana,
+          inventorySlots: draft.inventorySlots,
+          spellSlots: draft.spellSlots,
+          attributes: draft.attributes,
+          personalPassives: draft.personalPassives,
+          tokenColor: draft.tokenColor,
+          locationName: draft.locationName
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? 'The character could not be saved.');
+      }
+
+      onSaved(payload.character as Character);
+      setEditing(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'The character could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -53,18 +98,50 @@ export const CharacterSheet = memo(function CharacterSheet({ character }: { char
               <p className="mt-2 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-[var(--brass)]"><MapPin size={13} /> {character.locationName}</p>
             </div>
           </div>
-          {canEdit && <Button variant={editing ? 'primary' : 'secondary'} onClick={() => editing ? undefined : setEditing(true)} form={editing ? 'character-edit-form' : undefined} type={editing ? 'submit' : 'button'}>{editing ? <span className="flex items-center gap-2"><Save size={16} /> Save sheet</span> : 'Edit sheet'}</Button>}
+          {isDm && (
+            <Button
+              variant={editing ? 'primary' : 'secondary'}
+              onClick={() => editing ? undefined : setEditing(true)}
+              form={editing ? 'character-edit-form' : undefined}
+              type={editing ? 'submit' : 'button'}
+              disabled={saving}
+            >
+              {editing ? <span className="flex items-center gap-2">{saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save sheet</span> : 'Edit sheet'}
+            </Button>
+          )}
         </div>
+
+        {error && <div className="mt-4 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
 
         {editing ? (
           <form id="character-edit-form" onSubmit={save} className="mt-5 grid gap-3">
-            <TextField value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+            <div className="grid gap-2 sm:grid-cols-[1fr_9rem_8rem]">
+              <TextField value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              <NumberInput aria-label="Level" value={draft.level} min={1} onValueChange={(level) => setDraft({ ...draft, level })} />
+              <TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
+            </div>
             <div className="grid gap-2 sm:grid-cols-4">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Current HP</span><NumberInput value={draft.currentHp} min={0} onValueChange={(currentHp) => setDraft({ ...draft, currentHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Max HP</span><NumberInput value={draft.maxHp} min={0} onValueChange={(maxHp) => setDraft({ ...draft, maxHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]">Current Mana</span><NumberInput value={draft.currentMana} min={0} onValueChange={(currentMana) => setDraft({ ...draft, currentMana })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]">Max Mana</span><NumberInput value={draft.maxMana} min={0} onValueChange={(maxMana) => setDraft({ ...draft, maxMana })} /></label>
             </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory slots</span><NumberInput value={draft.inventorySlots} min={0} onValueChange={(inventorySlots) => setDraft({ ...draft, inventorySlots })} /></label>
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Spell slots</span><NumberInput value={draft.spellSlots} min={0} onValueChange={(spellSlots) => setDraft({ ...draft, spellSlots })} /></label>
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span><TextField value={draft.locationName} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })} /></label>
+            </div>
+            <Card className="p-3">
+              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Attributes & Skills</h3></div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {ATTRIBUTE_KEYS.map((key) => (
+                  <label key={key}>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{ATTRIBUTE_LABELS[key]}</span>
+                    <NumberInput value={draft.attributes[key] ?? 0} onValueChange={(value) => setDraft({ ...draft, attributes: { ...draft.attributes, [key]: value } })} />
+                  </label>
+                ))}
+              </div>
+            </Card>
             <TextAreaField rows={3} value={draft.personalPassives} onChange={(event) => setDraft({ ...draft, personalPassives: event.target.value })} placeholder="Personal passives" />
           </form>
         ) : (
@@ -89,13 +166,18 @@ export const CharacterSheet = memo(function CharacterSheet({ character }: { char
               {attributeRows.map((entry) => (
                 <div key={entry.key} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
                   <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.label}</p>
-                  <p className={`mt-1 text-lg font-black ${entry.value > 0 ? 'text-[var(--teal)]' : entry.value < 0 ? 'text-[var(--red)]' : 'text-[var(--paper)]'}`}>{signed(entry.value)}</p>
+                  <p className={`mt-1 text-lg font-black ${labelClasses(entry.value)}`}>{signed(entry.value)}</p>
                 </div>
               ))}
             </div>
           </Card>
 
-          <InventoryPanel character={character} canEdit={canEdit} />
+          <Card>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory & Loadout</h3></div>
+            <div className="grid gap-2 text-sm text-[var(--muted)]">
+              <p>Database inventory rebuild begins after the sheet foundation is stable.</p>
+            </div>
+          </Card>
         </div>
 
         <div className="space-y-4">
@@ -106,6 +188,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character }: { char
                 <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">Class passives</p>
                 <ul className="space-y-2 text-sm leading-6 text-[var(--muted)]">
                   {character.classPassives.map((passive) => <li key={passive} className="rounded-xl bg-black/15 p-3">{passive}</li>)}
+                  {!character.classPassives.length && <li className="rounded-xl bg-black/15 p-3">None</li>}
                 </ul>
               </div>
               {character.personalPassives.trim() && (

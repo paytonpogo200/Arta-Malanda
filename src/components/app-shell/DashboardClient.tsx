@@ -4,11 +4,9 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { BookOpen, Compass, Landmark, LogOut, PawPrint, ScrollText, Settings2, Shield, Swords } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
-import { CampaignProviderWithProfile, useCampaignState } from '@/features/campaign/CampaignProvider';
 import type { Profile } from '@/lib/types';
 
 const CharacterLedger = dynamic(() => import('@/components/characters/CharacterLedger').then((module) => module.CharacterLedger), { loading: () => <PanelLoading label="Characters" />, ssr: false });
-const BattleRoom = dynamic(() => import('@/components/battle/BattleRoom').then((module) => module.BattleRoom), { loading: () => <PanelLoading label="Battlefield" />, ssr: false });
 
 type TabId = 'characters' | 'battle' | 'cities' | 'bestiary' | 'exploration' | 'scroll' | 'assets';
 
@@ -21,20 +19,18 @@ function PanelLoading({ label }: { label: string }) {
   );
 }
 
-function FuturePanel({ title }: { title: string }) {
+function FuturePanel({ title, moduleName }: { title: string; moduleName?: string }) {
   return (
     <Card>
-      <p className="eyebrow">Future module</p>
+      <p className="eyebrow">{moduleName ?? 'Queued rebuild module'}</p>
       <h2 className="mt-2 text-3xl font-black">{title}</h2>
-      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">Reserved for the clean rebuild. This tab is intentionally light until the core foundation proves smooth.</p>
     </Card>
   );
 }
 
-function DashboardInner() {
-  const state = useCampaignState();
-  const isDm = state.profile.role === 'dm';
-  const activeBattle = Boolean(state.battle);
+export function DashboardClient({ profile }: { profile: Profile }) {
+  const isDm = profile.role === 'dm';
+  const activeBattle = false;
   const [tab, setTab] = useState<TabId>('characters');
 
   const tabs = [
@@ -69,7 +65,7 @@ function DashboardInner() {
               <span className="eyebrow">{isDm ? 'Dungeon Master' : 'Party Member'}</span>
               {isDm && <Shield size={13} className="text-[var(--brass)]" />}
             </div>
-            <h1 className="truncate text-lg font-black tracking-tight">{state.profile.displayName}</h1>
+            <h1 className="truncate text-lg font-black tracking-tight">{profile.displayName}</h1>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={logout} className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]" aria-label="Log out">
@@ -80,13 +76,13 @@ function DashboardInner() {
       </header>
 
       <section className="mx-auto max-w-6xl px-4 py-4 pb-32">
-        {tab === 'characters' && <CharacterLedger />}
-        {tab === 'battle' && <BattleRoom />}
+        {tab === 'characters' && <CharacterLedger profile={profile} />}
+        {tab === 'battle' && <FuturePanel title="Battlefield" />}
         {tab === 'cities' && <FuturePanel title="Discovered Cities" />}
         {tab === 'bestiary' && <FuturePanel title="Bestiary" />}
-        {tab === 'exploration' && isDm && <FuturePanel title="Exploration" />}
+        {tab === 'exploration' && isDm && <FuturePanel title="Exploration" moduleName="DM module" />}
         {tab === 'scroll' && <FuturePanel title="Personal Scroll" />}
-        {tab === 'assets' && isDm && <FuturePanel title="Update Assets" />}
+        {tab === 'assets' && isDm && <FuturePanel title="Update Assets" moduleName="DM module" />}
       </section>
 
       {(!activeBattle || isDm) && (
@@ -107,13 +103,5 @@ function DashboardInner() {
         </nav>
       )}
     </main>
-  );
-}
-
-export function DashboardClient({ profile }: { profile: Profile }) {
-  return (
-    <CampaignProviderWithProfile profile={profile}>
-      <DashboardInner />
-    </CampaignProviderWithProfile>
   );
 }
