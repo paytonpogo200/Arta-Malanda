@@ -209,7 +209,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_token text;
@@ -219,7 +219,7 @@ begin
   v_expires_at := now() + interval '30 days';
 
   insert into public.app_sessions (profile_id, token_hash, expires_at)
-  values (p_profile_id, encode(digest(v_token, 'sha256'), 'hex'), v_expires_at);
+  values (p_profile_id, encode(extensions.digest(v_token, 'sha256'), 'hex'), v_expires_at);
 
   return query select v_token, v_expires_at;
 end;
@@ -241,7 +241,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_username text;
@@ -269,7 +269,7 @@ begin
   values (
     v_username,
     coalesce(nullif(trim(p_display_name), ''), v_username),
-    crypt(p_password, gen_salt('bf', 12)),
+    extensions.crypt(p_password, extensions.gen_salt('bf', 12)),
     v_role
   )
   returning id into v_profile_id;
@@ -304,7 +304,7 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
@@ -316,7 +316,7 @@ begin
   where p.username = public.normalize_campaign_username(p_username)
   limit 1;
 
-  if v_profile.id is null or v_profile.password_hash <> crypt(coalesce(p_password, ''), v_profile.password_hash) then
+  if v_profile.id is null or v_profile.password_hash <> extensions.crypt(coalesce(p_password, ''), v_profile.password_hash) then
     raise exception 'Invalid username or password.';
   end if;
 
@@ -342,14 +342,14 @@ returns table (
 )
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   return query
   select p.id, p.username::text, p.display_name, p.role
   from public.app_sessions s
   join public.profiles p on p.id = s.profile_id
-  where s.token_hash = encode(digest(coalesce(p_session_token, ''), 'sha256'), 'hex')
+  where s.token_hash = encode(extensions.digest(coalesce(p_session_token, ''), 'sha256'), 'hex')
     and s.revoked_at is null
     and s.expires_at > now()
   limit 1;
@@ -360,12 +360,12 @@ create or replace function public.logout_campaign_session(p_session_token text)
 returns boolean
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 begin
   update public.app_sessions
   set revoked_at = now()
-  where token_hash = encode(digest(coalesce(p_session_token, ''), 'sha256'), 'hex')
+  where token_hash = encode(extensions.digest(coalesce(p_session_token, ''), 'sha256'), 'hex')
     and revoked_at is null;
 
   return true;
