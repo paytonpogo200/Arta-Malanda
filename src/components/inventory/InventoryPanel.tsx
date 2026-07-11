@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
-import { PackageOpen } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Loader2, PackageOpen, RefreshCw } from 'lucide-react';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { LoadoutPanel } from '@/components/inventory/LoadoutPanel';
 import { Button } from '@/components/ui/Button';
@@ -9,97 +9,294 @@ import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { useCampaignDispatch, useCampaignState } from '@/features/campaign/CampaignProvider';
+import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
-import type { Character, InventoryItem, ItemRarity, ItemType } from '@/lib/types';
+import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, WalletBalance } from '@/lib/types';
 
-const itemTypes: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc'];
+type SlotTarget = {
+  slot: number;
+  parentItemId: string | null;
+  item?: InventoryItem;
+};
 
-export function InventoryPanel({ character, canEdit }: { character: Character; canEdit: boolean }) {
-  const state = useCampaignState();
-  const dispatch = useCampaignDispatch();
-  const [targetSlot, setTargetSlot] = useState<number | null>(null);
-  const [modal, setModal] = useState<{ slot: number; item?: InventoryItem } | null>(null);
-  const [draft, setDraft] = useState({ name: '', type: 'misc' as ItemType, rarity: 'Common' as ItemRarity, quantity: 1 });
+type ItemDraft = {
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  quantity: number;
+  storageCapacity: number;
+  spellImbue: string;
+};
 
-  const characterItems = useMemo(() => state.items.filter((item) => item.characterId === character.id), [state.items, character.id]);
-  const mainItems = useMemo(() => characterItems.filter((item) => item.parentItemId === null && item.loadoutSlot === null), [characterItems]);
-  const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
-  const storageItems = useMemo(() => characterItems.filter((item) => item.isStorage), [characterItems]);
+const EMPTY_DRAFT: ItemDraft = {
+  name: '',
+  type: 'misc',
+  rarity: 'Common',
+  quantity: 1,
+  storageCapacity: 0,
+  spellImbue: ''
+};
 
-  function openSlot(slot: number, item?: InventoryItem) {
-    setModal({ slot, item });
-    setDraft({
-      name: item?.name ?? '',
-      type: item?.type ?? 'misc',
-      rarity: item?.rarity ?? 'Common',
-      quantity: item?.quantity ?? 1
+function sameContainer(item: InventoryItem, parentItemId: string | null) {
+  return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
+}
+
+export function InventoryPanel({
+  character,
+  canManage,
+  canAdd
+}: {
+  character: Character;
+  canManage: boolean;
+  canAdd: boolean;
+}) {
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [wallet, setWallet] = useState<WalletBalance[]>([]);
+  const [walletDraft, setWalletDraft] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [target, setTarget] = useState<string | null>(null);
+  const [modal, setModal] = useState<SlotTarget | null>(null);
+  const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
+  const [dropQuantity, setDropQuantity] = useState(1);
+
+  const loadInventory = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/inventory`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Inventory could not be loaded.');
+      const normalized = normalizeCharacterInventoryPayload(payload);
+      setItems(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Inventory could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
+  }, [character.id]);
+
+  useEffect(() => {
+    void loadInventory();
+  }, [loadInventory]);
+
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null)), [items]);
+  const itemByMainSlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
+  const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+
+  function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
+    if (!item && !canAdd) return;
+    setModal({ slot, parentItemId, item });
+    setDraft(item ? {
+      name: item.name,
+      type: item.type,
+      rarity: item.rarity,
+      quantity: item.quantity,
+      storageCapacity: item.storageCapacity,
+      spellImbue: item.spellImbue ?? ''
+    } : EMPTY_DRAFT);
+    setDropQuantity(item?.quantity ?? 1);
+  }
+
+  async function requestInventoryChange(url: string, init: RequestInit) {
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(url, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
+      setModal(null);
+      await loadInventory();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Inventory action failed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addItem(event: FormEvent) {
+    event.preventDefault();
+    if (!modal || modal.item || !canAdd || !draft.name.trim()) return;
+    await requestInventoryChange(`/api/characters/${character.id}/inventory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...draft,
+        parentItemId: modal.parentItemId,
+        slotIndex: modal.slot,
+        isStorage: draft.type === 'storage',
+        storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
+        spellImbue: draft.spellImbue.trim() || null
+      })
     });
   }
 
-  function addItem(event: FormEvent) {
+  async function updateItem(event: FormEvent) {
     event.preventDefault();
-    if (!modal || modal.item || !draft.name.trim()) return;
-    dispatch({
-      type: 'inventory/add',
-      item: {
-        characterId: character.id,
-        parentItemId: null,
+    if (!modal?.item || !canAdd || !draft.name.trim()) return;
+    await requestInventoryChange(`/api/inventory/items/${modal.item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         name: draft.name.trim(),
         type: draft.type,
         rarity: draft.rarity,
         quantity: Math.max(1, draft.quantity),
-        slotIndex: modal.slot,
-        loadoutSlot: null,
         isStorage: draft.type === 'storage',
-        storageCapacity: draft.type === 'storage' ? 6 : 0,
-        modifiers: {}
-      }
+        storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
+        spellImbue: draft.spellImbue.trim() || null
+      })
     });
-    setModal(null);
   }
 
-  function moveItem(itemId: string, slot: number) {
-    setTargetSlot(slot);
-    dispatch({ type: 'inventory/move', itemId, slotIndex: slot, parentItemId: null });
-    window.setTimeout(() => setTargetSlot(null), 120);
+  async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
+    if (!canManage) return;
+    setTarget(`${parentItemId ?? 'main'}:${slot}`);
+    await requestInventoryChange(`/api/inventory/items/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parentItemId, slotIndex: slot, loadoutSlot: null })
+    });
+    window.setTimeout(() => setTarget(null), 120);
+  }
+
+  async function equipItem(itemId: string, loadoutSlot: LoadoutSlot | null) {
+    if (!canManage) return;
+    await requestInventoryChange(`/api/inventory/items/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ loadoutSlot })
+    });
+  }
+
+  async function dropItem(item: InventoryItem) {
+    if (!canManage) return;
+    await requestInventoryChange(`/api/inventory/items/${item.id}?quantity=${Math.max(1, dropQuantity)}`, { method: 'DELETE' });
+  }
+
+  async function saveWallet() {
+    if (!canAdd) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/wallet`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          balances: wallet.map((entry) => ({
+            unitId: entry.unit.id,
+            amount: Math.max(0, walletDraft[entry.unit.id] ?? 0)
+          }))
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Wallet could not be saved.');
+      const normalized = normalizeCharacterInventoryPayload(payload);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+    } catch (walletError) {
+      setError(walletError instanceof Error ? walletError.message : 'Wallet could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <Card>
-      <LoadoutPanel items={characterItems} canEdit={canEdit} />
-
-      <div className="mt-5 rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
-        {Array.from({ length: character.inventorySlots }, (_, slot) => {
-          const item = itemBySlot.get(slot);
-          return (
-            <InventorySlot
-              key={slot}
-              slot={slot}
-              item={item}
-              canEdit={canEdit}
-              target={targetSlot === slot}
-              onOpen={() => openSlot(slot, item)}
-              onDropItem={(itemId) => moveItem(itemId, slot)}
-            />
-          );
-        })}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="eyebrow">Possessions</p>
+          <h3 className="mt-1 text-xl font-black">Inventory & Loadout</h3>
+        </div>
+        <Button variant="secondary" className="p-3" onClick={loadInventory} aria-label="Refresh inventory">
+          <RefreshCw size={16} />
+        </Button>
       </div>
 
-      {storageItems.length > 0 && (
-        <div className="mt-5 space-y-2">
-          <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Additional Storage</h3></div>
-          {storageItems.map((storage) => (
-            <details key={storage.id} className="rounded-2xl border border-[#d1a85b2f] bg-black/15">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
-                <span className="flex items-center gap-2 font-black"><PackageOpen size={16} className="text-[var(--brass)]" /> {storage.name}</span>
-                <span className="text-xs text-[var(--muted)]">{storage.storageCapacity} slots</span>
-              </summary>
-              <div className="border-t border-[var(--line)] p-3 text-sm text-[var(--muted)]">Container slot rendering is reserved for the storage phase; the structure is already separate.</div>
-            </details>
-          ))}
+      {error && <div className="mb-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
+
+      {loading ? (
+        <div className="grid h-32 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
+          <Loader2 className="animate-spin" />
         </div>
+      ) : (
+        <>
+          <section className="mb-5">
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Wallet</h3></div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {wallet.map((entry) => (
+                <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.unit.name}</span>
+                  {canAdd ? (
+                    <NumberInput min={0} value={walletDraft[entry.unit.id] ?? 0} onValueChange={(amount) => setWalletDraft({ ...walletDraft, [entry.unit.id]: amount })} className="mt-2" />
+                  ) : (
+                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.amount}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+            {canAdd && <Button variant="teal" className="mt-2" onClick={saveWallet} disabled={saving}>Save wallet</Button>}
+          </section>
+
+          <LoadoutPanel items={items} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
+
+          <div className="mt-5 rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+            {Array.from({ length: character.inventorySlots }, (_, slot) => {
+              const item = itemByMainSlot.get(slot);
+              return (
+                <InventorySlot
+                  key={slot}
+                  slot={slot}
+                  item={item}
+                  canEdit={canManage}
+                  canAdd={canAdd}
+                  target={target === `main:${slot}`}
+                  onOpen={() => openSlot(slot, null, item)}
+                  onDropItem={(itemId) => moveItem(itemId, slot, null)}
+                />
+              );
+            })}
+          </div>
+
+          {storageItems.length > 0 && (
+            <div className="mt-5 space-y-2">
+              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Additional Storage</h3></div>
+              {storageItems.map((storage) => {
+                const childItems = items.filter((item) => sameContainer(item, storage.id));
+                const childBySlot = new Map(childItems.map((item) => [item.slotIndex, item]));
+                return (
+                  <details key={storage.id} className="rounded-2xl border border-[#d1a85b2f] bg-black/15">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                      <span className="flex items-center gap-2 font-black"><PackageOpen size={16} className="text-[var(--brass)]" /> {storage.name}</span>
+                      <span className="text-xs text-[var(--muted)]">{childItems.length}/{storage.storageCapacity} slots</span>
+                    </summary>
+                    <div className="grid grid-cols-3 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-5">
+                      {Array.from({ length: storage.storageCapacity }, (_, slot) => {
+                        const item = childBySlot.get(slot);
+                        return (
+                          <InventorySlot
+                            key={slot}
+                            slot={slot}
+                            item={item}
+                            canEdit={canManage}
+                            canAdd={canAdd}
+                            target={target === `${storage.id}:${slot}`}
+                            onOpen={() => openSlot(slot, storage.id, item)}
+                            onDropItem={(itemId) => moveItem(itemId, slot, storage.id)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {modal && (
@@ -107,17 +304,47 @@ export function InventoryPanel({ character, canEdit }: { character: Character; c
           {modal.item ? (
             <div className="space-y-3">
               <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
-              {canEdit && <Button variant="teal" onClick={() => { dispatch({ type: 'inventory/equip', itemId: modal.item!.id, loadoutSlot: modal.item!.type === 'weapon' ? 'weapon' : modal.item!.type === 'armor' ? 'armor' : modal.item!.type === 'shield' ? 'shield' : modal.item!.type === 'pet' ? 'active-pet' : modal.item!.type === 'accessory' ? 'accessory-1' : null }); setModal(null); }}>Equip if possible</Button>}
+              {canManage && (
+                <div className="grid gap-2">
+                  {!modal.item.loadoutSlot && (
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {(['weapon', 'armor', 'shield', 'active-pet', 'accessory-1', 'accessory-2', 'accessory-3', 'accessory-4'] as LoadoutSlot[])
+                        .filter((slot) => acceptsLoadoutItem(slot, modal.item!.type))
+                        .map((slot) => <Button key={slot} variant="secondary" onClick={() => equipItem(modal.item!.id, slot)}>Equip {slot.replace('-', ' ')}</Button>)}
+                    </div>
+                  )}
+                  {modal.item.loadoutSlot && <Button variant="secondary" onClick={() => equipItem(modal.item!.id, null)}>Unequip to first open slot</Button>}
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <NumberInput min={1} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
+                    <Button variant="danger" onClick={() => dropItem(modal.item!)} disabled={saving}>Drop</Button>
+                  </div>
+                </div>
+              )}
+              {canAdd && (
+                <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                  <TextField placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+                    <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
+                    <NumberInput min={1} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
+                  </div>
+                  {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
+                  {draft.type === 'weapon' && <TextField placeholder="Spell imbue (optional)" value={draft.spellImbue} onChange={(event) => setDraft({ ...draft, spellImbue: event.target.value })} />}
+                  <Button variant="primary" disabled={!draft.name.trim() || saving}>Save item</Button>
+                </form>
+              )}
             </div>
           ) : (
             <form onSubmit={addItem} className="grid gap-3">
               <TextField autoFocus placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
               <div className="grid gap-2 sm:grid-cols-3">
-                <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{itemTypes.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+                <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                 <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                 <NumberInput min={1} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
               </div>
-              <Button variant="primary" disabled={!draft.name.trim()}>Add item</Button>
+              {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
+              {draft.type === 'weapon' && <TextField placeholder="Spell imbue (optional)" value={draft.spellImbue} onChange={(event) => setDraft({ ...draft, spellImbue: event.target.value })} />}
+              <Button variant="primary" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}
         </Modal>

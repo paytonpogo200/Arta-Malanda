@@ -135,6 +135,19 @@ export type InventoryItem = {
   spellImbue?: string;
 };
 
+export type CurrencyUnit = {
+  id: string;
+  key: string;
+  name: string;
+  symbol: string;
+  order: number;
+};
+
+export type WalletBalance = {
+  unit: CurrencyUnit;
+  amount: number;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;

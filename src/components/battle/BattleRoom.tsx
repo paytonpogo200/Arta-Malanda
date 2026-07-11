@@ -119,7 +119,7 @@ export function BattleRoom() {
       {!isDm && myCombatants.length > 0 && (
         <div className="space-y-4">
           {myCombatants.map((entry) => entry.character && (
-            <InventoryPanel key={entry.id} character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }} canEdit={false} />
+            <InventoryPanel key={entry.id} character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }} canManage canAdd={false} />
           ))}
         </div>
       )}

@@ -3,29 +3,37 @@
 import { memo, type DragEvent } from 'react';
 import { PawPrint, Shield, Shirt, Sparkles, Sword } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
-import { useCampaignDispatch } from '@/features/campaign/CampaignProvider';
+import { acceptsLoadoutItem } from '@/features/inventory/data';
 import { rarityClass } from '@/lib/utils/rarity';
 import type { InventoryItem, LoadoutSlot } from '@/lib/types';
 
-const slots: { key: LoadoutSlot; label: string; accepts: string[]; icon: typeof Sword }[] = [
-  { key: 'weapon', label: 'Weapon', accepts: ['weapon'], icon: Sword },
-  { key: 'armor', label: 'Armor', accepts: ['armor'], icon: Shirt },
-  { key: 'shield', label: 'Shield', accepts: ['shield'], icon: Shield },
-  { key: 'active-pet', label: 'Active pet', accepts: ['pet'], icon: PawPrint },
-  { key: 'accessory-1', label: 'Accessory 1', accepts: ['accessory'], icon: Sparkles },
-  { key: 'accessory-2', label: 'Accessory 2', accepts: ['accessory'], icon: Sparkles },
-  { key: 'accessory-3', label: 'Accessory 3', accepts: ['accessory'], icon: Sparkles },
-  { key: 'accessory-4', label: 'Accessory 4', accepts: ['accessory'], icon: Sparkles }
+const slots: { key: LoadoutSlot; label: string; icon: typeof Sword }[] = [
+  { key: 'weapon', label: 'Weapon', icon: Sword },
+  { key: 'armor', label: 'Armor', icon: Shirt },
+  { key: 'shield', label: 'Shield', icon: Shield },
+  { key: 'active-pet', label: 'Active pet', icon: PawPrint },
+  { key: 'accessory-1', label: 'Accessory 1', icon: Sparkles },
+  { key: 'accessory-2', label: 'Accessory 2', icon: Sparkles },
+  { key: 'accessory-3', label: 'Accessory 3', icon: Sparkles },
+  { key: 'accessory-4', label: 'Accessory 4', icon: Sparkles }
 ];
 
-export const LoadoutPanel = memo(function LoadoutPanel({ items, canEdit }: { items: InventoryItem[]; canEdit: boolean }) {
-  const dispatch = useCampaignDispatch();
-
+export const LoadoutPanel = memo(function LoadoutPanel({
+  items,
+  canMove,
+  onOpen,
+  onEquip
+}: {
+  items: InventoryItem[];
+  canMove: boolean;
+  onOpen: (item: InventoryItem) => void;
+  onEquip: (itemId: string, loadoutSlot: LoadoutSlot | null) => void;
+}) {
   return (
     <section>
       <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loadout</h3></div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {slots.map(({ key, label, accepts, icon: Icon }) => {
+        {slots.map(({ key, label, icon: Icon }) => {
           const item = items.find((entry) => entry.loadoutSlot === key);
           const acceptsDraggedItem = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes('application/x-arta-item');
           return (
@@ -37,9 +45,9 @@ export const LoadoutPanel = memo(function LoadoutPanel({ items, canEdit }: { ite
               onDrop={(event) => {
                 const itemId = event.dataTransfer.getData('application/x-arta-item');
                 const dragged = items.find((entry) => entry.id === itemId);
-                if (!canEdit || !dragged || !accepts.includes(dragged.type)) return;
+                if (!canMove || !dragged || !acceptsLoadoutItem(key, dragged.type)) return;
                 event.preventDefault();
-                dispatch({ type: 'inventory/equip', itemId, loadoutSlot: key });
+                onEquip(itemId, key);
               }}
               className={`min-h-28 rounded-xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'surface-soft'}`}
             >
@@ -50,12 +58,13 @@ export const LoadoutPanel = memo(function LoadoutPanel({ items, canEdit }: { ite
               {item ? (
                 <button
                   type="button"
-                  draggable={canEdit}
+                  draggable={canMove}
                   onDragStart={(event) => {
                     event.dataTransfer.setData('application/x-arta-item', item.id);
                     event.dataTransfer.effectAllowed = 'move';
                   }}
-                  onDoubleClick={() => canEdit && dispatch({ type: 'inventory/equip', itemId: item.id, loadoutSlot: null })}
+                  onDoubleClick={() => canMove && onEquip(item.id, null)}
+                  onClick={() => onOpen(item)}
                   className="relative z-10 flex w-full items-center gap-2 text-left"
                 >
                   <span className="text-[var(--brass)]"><ItemIcon type={item.type} /></span>
@@ -65,7 +74,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({ items, canEdit }: { ite
                   </span>
                 </button>
               ) : (
-                <p className="text-xs leading-5 text-[var(--muted)]">Drop {accepts.join('/')} here.</p>
+                <p className="text-xs leading-5 text-[var(--muted)]">Drop item here.</p>
               )}
             </div>
           );

@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Heart, Loader2, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
+import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
@@ -234,19 +235,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </div>
           </Card>
 
-          <Card>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Capacity</h3></div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
-                <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Inventory slots</p>
-                <p className="mt-1 text-lg font-black text-[var(--paper)]">{character.inventorySlots}</p>
-              </div>
-              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
-                <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Spell slots</p>
-                <p className="mt-1 text-lg font-black text-[var(--paper)]">{character.spellSlots}</p>
-              </div>
-            </div>
-          </Card>
+          <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} />
         </div>
 
         <div className="space-y-4">
