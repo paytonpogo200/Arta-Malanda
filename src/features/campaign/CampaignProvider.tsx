@@ -3,7 +3,7 @@
 import { createContext, useContext, useMemo, useReducer, type ReactNode } from 'react';
 import { characterFromClass, initialCampaignState } from '@/features/campaign/mockCampaign';
 import { createId } from '@/lib/utils/ids';
-import type { CampaignState, Character, Combatant, InventoryItem, LoadoutSlot } from '@/lib/types';
+import type { CampaignState, Character, Combatant, InventoryItem, LoadoutSlot, Profile } from '@/lib/types';
 
 type CampaignAction =
   | { type: 'profile/toggle-role' }
@@ -165,6 +165,16 @@ function campaignReducer(state: CampaignState, action: CampaignAction): Campaign
 
 export function CampaignProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(campaignReducer, initialCampaignState);
+  const stateValue = useMemo(() => state, [state]);
+  return (
+    <StateContext.Provider value={stateValue}>
+      <DispatchContext.Provider value={dispatch}>{children}</DispatchContext.Provider>
+    </StateContext.Provider>
+  );
+}
+
+export function CampaignProviderWithProfile({ children, profile }: { children: ReactNode; profile: Profile }) {
+  const [state, dispatch] = useReducer(campaignReducer, { ...initialCampaignState, profile });
   const stateValue = useMemo(() => state, [state]);
   return (
     <StateContext.Provider value={stateValue}>

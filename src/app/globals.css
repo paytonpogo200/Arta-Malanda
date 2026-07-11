@@ -24,6 +24,7 @@
 html,
 body {
   min-height: 100%;
+  width: 100%;
   background: var(--ink);
   color: var(--paper);
 }
@@ -69,6 +70,7 @@ h3,
   min-height: 100dvh;
   overflow-x: hidden;
   position: relative;
+  padding-bottom: calc(5.75rem + env(safe-area-inset-bottom));
 }
 
 .app-shell::before {
@@ -98,14 +100,25 @@ h3,
   contain: layout paint;
 }
 
+.campaign-header {
+  position: sticky;
+}
+
+.campaign-nav {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  z-index: 9999 !important;
+  transform: translateZ(0);
+}
+
 .surface {
   border: 1px solid rgba(224, 166, 78, 0.28);
   background:
     linear-gradient(145deg, rgba(56, 31, 15, 0.95), rgba(29, 15, 7, 0.96)),
     rgba(32, 17, 8, 0.95);
   box-shadow: 0 16px 38px rgba(20, 7, 1, 0.28), inset 0 1px rgba(255, 236, 199, 0.06);
-  content-visibility: auto;
-  contain-intrinsic-size: auto 18rem;
 }
 
 .surface-soft {
@@ -204,7 +217,6 @@ h3,
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  contain: layout paint;
   border-width: 2px;
   box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.28), 0 6px 16px rgba(10, 4, 1, 0.18);
 }
@@ -278,6 +290,18 @@ h3,
   box-shadow: 0 0 0 3px rgba(224, 166, 78, 0.18), 0 0 18px rgba(224, 166, 78, 0.2);
 }
 
+.inventory-slot-dragging {
+  opacity: 0.55;
+  transform: scale(0.96);
+  outline: 3px dashed rgba(255, 209, 102, .9);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(10, 4, 1, .55), 0 0 28px rgba(255, 209, 102, .36);
+}
+
+.inventory-item-name {
+  overflow-wrap: anywhere;
+}
+
 .map-grid-bg {
   background-color: #211207;
   background-image:
@@ -298,6 +322,22 @@ h3,
 
   .surface {
     box-shadow: 0 10px 24px rgba(20, 7, 1, 0.24), inset 0 1px rgba(255, 236, 199, 0.05);
+  }
+
+  .campaign-nav {
+    max-height: 5.2rem;
+  }
+
+  .inventory-slot {
+    min-width: 0;
+    min-height: 4.25rem;
+    gap: .15rem;
+  }
+
+  .inventory-item-name {
+    max-width: 100%;
+    font-size: .68rem;
+    line-height: .9rem;
   }
 }
 

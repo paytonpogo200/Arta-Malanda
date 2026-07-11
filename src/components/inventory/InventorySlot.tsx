@@ -52,7 +52,7 @@ export const InventorySlot = memo(function InventorySlot({
       {item ? (
         <>
           <span className="mb-1 text-[var(--brass)]"><ItemIcon type={item.type} /></span>
-          <span className="line-clamp-2 text-xs font-black leading-4">{item.name}</span>
+          <span className="inventory-item-name line-clamp-2 text-xs font-black leading-4">{item.name}</span>
           {item.quantity > 1 && <span className="mt-1 rounded-full bg-black/40 px-1.5 text-[10px] font-black">x{item.quantity}</span>}
         </>
       ) : canEdit ? <Plus className="text-[var(--muted)]" size={16} /> : null}

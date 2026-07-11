@@ -105,7 +105,6 @@ export function AuthPanel() {
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
               <Link className="text-[var(--muted)] underline decoration-[var(--line)] underline-offset-4" href="/reset-password">Recover password</Link>
-              <Link className="font-black text-[var(--brass)]" href="/dashboard">Open demo dashboard</Link>
             </div>
             {message && <p className="mt-4 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--muted)]">{message}</p>}
           </form>

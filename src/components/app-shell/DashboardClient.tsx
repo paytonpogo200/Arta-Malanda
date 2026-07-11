@@ -3,9 +3,9 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { BookOpen, Compass, Landmark, LogOut, PawPrint, ScrollText, Settings2, Shield, Swords } from 'lucide-react';
-import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { CampaignProvider, useCampaignDispatch, useCampaignState } from '@/features/campaign/CampaignProvider';
+import { CampaignProviderWithProfile, useCampaignState } from '@/features/campaign/CampaignProvider';
+import type { Profile } from '@/lib/types';
 
 const CharacterLedger = dynamic(() => import('@/components/characters/CharacterLedger').then((module) => module.CharacterLedger), { loading: () => <PanelLoading label="Characters" />, ssr: false });
 const BattleRoom = dynamic(() => import('@/components/battle/BattleRoom').then((module) => module.BattleRoom), { loading: () => <PanelLoading label="Battlefield" />, ssr: false });
@@ -33,7 +33,6 @@ function FuturePanel({ title }: { title: string }) {
 
 function DashboardInner() {
   const state = useCampaignState();
-  const dispatch = useCampaignDispatch();
   const isDm = state.profile.role === 'dm';
   const activeBattle = Boolean(state.battle);
   const [tab, setTab] = useState<TabId>('characters');
@@ -73,9 +72,6 @@ function DashboardInner() {
             <h1 className="truncate text-lg font-black tracking-tight">{state.profile.displayName}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => dispatch({ type: 'profile/toggle-role' })}>
-              {isDm ? 'View as player' : 'View as DM'}
-            </Button>
             <button type="button" onClick={logout} className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]" aria-label="Log out">
               <LogOut size={18} />
             </button>
@@ -114,10 +110,10 @@ function DashboardInner() {
   );
 }
 
-export function DashboardClient() {
+export function DashboardClient({ profile }: { profile: Profile }) {
   return (
-    <CampaignProvider>
+    <CampaignProviderWithProfile profile={profile}>
       <DashboardInner />
-    </CampaignProvider>
+    </CampaignProviderWithProfile>
   );
 }
