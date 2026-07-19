@@ -255,6 +255,24 @@ export type LootDrop = {
   quantity: number;
 };
 
+export type BestiaryCategory = 'animal' | 'beast' | 'being' | 'monster' | 'spirit';
+
+export type BestiaryEntity = {
+  id: string;
+  key: string;
+  name: string;
+  category: BestiaryCategory;
+  habitat: string;
+  temperament: string;
+  wildScore: number;
+  hp: number;
+  mana: number;
+  summary: string;
+  details: string;
+  unlocked: boolean;
+  order: number;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;
