@@ -4147,8 +4147,8 @@ as $$
     'recipientUserId', p_trade.recipient_user_id,
     'senderCharacterId', p_trade.sender_character_id,
     'targetCharacterId', p_trade.target_character_id,
-    'senderCharacterName', coalesce((select c.character_name from public.characters c where c.id = p_trade.sender_character_id), 'Unknown'),
-    'targetCharacterName', coalesce((select c.character_name from public.characters c where c.id = p_trade.target_character_id), 'Unknown'),
+    'senderCharacterName', coalesce((select c.name from public.characters c where c.id = p_trade.sender_character_id), 'Unknown'),
+    'targetCharacterName', coalesce((select c.name from public.characters c where c.id = p_trade.target_character_id), 'Unknown'),
     'status', p_trade.status,
     'offerNote', p_trade.offer_note,
     'requestNote', p_trade.request_note,
@@ -4367,7 +4367,7 @@ begin
   )
   values (
     v_target.owner_user_id,
-    v_sender.character_name || ' offered a trade to ' || v_target.character_name,
+    v_sender.name || ' offered a trade to ' || v_target.name,
     trim(both from concat_ws(E'\n\n', nullif(coalesce(p_message, ''), ''), 'Offers: ' || nullif(coalesce(p_offer_note, ''), ''), 'Requests: ' || nullif(coalesce(p_request_note, ''), ''))),
     'trade',
     'trade',
@@ -4441,9 +4441,9 @@ begin
   values (
     v_notify_user,
     v_title,
-    coalesce((select c.character_name from public.characters c where c.id = v_trade.sender_character_id), 'A character') ||
+    coalesce((select c.name from public.characters c where c.id = v_trade.sender_character_id), 'A character') ||
       ' and ' ||
-      coalesce((select c.character_name from public.characters c where c.id = v_trade.target_character_id), 'another character') ||
+      coalesce((select c.name from public.characters c where c.id = v_trade.target_character_id), 'another character') ||
       ' now have a trade marked ' || v_next_status || '.',
     'trade',
     'trade',
