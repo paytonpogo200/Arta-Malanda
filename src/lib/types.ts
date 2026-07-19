@@ -273,6 +273,13 @@ export type BestiaryEntity = {
   order: number;
 };
 
+export type PersonalScroll = {
+  profileId: string;
+  contentHtml: string;
+  drawingDataUrl: string;
+  updatedAt: string | null;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;

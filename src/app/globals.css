@@ -310,6 +310,80 @@ h3,
     radial-gradient(circle at 48% 40%, rgba(155, 175, 121, 0.09), transparent 36%);
 }
 
+.scroll-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  letter-spacing: .035em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .34), 0 0 18px rgba(224, 166, 78, .18);
+}
+
+.scroll-paper {
+  color: #2a1308;
+  background:
+    radial-gradient(circle at 50% 4%, rgba(255, 246, 208, .52), transparent 34%),
+    radial-gradient(circle at 18% 18%, rgba(104, 49, 14, .1), transparent 28%),
+    radial-gradient(circle at 80% 78%, rgba(104, 49, 14, .12), transparent 34%),
+    linear-gradient(145deg, #e4c88e, #c7954c 54%, #a96f2f);
+  border: 1px solid rgba(66, 32, 9, .55);
+  box-shadow: inset 0 0 44px rgba(57, 25, 5, .28), 0 20px 42px rgba(16, 7, 1, .32);
+}
+
+.scroll-paper::before {
+  content: '';
+  position: absolute;
+  inset: .75rem;
+  pointer-events: none;
+  border: 1px solid rgba(72, 36, 10, .22);
+  border-radius: 1.1rem;
+}
+
+.scroll-editor {
+  font-family: Georgia, Cambria, 'Times New Roman', serif;
+  font-size: clamp(1.05rem, 2.2vw, 1.22rem);
+  line-height: 1.8;
+  text-shadow: 0 1px rgba(255, 245, 214, .24);
+}
+
+.scroll-editor:empty::before {
+  content: 'Begin your notes...';
+  color: rgba(55, 24, 8, .45);
+  font-style: italic;
+}
+
+.scroll-editor h2,
+.scroll-editor h3 {
+  color: #301405;
+  font-family: Georgia, 'Times New Roman', serif;
+  line-height: 1.15;
+  margin: 1.1rem 0 .45rem;
+}
+
+.scroll-editor h2 {
+  font-size: clamp(1.8rem, 5vw, 2.7rem);
+}
+
+.scroll-editor h3 {
+  font-size: clamp(1.35rem, 3.5vw, 1.9rem);
+}
+
+.scroll-editor p {
+  margin: .65rem 0;
+}
+
+.scroll-editor ul,
+.scroll-editor ol {
+  margin: .65rem 0 .65rem 1.4rem;
+  padding-left: 1rem;
+}
+
+.scroll-editor blockquote {
+  margin: 1rem 0;
+  border-left: 4px solid rgba(76, 36, 9, .42);
+  padding: .55rem .8rem;
+  color: #4c250d;
+  background: rgba(95, 45, 12, .08);
+  border-radius: .75rem;
+}
+
 @media (max-width: 767px) {
   body {
     background-attachment: scroll;
@@ -338,6 +412,10 @@ h3,
     max-width: 100%;
     font-size: .68rem;
     line-height: .9rem;
+  }
+
+  .scroll-paper {
+    border-radius: 1rem;
   }
 }
 
