@@ -9,6 +9,7 @@ import type { Profile } from '@/lib/types';
 const CharacterLedger = dynamic(() => import('@/components/characters/CharacterLedger').then((module) => module.CharacterLedger), { loading: () => <PanelLoading label="Characters" />, ssr: false });
 const BattleRoom = dynamic(() => import('@/components/battle/BattleRoom').then((module) => module.BattleRoom), { loading: () => <PanelLoading label="Battlefield" />, ssr: false });
 const CitiesPanel = dynamic(() => import('@/components/cities/CitiesPanel').then((module) => module.CitiesPanel), { loading: () => <PanelLoading label="Discovered Cities" />, ssr: false });
+const ExplorationPanel = dynamic(() => import('@/components/exploration/ExplorationPanel').then((module) => module.ExplorationPanel), { loading: () => <PanelLoading label="Exploration" />, ssr: false });
 
 function PanelLoading({ label }: { label: string }) {
   return (
@@ -38,7 +39,7 @@ export function DashboardClient({ profile }: { profile: Profile }) {
       {tab === 'characters' && <CharacterLedger profile={profile} />}
       {tab === 'cities' && <CitiesPanel profile={profile} />}
       {tab === 'bestiary' && <FuturePanel title="Bestiary" />}
-      {tab === 'exploration' && isDm && <FuturePanel title="Exploration" moduleName="DM module" />}
+      {tab === 'exploration' && isDm && <ExplorationPanel />}
       {tab === 'scroll' && <FuturePanel title="Personal Scroll" />}
       {tab === 'assets' && isDm && <FuturePanel title="Update Assets" moduleName="DM module" />}
     </DashboardShell>

@@ -226,6 +226,35 @@ export type CharacterSpell = {
   spell: Spell;
 };
 
+export type LootPool = {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  order: number;
+};
+
+export type LootItem = {
+  id: string;
+  poolId: string;
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  minQuantity: number;
+  maxQuantity: number;
+  weight: number;
+  notes: string;
+};
+
+export type LootDrop = {
+  id: string;
+  itemId: string;
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  quantity: number;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;
