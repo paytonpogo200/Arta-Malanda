@@ -95,7 +95,16 @@ insert into public.market_products (
   stock_quantity,
   display_order
 )
-select v.id, product_key, item_name, description, item_type::public.item_type, rarity::public.item_rarity, price_coin, stock_quantity, display_order
+select
+  v.id,
+  seed.product_key,
+  seed.item_name,
+  seed.description,
+  seed.item_type::public.item_type,
+  seed.rarity::public.item_rarity,
+  seed.price_coin,
+  seed.stock_quantity,
+  seed.display_order
 from public.shop_vendors v
 join (
   values
