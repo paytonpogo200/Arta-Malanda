@@ -16,6 +16,8 @@ csv.field_size_limit(16 * 1024 * 1024)
 RARITIES = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical"}
 ITEM_TYPES = {"weapon", "armor", "shield", "pet", "accessory", "storage", "ore", "potion", "food", "plant", "fabric", "tool", "quest", "misc"}
 LOADOUT_SLOTS = {"weapon", "armor", "shield", "active-pet", "accessory-1", "accessory-2", "accessory-3", "accessory-4"}
+MAX_CHARACTER_INVENTORY_SLOTS = 120
+MAX_STORAGE_INVENTORY_SLOTS = 500
 
 
 def rows(name: str) -> list[dict[str, str]]:
@@ -132,27 +134,54 @@ def main() -> None:
     characters = rows("characters")
     inventory = rows("inventory_items")
 
-    main_items_by_character: dict[str, list[dict[str, str]]] = defaultdict(list)
-    for item in inventory:
-        if not item.get("parent_item_id") and not item.get("loadout_slot"):
-            main_items_by_character[item["character_id"]].append(item)
-
     adjusted_slot_by_item: dict[str, int] = {}
     adjusted_inventory_capacity: dict[str, int] = {}
+    inventory_by_id = {item["id"]: item for item in inventory}
+    container_groups: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+
+    for item in inventory:
+        if item.get("loadout_slot"):
+            continue
+        character_id = item.get("character_id")
+        if not character_id:
+            continue
+        parent_id = item.get("parent_item_id") or ""
+        container_groups[(character_id, parent_id)].append(item)
+
     for character in characters:
+        character_id = character["id"]
+        main_items = container_groups.get((character_id, ""), [])
+        requested_capacity = num(character.get("inventory_slots"), 12)
+        desired_capacity = max(requested_capacity, len(main_items), 0)
+        adjusted_inventory_capacity[character_id] = min(MAX_CHARACTER_INVENTORY_SLOTS, max(0, desired_capacity))
+
+    for (character_id, parent_id), group_items in container_groups.items():
+        if parent_id:
+            parent = inventory_by_id.get(parent_id, {})
+            requested_capacity = num(parent.get("storage_capacity"), 0)
+            capacity = min(MAX_STORAGE_INVENTORY_SLOTS, max(requested_capacity, len(group_items), 1))
+        else:
+            capacity = adjusted_inventory_capacity.get(character_id, min(MAX_CHARACTER_INVENTORY_SLOTS, max(len(group_items), 12)))
+
         occupied: set[int] = set()
         next_slot = 0
-        for item in sorted(main_items_by_character[character["id"]], key=lambda row: (num(row.get("slot_index"), 999999) if num(row.get("slot_index"), -1) >= 0 else 999999, row.get("created_at", ""), row["id"])):
+        for item in sorted(group_items, key=lambda row: (num(row.get("slot_index"), 999999) if num(row.get("slot_index"), -1) >= 0 else 999999, row.get("created_at", ""), row["id"])):
             original = num(item.get("slot_index"), -1)
-            if original >= 0 and original not in occupied:
+            if 0 <= original < capacity and original not in occupied:
                 slot = original
             else:
                 while next_slot in occupied:
                     next_slot += 1
-                slot = next_slot
+                if next_slot >= capacity:
+                    # The old app allowed broken/hidden slot values. The new app should not.
+                    # Keep the item importable by placing true overflow at the last legal slot;
+                    # duplicates are rare and will be surfaced by SQL if a container genuinely has
+                    # more items than its allowed capacity.
+                    slot = max(0, capacity - 1)
+                else:
+                    slot = next_slot
             occupied.add(slot)
             adjusted_slot_by_item[item["id"]] = slot
-        adjusted_inventory_capacity[character["id"]] = max(num(character.get("inventory_slots"), 12), (max(occupied) + 1) if occupied else 0)
 
     lines: list[str] = []
     lines.append("-- One-time legacy campaign import for Arta Malanda.")
