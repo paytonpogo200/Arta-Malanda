@@ -12,6 +12,7 @@ const CitiesPanel = dynamic(() => import('@/components/cities/CitiesPanel').then
 const ExplorationPanel = dynamic(() => import('@/components/exploration/ExplorationPanel').then((module) => module.ExplorationPanel), { loading: () => <PanelLoading label="Exploration" />, ssr: false });
 const BestiaryPanel = dynamic(() => import('@/components/bestiary/BestiaryPanel').then((module) => module.BestiaryPanel), { loading: () => <PanelLoading label="Bestiary" />, ssr: false });
 const PersonalScrollPanel = dynamic(() => import('@/components/scroll/PersonalScrollPanel').then((module) => module.PersonalScrollPanel), { loading: () => <PanelLoading label="Personal Scroll" />, ssr: false });
+const UpdateAssetsPanel = dynamic(() => import('@/components/assets/UpdateAssetsPanel').then((module) => module.UpdateAssetsPanel), { loading: () => <PanelLoading label="Update Assets" />, ssr: false });
 
 function PanelLoading({ label }: { label: string }) {
   return (
@@ -43,7 +44,7 @@ export function DashboardClient({ profile }: { profile: Profile }) {
       {tab === 'bestiary' && <BestiaryPanel profile={profile} />}
       {tab === 'exploration' && isDm && <ExplorationPanel />}
       {tab === 'scroll' && <PersonalScrollPanel />}
-      {tab === 'assets' && isDm && <FuturePanel title="Update Assets" moduleName="DM module" />}
+      {tab === 'assets' && isDm && <UpdateAssetsPanel />}
     </DashboardShell>
   );
 }
