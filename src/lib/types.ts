@@ -148,6 +148,29 @@ export type WalletBalance = {
   amount: number;
 };
 
+export type PropertyType = 'animal' | 'wagon' | 'pet' | 'mount' | 'other';
+export type PropertyLocation = 'with_character' | 'at_house';
+
+export type House = {
+  id: string;
+  ownerUserId: string;
+  cityName: string;
+  inventorySlots: number;
+  propertySlots: number;
+};
+
+export type CampaignProperty = {
+  id: string;
+  ownerUserId: string;
+  caretakerCharacterId: string | null;
+  name: string;
+  type: PropertyType;
+  location: PropertyLocation;
+  isPet: boolean;
+  slotIndex: number;
+  storageCapacity: number;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;

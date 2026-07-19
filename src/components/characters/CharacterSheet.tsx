@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Heart, Loader2, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
+import { HousePanel } from '@/components/houses/HousePanel';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
@@ -236,6 +237,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           </Card>
 
           <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} />
+          <HousePanel ownerUserId={character.ownerUserId} caretakerCharacterId={character.id} canManage={isDm || owned} canAdd={isDm} />
         </div>
 
         <div className="space-y-4">

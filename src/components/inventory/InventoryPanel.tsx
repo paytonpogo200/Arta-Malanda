@@ -177,6 +177,11 @@ export function InventoryPanel({
     await requestInventoryChange(`/api/inventory/items/${item.id}?quantity=${Math.max(1, dropQuantity)}`, { method: 'DELETE' });
   }
 
+  async function sendToHouse(item: InventoryItem) {
+    if (!canManage || !character.ownerUserId) return;
+    await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
+  }
+
   async function saveWallet() {
     if (!canAdd) return;
     setSaving(true);
@@ -314,6 +319,7 @@ export function InventoryPanel({
                     </div>
                   )}
                   {modal.item.loadoutSlot && <Button variant="secondary" onClick={() => equipItem(modal.item!.id, null)}>Unequip to first open slot</Button>}
+                  {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <NumberInput min={1} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
                     <Button variant="danger" onClick={() => dropItem(modal.item!)} disabled={saving}>Drop</Button>
