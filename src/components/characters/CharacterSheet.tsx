@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { HousePanel } from '@/components/houses/HousePanel';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
+import { SpellsPanel } from '@/components/spells/SpellsPanel';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
@@ -236,6 +237,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </div>
           </Card>
 
+          <SpellsPanel character={character} canManage={isDm || owned} canGrant={isDm} onManaChanged={(currentMana) => onSaved({ ...character, currentMana })} />
           <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} />
           <HousePanel ownerUserId={character.ownerUserId} caretakerCharacterId={character.id} canManage={isDm || owned} canAdd={isDm} />
         </div>

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
+import { SpellsPanel } from '@/components/spells/SpellsPanel';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/ui/NumberInput';
@@ -260,7 +261,19 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       {!isDm && myCombatants.length > 0 && (
         <div className="space-y-4">
           {myCombatants.map((entry) => entry.character && (
-            <InventoryPanel key={entry.id} character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }} canManage canAdd={false} />
+            <div key={entry.id} className="space-y-4">
+              <SpellsPanel
+                character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }}
+                canManage
+                canGrant={false}
+                combatLocked
+                onManaChanged={(currentMana) => setRoom((current) => ({
+                  ...current,
+                  combatants: current.combatants.map((combatant) => combatant.id === entry.id ? { ...combatant, currentMana } : combatant)
+                }))}
+              />
+              <InventoryPanel character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }} canManage canAdd={false} />
+            </div>
           ))}
         </div>
       )}

@@ -204,6 +204,28 @@ export type ShopVendor = {
   products: MarketProduct[];
 };
 
+export type SpellSchool = 'arcane' | 'restoration' | 'nature' | 'alchemy' | 'rune' | 'shadow' | 'martial';
+
+export type Spell = {
+  id: string;
+  key: string;
+  name: string;
+  school: SpellSchool;
+  manaCost: number;
+  summary: string;
+  details: string;
+  rarity: ItemRarity;
+};
+
+export type CharacterSpell = {
+  id: string;
+  characterId: string;
+  spellId: string;
+  active: boolean;
+  slotIndex: number | null;
+  spell: Spell;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;
