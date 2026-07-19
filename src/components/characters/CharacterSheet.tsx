@@ -20,6 +20,7 @@ type CharacterSheetProps = {
   profiles: CampaignProfile[];
   classes: ClassTemplate[];
   onSaved: (character: Character) => void;
+  onOfferTrade?: (character: Character) => void;
 };
 
 const LOCATION_PRESETS = ['Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
@@ -35,7 +36,7 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved }: CharacterSheetProps) {
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [saving, setSaving] = useState(false);
@@ -139,17 +140,22 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
               <p className="mt-2 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-[var(--brass)]"><MapPin size={13} /> {character.locationName}</p>
             </div>
           </div>
-          {isDm && (
-            <Button
-              variant={editing ? 'primary' : 'secondary'}
-              onClick={() => editing ? undefined : setEditing(true)}
-              form={editing ? 'character-edit-form' : undefined}
-              type={editing ? 'submit' : 'button'}
-              disabled={saving}
-            >
-              {editing ? <span className="flex items-center gap-2">{saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save sheet</span> : 'Edit sheet'}
-            </Button>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {!owned && character.ownerUserId && onOfferTrade && (
+              <Button variant="teal" type="button" onClick={() => onOfferTrade(character)}>Offer trade</Button>
+            )}
+            {isDm && (
+              <Button
+                variant={editing ? 'primary' : 'secondary'}
+                onClick={() => editing ? undefined : setEditing(true)}
+                form={editing ? 'character-edit-form' : undefined}
+                type={editing ? 'submit' : 'button'}
+                disabled={saving}
+              >
+                {editing ? <span className="flex items-center gap-2">{saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save sheet</span> : 'Edit sheet'}
+              </Button>
+            )}
+          </div>
         </div>
 
         {error && <div className="mt-4 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}

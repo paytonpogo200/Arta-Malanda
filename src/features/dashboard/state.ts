@@ -3,6 +3,9 @@ export type DashboardNotice = {
   title: string;
   body?: string;
   kind: 'notice' | 'trade' | 'announcement' | 'system';
+  sourceId?: string;
+  sourceType?: string;
+  readAt?: string | null;
   createdAt?: string;
 };
 
@@ -33,6 +36,9 @@ function normalizeNotice(value: unknown): DashboardNotice | null {
     title,
     body: source.body ? String(source.body) : undefined,
     kind,
+    sourceId: source.sourceId ? String(source.sourceId) : undefined,
+    sourceType: source.sourceType ? String(source.sourceType) : undefined,
+    readAt: source.readAt ? String(source.readAt) : null,
     createdAt: source.createdAt ? String(source.createdAt) : undefined
   };
 }

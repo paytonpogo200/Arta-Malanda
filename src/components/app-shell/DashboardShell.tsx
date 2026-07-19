@@ -119,7 +119,7 @@ export function DashboardShell({ profile, activeTab, onTabChange, children }: Da
           </div>
 
           <div className="flex gap-2">
-            <NotificationHub notices={state.notifications} onRefresh={refresh} />
+            <NotificationHub profile={profile} notices={state.notifications} onRefresh={refresh} />
             <button
               type="button"
               onClick={logout}

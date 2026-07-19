@@ -280,6 +280,24 @@ export type PersonalScroll = {
   updatedAt: string | null;
 };
 
+export type TradeStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
+
+export type TradeOffer = {
+  id: string;
+  senderUserId: string;
+  recipientUserId: string;
+  senderCharacterId: string;
+  targetCharacterId: string;
+  senderCharacterName: string;
+  targetCharacterName: string;
+  status: TradeStatus;
+  offerNote: string;
+  requestNote: string;
+  message: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;

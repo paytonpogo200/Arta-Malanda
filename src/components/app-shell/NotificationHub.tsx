@@ -1,10 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Bell, X } from 'lucide-react';
+import { useMemo, useState, type FormEvent } from 'react';
+import { Bell, Check, Loader2, Megaphone, X } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import type { DashboardNotice } from '@/features/dashboard/state';
+import type { Profile, TradeStatus } from '@/lib/types';
 
 type NotificationHubProps = {
+  profile: Profile;
   notices: DashboardNotice[];
   onRefresh: () => void;
 };
@@ -16,13 +20,83 @@ function noticeLabel(kind: DashboardNotice['kind']) {
   return 'Notice';
 }
 
-export function NotificationHub({ notices, onRefresh }: NotificationHubProps) {
+const LOCATION_PRESETS = ['All locations', 'Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
+
+export function NotificationHub({ profile, notices, onRefresh }: NotificationHubProps) {
   const [open, setOpen] = useState(false);
+  const [announcing, setAnnouncing] = useState(false);
+  const [busyId, setBusyId] = useState('');
+  const [noticeError, setNoticeError] = useState('');
+  const [announcement, setAnnouncement] = useState({
+    title: '',
+    body: '',
+    locationName: 'All locations',
+    inWorld: false
+  });
   const unreadCount = notices.length;
+  const isDm = profile.role === 'dm';
 
   const orderedNotices = useMemo(() => {
     return [...notices].sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
   }, [notices]);
+
+  async function markRead(noticeId: string) {
+    setBusyId(noticeId);
+    setNoticeError('');
+    try {
+      await fetch(`/api/notifications/${noticeId}`, { method: 'PATCH' });
+      onRefresh();
+    } catch {
+      // Notification dismissal is intentionally non-blocking.
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function respondToTrade(tradeId: string, status: TradeStatus) {
+    setBusyId(`${tradeId}:${status}`);
+    setNoticeError('');
+    try {
+      const response = await fetch(`/api/trades/${tradeId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Trade could not be updated.');
+      onRefresh();
+    } catch (error) {
+      setNoticeError(error instanceof Error ? error.message : 'Trade could not be updated.');
+    } finally {
+      setBusyId('');
+    }
+  }
+
+  async function sendAnnouncement(event: FormEvent) {
+    event.preventDefault();
+    if (!isDm || !announcement.title.trim()) return;
+    setBusyId('announcement');
+    setNoticeError('');
+    try {
+      const response = await fetch('/api/notifications/announcements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...announcement,
+          locationName: announcement.locationName === 'All locations' ? '' : announcement.locationName
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Announcement could not be sent.');
+      setAnnouncement({ title: '', body: '', locationName: 'All locations', inWorld: false });
+      setAnnouncing(false);
+      onRefresh();
+    } catch (error) {
+      setNoticeError(error instanceof Error ? error.message : 'Announcement could not be sent.');
+    } finally {
+      setBusyId('');
+    }
+  }
 
   return (
     <>
@@ -51,22 +125,72 @@ export function NotificationHub({ notices, onRefresh }: NotificationHubProps) {
                 <p className="eyebrow">Campaign</p>
                 <h2 className="mt-1 text-2xl font-black">Notifications</h2>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]"
-                aria-label="Close notifications"
-              >
-                <X size={18} />
-              </button>
+              <div className="flex gap-2">
+                {isDm && (
+                  <button
+                    type="button"
+                    onClick={() => setAnnouncing((value) => !value)}
+                    className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]"
+                    aria-label="Draft announcement"
+                  >
+                    <Megaphone size={18} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-[var(--muted)]"
+                  aria-label="Close notifications"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
+
+            {noticeError && <div className="mb-3 rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{noticeError}</div>}
+
+            {announcing && (
+              <form onSubmit={sendAnnouncement} className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                <TextField placeholder="Announcement title" value={announcement.title} onChange={(event) => setAnnouncement({ ...announcement, title: event.target.value })} />
+                <TextAreaField rows={4} placeholder="Announcement text" value={announcement.body} onChange={(event) => setAnnouncement({ ...announcement, body: event.target.value })} />
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <SelectField value={announcement.locationName} onChange={(event) => setAnnouncement({ ...announcement, locationName: event.target.value })}>
+                    {LOCATION_PRESETS.map((location) => <option key={location} value={location}>{location}</option>)}
+                  </SelectField>
+                  <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 px-3 py-2 text-xs font-black uppercase tracking-wide text-[var(--muted)]">
+                    <input type="checkbox" checked={announcement.inWorld} onChange={(event) => setAnnouncement({ ...announcement, inWorld: event.target.checked })} />
+                    NPC voice
+                  </label>
+                </div>
+                <Button variant="primary" disabled={!announcement.title.trim() || busyId === 'announcement'} className="flex items-center justify-center gap-2">
+                  {busyId === 'announcement' ? <Loader2 size={15} className="animate-spin" /> : <Megaphone size={15} />} Send announcement
+                </Button>
+              </form>
+            )}
 
             <div className="grid gap-2">
               {orderedNotices.map((notice) => (
                 <article key={notice.id} className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--brass)]">{noticeLabel(notice.kind)}</p>
-                  <h3 className="mt-1 text-base font-black">{notice.title}</h3>
-                  {notice.body && <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{notice.body}</p>}
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--brass)]">{noticeLabel(notice.kind)}</p>
+                      <h3 className="mt-1 text-base font-black">{notice.title}</h3>
+                    </div>
+                    <button type="button" onClick={() => markRead(notice.id)} className="rounded-lg border border-[var(--line)] bg-black/20 p-2 text-[var(--muted)]" aria-label="Mark read">
+                      {busyId === notice.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                    </button>
+                  </div>
+                  {notice.body && <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">{notice.body}</p>}
+                  {notice.kind === 'trade' && notice.sourceId && (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <Button variant="teal" onClick={() => respondToTrade(notice.sourceId!, 'accepted')} disabled={busyId.startsWith(notice.sourceId)}>
+                        Accept
+                      </Button>
+                      <Button variant="danger" onClick={() => respondToTrade(notice.sourceId!, 'declined')} disabled={busyId.startsWith(notice.sourceId)}>
+                        Decline
+                      </Button>
+                    </div>
+                  )}
                 </article>
               ))}
 
