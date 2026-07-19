@@ -300,6 +300,16 @@ h3,
 
 .inventory-item-name {
   overflow-wrap: anywhere;
+  hyphens: auto;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, .45);
+}
+
+.inventory-grid {
+  align-items: stretch;
+}
+
+.inventory-slot-icon svg {
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .45));
 }
 
 .map-grid-bg {
@@ -404,14 +414,20 @@ h3,
 
   .inventory-slot {
     min-width: 0;
-    min-height: 4.25rem;
-    gap: .15rem;
+    min-height: 7rem;
+    gap: .35rem;
+    border-radius: 1rem;
   }
 
   .inventory-item-name {
     max-width: 100%;
-    font-size: .68rem;
-    line-height: .9rem;
+    font-size: .72rem;
+    line-height: .95rem;
+  }
+
+  .inventory-slot-icon svg {
+    width: 15px;
+    height: 15px;
   }
 
   .scroll-paper {

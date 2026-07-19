@@ -49,16 +49,18 @@ export const InventorySlot = memo(function InventorySlot({
       onClick={() => {
         if (item || canAdd) onOpen();
       }}
-      className={`inventory-slot relative flex aspect-square min-h-24 flex-col items-center justify-center rounded-xl border p-2 text-center transition active:scale-95 sm:min-h-20 ${
+      className={`inventory-slot relative flex min-h-[7.6rem] flex-col items-center justify-between rounded-2xl border p-2.5 text-center transition active:scale-95 sm:min-h-[7rem] ${
         item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
       } ${target ? 'inventory-slot-target' : ''}`}
     >
       <span className="pointer-events-none absolute left-2 top-1.5 text-[9px] font-black text-[var(--muted)]">{slot + 1}</span>
       {item ? (
         <>
-          <span className="mb-1 text-[var(--brass)]"><ItemIcon type={item.type} /></span>
-          <span className="inventory-item-name line-clamp-2 text-xs font-black leading-4">{item.name}</span>
-          {item.quantity > 1 && <span className="mt-1 rounded-full bg-black/40 px-1.5 text-[10px] font-black">x{item.quantity}</span>}
+          <span className="inventory-slot-icon mt-2 text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
+          <span className="inventory-item-name line-clamp-3 w-full rounded-xl bg-black/24 px-1.5 py-1 text-[11px] font-black leading-[0.9rem] shadow-inner">{item.name}</span>
+          <span className="min-h-[1.25rem]">
+            {item.quantity > 1 && <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-black">x{item.quantity}</span>}
+          </span>
         </>
       ) : canAdd ? <Plus className="text-[var(--muted)]" size={16} /> : null}
     </button>

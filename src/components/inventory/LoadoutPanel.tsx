@@ -32,7 +32,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
   return (
     <section>
       <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loadout</h3></div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-2 min-[390px]:grid-cols-2 sm:grid-cols-4">
         {slots.map(({ key, label, icon: Icon }) => {
           const item = items.find((entry) => entry.loadoutSlot === key);
           const acceptsDraggedItem = (event: DragEvent<HTMLDivElement>) => Array.from(event.dataTransfer.types).includes('application/x-arta-item');
@@ -49,7 +49,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                 event.preventDefault();
                 onEquip(itemId, key);
               }}
-              className={`min-h-28 rounded-xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'surface-soft'}`}
+              className={`min-h-28 rounded-2xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'surface-soft'}`}
             >
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{label}</p>
@@ -65,11 +65,11 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                   }}
                   onDoubleClick={() => canMove && onEquip(item.id, null)}
                   onClick={() => onOpen(item)}
-                  className="relative z-10 flex w-full items-center gap-2 text-left"
+                  className="relative z-10 flex w-full items-center gap-2 rounded-xl bg-black/18 p-2 text-left"
                 >
-                  <span className="text-[var(--brass)]"><ItemIcon type={item.type} /></span>
+                  <span className="text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-black">{item.name}</span>
+                    <span className="block text-sm font-black leading-4">{item.name}</span>
                     {item.spellImbue && <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">{item.spellImbue}</span>}
                   </span>
                 </button>

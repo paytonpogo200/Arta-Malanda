@@ -249,7 +249,7 @@ export function InventoryPanel({
           <LoadoutPanel items={items} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
 
           <div className="mt-5 rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
+          <div className="inventory-grid grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6">
             {Array.from({ length: character.inventorySlots }, (_, slot) => {
               const item = itemByMainSlot.get(slot);
               return (
@@ -279,7 +279,7 @@ export function InventoryPanel({
                       <span className="flex items-center gap-2 font-black"><PackageOpen size={16} className="text-[var(--brass)]" /> {storage.name}</span>
                       <span className="text-xs text-[var(--muted)]">{childItems.length}/{storage.storageCapacity} slots</span>
                     </summary>
-                    <div className="grid grid-cols-3 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-5">
+                    <div className="inventory-grid grid grid-cols-2 gap-2 border-t border-[var(--line)] p-3 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-5">
                       {Array.from({ length: storage.storageCapacity }, (_, slot) => {
                         const item = childBySlot.get(slot);
                         return (

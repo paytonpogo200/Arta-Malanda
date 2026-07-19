@@ -239,12 +239,27 @@ export type LootItem = {
   id: string;
   poolId: string;
   name: string;
+  category: string;
+  biomes: string[];
+  minDifficulty: number;
+  maxDifficulty: number;
   type: ItemType;
   rarity: ItemRarity;
   minQuantity: number;
   maxQuantity: number;
   weight: number;
+  baseWeight: number;
   notes: string;
+};
+
+export type LootGeneratorSettings = {
+  biomes: string[];
+  difficulties: number[];
+  poolSizes: string[];
+  roomTypes: string[];
+  baseRollsByPoolSize: Record<string, number>;
+  rareMultiplierKeywords: Record<string, number>;
+  sourceFormulas: Record<string, string>;
 };
 
 export type LootDrop = {
