@@ -171,6 +171,39 @@ export type CampaignProperty = {
   storageCapacity: number;
 };
 
+export type City = {
+  id: string;
+  key: string;
+  name: string;
+  locked: boolean;
+  order: number;
+};
+
+export type MarketProduct = {
+  id: string;
+  vendorId: string;
+  key: string;
+  name: string;
+  description: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  priceCoin: number;
+  stockQuantity: number | null;
+  available: boolean;
+};
+
+export type ShopVendor = {
+  id: string;
+  cityKey: string;
+  key: string;
+  name: string;
+  facility: string;
+  category: string;
+  hidden: boolean;
+  order: number;
+  products: MarketProduct[];
+};
+
 export type Battle = {
   id: string;
   status: BattleStatus;
