@@ -1,4 +1,4 @@
-﻿-- Arta Malanda Supabase SQL runner
+-- Arta Malanda Supabase SQL runner
 -- Updated through checkpoint 5: auth, dashboard shell, character ledger, inventory/loadout/wallets, house/property/storage foundation.
 -- For manual Supabase use: paste this whole file into the Supabase SQL Editor and run it.
 -- It is designed to be rerunnable; create-or-replace functions update existing code cleanly.
