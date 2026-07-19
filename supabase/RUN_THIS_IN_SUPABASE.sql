@@ -1,8 +1,7 @@
 -- Arta Malanda Supabase SQL runner
--- Updated through checkpoint 5: auth, dashboard shell, character ledger, inventory/loadout/wallets, house/property/storage foundation.
+-- Updated through checkpoint 6: auth, dashboard shell, character ledger, inventory/loadout/wallets, house/property/storage, battlemap/combat foundation.
 -- For manual Supabase use: paste this whole file into the Supabase SQL Editor and run it.
 -- It is designed to be rerunnable; create-or-replace functions update existing code cleanly.
-
 
 -- ============================================================
 -- Source: supabase\core-v1.sql
@@ -406,6 +405,7 @@ grant execute on function public.login_campaign_account(text, text) to anon, aut
 grant execute on function public.get_campaign_session(text) to anon, authenticated;
 grant execute on function public.logout_campaign_session(text) to anon, authenticated;
 
+
 -- ============================================================
 -- Source: supabase\migrations\20260711000300_character_ledger_foundation.sql
 -- ============================================================
@@ -661,6 +661,7 @@ grant execute on function public.get_character_ledger(text) to anon, authenticat
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, int, int, int, int, int, int, int, jsonb, jsonb, text, text) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
 
+
 -- ============================================================
 -- Source: supabase\migrations\20260711000400_dashboard_shell_state.sql
 -- ============================================================
@@ -701,6 +702,7 @@ $$;
 
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
 
+
 -- ============================================================
 -- Source: supabase\migrations\20260711000500_character_ledger_expansion.sql
 -- ============================================================
@@ -723,21 +725,21 @@ insert into public.class_templates (
   token_color
 )
 values
-  ('alchemist', 'Alchemist', 'Support Â· Decent sustain', 'Light armor', 'Intelligent and resourceful seekers of knowledge, renowned for their command of potions and alchemical craft.', 110, 50, 16, 2, '{"strength":-1,"agility":0,"vitality":-1,"intelligence":1,"recovery":1,"charisma":0,"accuracy":0,"range":0,"mana_regen":0,"perception":0,"alchemy":5,"stealth":0}'::jsonb, '["Once per combat, use or make a potion or alchemical item without spending the main action or movement.","Has unlimited flasks and Arcane Nectar while maintaining a house or residence."]'::jsonb, '#4d8f83'),
-  ('apothecary', 'Apothecary', 'Support Â· Great sustain', 'Medium armor', 'Durable battlefield mages whose restorative support can hold a party together even on the front line.', 130, 90, 15, 5, '{"strength":-3,"agility":-1,"vitality":1,"intelligence":0,"recovery":2,"charisma":0,"accuracy":-1,"range":0,"mana_regen":2,"perception":0,"alchemy":2,"stealth":-2}'::jsonb, '["Can heal an ally for 5 HP in place of movement."]'::jsonb, '#5579a8'),
-  ('apprentice', 'Apprentice', 'Hybrid Â· Decent sustain', 'Medium armor', 'Naturally talented learners who trade some magical utility for freedom, adaptability, and staying power.', 100, 75, 16, 5, '{"strength":0,"agility":1,"vitality":-1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":0,"range":0,"mana_regen":1,"perception":0,"alchemy":1,"stealth":0}'::jsonb, '["While paired with a Mage: +1 Intelligence.","While paired with a Knight: +1 Strength.","While paired with a Ranger: +1 Accuracy. These bonuses can stack."]'::jsonb, '#8a6da1'),
-  ('armor-clad', 'Armor-clad', 'Defense Â· Great sustain', 'Heavy armor', 'Relentless front-line warriors who sacrifice speed and subtlety for overwhelming defensive presence.', 165, 50, 10, 1, '{"strength":2,"agility":-3,"vitality":3,"intelligence":-3,"recovery":0,"charisma":-1,"accuracy":0,"range":-2,"mana_regen":0,"perception":-1,"alchemy":1,"stealth":-2}'::jsonb, '["Distribution redirects 50% of a targetâ€™s incoming damage to the Armor-clad.","Pays only material costs for armor labor.","Cannot receive additional defensive bonuses from shields."]'::jsonb, '#9a6e52'),
-  ('beastmaster', 'Beastmaster', 'Hybrid Â· Poor sustain', 'Light armor', 'Rare animal handlers whose companions become a force of their own across the battlefield.', 90, 50, 20, 1, '{"strength":-3,"agility":1,"vitality":0,"intelligence":0,"recovery":1,"charisma":3,"accuracy":1,"range":0,"mana_regen":0,"perception":2,"alchemy":0,"stealth":0}'::jsonb, '["Tame is a free spell and uses d6 + Charisma + buffs against a creatureâ€™s Wild score.","May bring up to 20 Wild score worth of beasts per mission."]'::jsonb, '#77875a'),
-  ('blacksmith', 'Blacksmith', 'Support Â· Decent sustain', 'Medium armor', 'Practical craftspeople whose command of tools, weapons, armor, and runes makes them invaluable anywhere.', 125, 50, 18, 3, '{"strength":2,"agility":-1,"vitality":1,"intelligence":0,"recovery":0,"charisma":2,"accuracy":0,"range":-2,"mana_regen":0,"perception":0,"alchemy":1,"stealth":-1}'::jsonb, '["Pays only material costs for smithing labor.","Once per combat, grant a chosen melee weapon +1 Strength until combat or the scene ends."]'::jsonb, '#b28b45'),
-  ('knight', 'Knight', 'Attack Â· Decent sustain', 'Medium armor', 'Well-rounded combat experts with political presence, battlefield leadership, and a talent for mounted fighting.', 125, 25, 14, 2, '{"strength":1,"agility":0,"vitality":1,"intelligence":-1,"recovery":0,"charisma":2,"accuracy":1,"range":-1,"mana_regen":-2,"perception":0,"alchemy":-1,"stealth":0}'::jsonb, '["+1 Strength while mounted on a horse.","When hit, a parry roll of 18â€“20 prevents all damage; 15â€“17 prevents half."]'::jsonb, '#a05e5a'),
-  ('mage', 'Mage', 'Attack Â· Poor sustain', 'Light armor', 'Versatile magical heavy-hitters with an answer for nearly every problemâ€”provided they survive long enough to cast it.', 70, 100, 10, 10, '{"strength":-3,"agility":0,"vitality":-3,"intelligence":3,"recovery":0,"charisma":1,"accuracy":0,"range":1,"mana_regen":1,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Regain 10 Mana whenever an enemy is killed with a spell."]'::jsonb, '#567a7f'),
-  ('mendrunner', 'Mendrunner', 'Hybrid Â· Poor sustain', 'Medium armor', 'Nimble practitioners of botany and natural medicine who reject magic in favor of hard-won remedies.', 85, 0, 20, 0, '{"strength":-1,"agility":3,"vitality":0,"intelligence":-5,"recovery":3,"charisma":-3,"accuracy":1,"range":0,"mana_regen":0,"perception":3,"alchemy":4,"stealth":1}'::jsonb, '["Heal an ally for 2d6 + Recovery + Alchemy and remove one debuff or negative effect.","Immune to poison and illness."]'::jsonb, '#6b8f68'),
-  ('the-muscle', 'The Muscle', 'Defense Â· Great sustain', 'Medium armor', 'Notorious for a large frame and small brains, built to soak punishment and become the groupâ€™s blunt-force answer.', 150, 40, 10, 1, '{"strength":3,"agility":-1,"vitality":1,"intelligence":-3,"recovery":2,"charisma":-2,"accuracy":-2,"range":-2,"mana_regen":0,"perception":-1,"alchemy":-2,"stealth":-2}'::jsonb, '["When The Muscle kills an enemy, gain 1d6 for ensuing damage rolls. Resets after each combat or scene ends. Max of 5d6."]'::jsonb, '#9f6540'),
-  ('ranger', 'Ranger', 'Attack Â· Poor sustain', 'Light armor', 'Back-line attackers and scouts who combine punishing range with reconnaissance and specialized ammunition.', 90, 50, 15, 1, '{"strength":-2,"agility":1,"vitality":-2,"intelligence":1,"recovery":0,"charisma":0,"accuracy":2,"range":3,"mana_regen":0,"perception":2,"alchemy":0,"stealth":1}'::jsonb, '["Can tame birds.","Three times per combat, fire three arrows in one draw.","May buy and craft elemental or effect-tipped arrows."]'::jsonb, '#7c8a49'),
-  ('rogue', 'Rogue', 'Attack Â· Poor sustain', 'Light armor', 'Cunning duelists who thrive on surprise, isolation, and catching enemies at their most vulnerable.', 90, 50, 16, 3, '{"strength":-1,"agility":2,"vitality":-1,"intelligence":0,"recovery":0,"charisma":-3,"accuracy":0,"range":0,"mana_regen":0,"perception":3,"alchemy":1,"stealth":3}'::jsonb, '["Backstab deals double damage from behind, from stealth, or against a pinned or defenseless target.","May use Agility instead of Strength for attacks that trigger Backstab."]'::jsonb, '#6b617e'),
-  ('sage', 'Sage', 'Support Â· Poor sustain', 'Medium armor', 'Selfless support casters whose mastery of recovery turns a single act of healing into aid for the whole party.', 70, 100, 12, 5, '{"strength":-2,"agility":2,"vitality":-2,"intelligence":-5,"recovery":3,"charisma":2,"accuracy":-2,"range":0,"mana_regen":2,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Healing and enhancement spells use Recovery instead of Intelligence for magic rolls.","Heals also restore half the amount, rounded up, to another ally or the original target."]'::jsonb, '#7581a0'),
-  ('talismanist', 'Talismanist', 'Attack Â· Decent sustain', 'Medium armor', 'Rune-armed warriors who bind magic into weapons and armor, turning every piece of gear into a spell vessel.', 125, 100, 10, 0, '{"strength":1,"agility":0,"vitality":1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":1,"range":0,"mana_regen":0,"perception":0,"alchemy":-1,"stealth":-2}'::jsonb, '["Begins with three random low-level runes.","Each spell-infused weapon on hand can cast its spell twice per combat."]'::jsonb, '#926d9f'),
-  ('warden', 'Warden', 'Hybrid Â· Decent sustain', 'Medium armor', 'Jack-of-all-trades survivalists with broad usefulness, cunning instincts, and flexible party support.', 110, 75, 20, 3, '{"strength":0,"agility":0,"vitality":0,"intelligence":0,"recovery":0,"charisma":-2,"accuracy":0,"range":0,"mana_regen":0,"perception":2,"alchemy":1,"stealth":0}'::jsonb, '["Once per combat or exploration scene, reroll a failed Perception, Alchemy, Survival, or Utility check.","Gains a +2 modifier of choice in a single category where the party has no bonuses."]'::jsonb, '#79895f')
+  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', 'Intelligent and resourceful seekers of knowledge, renowned for their command of potions and alchemical craft.', 110, 50, 16, 2, '{"strength":-1,"agility":0,"vitality":-1,"intelligence":1,"recovery":1,"charisma":0,"accuracy":0,"range":0,"mana_regen":0,"perception":0,"alchemy":5,"stealth":0}'::jsonb, '["Once per combat, use or make a potion or alchemical item without spending the main action or movement.","Has unlimited flasks and Arcane Nectar while maintaining a house or residence."]'::jsonb, '#4d8f83'),
+  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', 'Durable battlefield mages whose restorative support can hold a party together even on the front line.', 130, 90, 15, 5, '{"strength":-3,"agility":-1,"vitality":1,"intelligence":0,"recovery":2,"charisma":0,"accuracy":-1,"range":0,"mana_regen":2,"perception":0,"alchemy":2,"stealth":-2}'::jsonb, '["Can heal an ally for 5 HP in place of movement."]'::jsonb, '#5579a8'),
+  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', 'Naturally talented learners who trade some magical utility for freedom, adaptability, and staying power.', 100, 75, 16, 5, '{"strength":0,"agility":1,"vitality":-1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":0,"range":0,"mana_regen":1,"perception":0,"alchemy":1,"stealth":0}'::jsonb, '["While paired with a Mage: +1 Intelligence.","While paired with a Knight: +1 Strength.","While paired with a Ranger: +1 Accuracy. These bonuses can stack."]'::jsonb, '#8a6da1'),
+  ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', 'Relentless front-line warriors who sacrifice speed and subtlety for overwhelming defensive presence.', 165, 50, 10, 1, '{"strength":2,"agility":-3,"vitality":3,"intelligence":-3,"recovery":0,"charisma":-1,"accuracy":0,"range":-2,"mana_regen":0,"perception":-1,"alchemy":1,"stealth":-2}'::jsonb, '["Distribution redirects 50% of a target’s incoming damage to the Armor-clad.","Pays only material costs for armor labor.","Cannot receive additional defensive bonuses from shields."]'::jsonb, '#9a6e52'),
+  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', 'Rare animal handlers whose companions become a force of their own across the battlefield.', 90, 50, 20, 1, '{"strength":-3,"agility":1,"vitality":0,"intelligence":0,"recovery":1,"charisma":3,"accuracy":1,"range":0,"mana_regen":0,"perception":2,"alchemy":0,"stealth":0}'::jsonb, '["Tame is a free spell and uses d6 + Charisma + buffs against a creature’s Wild score.","May bring up to 20 Wild score worth of beasts per mission."]'::jsonb, '#77875a'),
+  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', 'Practical craftspeople whose command of tools, weapons, armor, and runes makes them invaluable anywhere.', 125, 50, 18, 3, '{"strength":2,"agility":-1,"vitality":1,"intelligence":0,"recovery":0,"charisma":2,"accuracy":0,"range":-2,"mana_regen":0,"perception":0,"alchemy":1,"stealth":-1}'::jsonb, '["Pays only material costs for smithing labor.","Once per combat, grant a chosen melee weapon +1 Strength until combat or the scene ends."]'::jsonb, '#b28b45'),
+  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', 'Well-rounded combat experts with political presence, battlefield leadership, and a talent for mounted fighting.', 125, 25, 14, 2, '{"strength":1,"agility":0,"vitality":1,"intelligence":-1,"recovery":0,"charisma":2,"accuracy":1,"range":-1,"mana_regen":-2,"perception":0,"alchemy":-1,"stealth":0}'::jsonb, '["+1 Strength while mounted on a horse.","When hit, a parry roll of 18–20 prevents all damage; 15–17 prevents half."]'::jsonb, '#a05e5a'),
+  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', 'Versatile magical heavy-hitters with an answer for nearly every problem—provided they survive long enough to cast it.', 70, 100, 10, 10, '{"strength":-3,"agility":0,"vitality":-3,"intelligence":3,"recovery":0,"charisma":1,"accuracy":0,"range":1,"mana_regen":1,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Regain 10 Mana whenever an enemy is killed with a spell."]'::jsonb, '#567a7f'),
+  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', 'Nimble practitioners of botany and natural medicine who reject magic in favor of hard-won remedies.', 85, 0, 20, 0, '{"strength":-1,"agility":3,"vitality":0,"intelligence":-5,"recovery":3,"charisma":-3,"accuracy":1,"range":0,"mana_regen":0,"perception":3,"alchemy":4,"stealth":1}'::jsonb, '["Heal an ally for 2d6 + Recovery + Alchemy and remove one debuff or negative effect.","Immune to poison and illness."]'::jsonb, '#6b8f68'),
+  ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', 'Notorious for a large frame and small brains, built to soak punishment and become the group’s blunt-force answer.', 150, 40, 10, 1, '{"strength":3,"agility":-1,"vitality":1,"intelligence":-3,"recovery":2,"charisma":-2,"accuracy":-2,"range":-2,"mana_regen":0,"perception":-1,"alchemy":-2,"stealth":-2}'::jsonb, '["When The Muscle kills an enemy, gain 1d6 for ensuing damage rolls. Resets after each combat or scene ends. Max of 5d6."]'::jsonb, '#9f6540'),
+  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', 'Back-line attackers and scouts who combine punishing range with reconnaissance and specialized ammunition.', 90, 50, 15, 1, '{"strength":-2,"agility":1,"vitality":-2,"intelligence":1,"recovery":0,"charisma":0,"accuracy":2,"range":3,"mana_regen":0,"perception":2,"alchemy":0,"stealth":1}'::jsonb, '["Can tame birds.","Three times per combat, fire three arrows in one draw.","May buy and craft elemental or effect-tipped arrows."]'::jsonb, '#7c8a49'),
+  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', 'Cunning duelists who thrive on surprise, isolation, and catching enemies at their most vulnerable.', 90, 50, 16, 3, '{"strength":-1,"agility":2,"vitality":-1,"intelligence":0,"recovery":0,"charisma":-3,"accuracy":0,"range":0,"mana_regen":0,"perception":3,"alchemy":1,"stealth":3}'::jsonb, '["Backstab deals double damage from behind, from stealth, or against a pinned or defenseless target.","May use Agility instead of Strength for attacks that trigger Backstab."]'::jsonb, '#6b617e'),
+  ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', 'Selfless support casters whose mastery of recovery turns a single act of healing into aid for the whole party.', 70, 100, 12, 5, '{"strength":-2,"agility":2,"vitality":-2,"intelligence":-5,"recovery":3,"charisma":2,"accuracy":-2,"range":0,"mana_regen":2,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Healing and enhancement spells use Recovery instead of Intelligence for magic rolls.","Heals also restore half the amount, rounded up, to another ally or the original target."]'::jsonb, '#7581a0'),
+  ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', 'Rune-armed warriors who bind magic into weapons and armor, turning every piece of gear into a spell vessel.', 125, 100, 10, 0, '{"strength":1,"agility":0,"vitality":1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":1,"range":0,"mana_regen":0,"perception":0,"alchemy":-1,"stealth":-2}'::jsonb, '["Begins with three random low-level runes.","Each spell-infused weapon on hand can cast its spell twice per combat."]'::jsonb, '#926d9f'),
+  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', 'Jack-of-all-trades survivalists with broad usefulness, cunning instincts, and flexible party support.', 110, 75, 20, 3, '{"strength":0,"agility":0,"vitality":0,"intelligence":0,"recovery":0,"charisma":-2,"accuracy":0,"range":0,"mana_regen":0,"perception":2,"alchemy":1,"stealth":0}'::jsonb, '["Once per combat or exploration scene, reroll a failed Perception, Alchemy, Survival, or Utility check.","Gains a +2 modifier of choice in a single category where the party has no bonuses."]'::jsonb, '#79895f')
 on conflict (class_key) do update
 set
   name = excluded.name,
@@ -1015,6 +1017,7 @@ grant execute on function public.class_template_record_to_json(public.class_temp
 grant execute on function public.get_character_ledger(text) to anon, authenticated;
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
+
 
 -- ============================================================
 -- Source: supabase\migrations\20260711000600_inventory_loadout_wallet_foundation.sql
@@ -1570,6 +1573,7 @@ grant execute on function public.add_character_inventory_item(text, uuid, uuid, 
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, int) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
+
 
 -- ============================================================
 -- Source: supabase\migrations\20260718000100_house_property_storage_foundation.sql
@@ -2257,3 +2261,330 @@ grant execute on function public.drop_house_inventory_item_quantity(text, uuid, 
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;
+
+
+-- ============================================================
+-- Source: supabase\migrations\20260718000200_battlemap_combat_foundation.sql
+-- ============================================================
+
+-- Battlemap and combat foundation.
+
+create or replace function public.battle_record_to_json(p_battle public.battles)
+returns jsonb
+language sql
+stable
+as $$
+  select case when p_battle.id is null then null else jsonb_build_object(
+    'id', p_battle.id,
+    'status', p_battle.status,
+    'gridWidth', p_battle.grid_width,
+    'gridHeight', p_battle.grid_height
+  ) end
+$$;
+
+create or replace function public.combatant_record_to_json(p_combatant public.combatants)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_combatant.id,
+    'battleId', p_combatant.battle_id,
+    'characterId', p_combatant.character_id,
+    'x', p_combatant.x,
+    'y', p_combatant.y,
+    'currentHp', p_combatant.current_hp,
+    'currentMana', p_combatant.current_mana,
+    'initiative', p_combatant.initiative
+  )
+$$;
+
+create or replace function public.get_battle_room(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_battle
+  from public.battles
+  where status = 'active'::public.battle_status
+  order by created_at desc
+  limit 1;
+
+  return jsonb_build_object(
+    'battle', public.battle_record_to_json(v_battle),
+    'combatants', (
+      select coalesce(jsonb_agg(public.combatant_record_to_json(c) order by c.created_at, c.id), '[]'::jsonb)
+      from public.combatants c
+      where v_battle.id is not null
+        and c.battle_id = v_battle.id
+    ),
+    'characters', (
+      select coalesce(jsonb_agg(public.character_record_to_json(ch) order by ch.kind, ch.name), '[]'::jsonb)
+      from public.characters ch
+      where ch.kind = 'player'
+        or exists (
+          select 1
+          from public.combatants c
+          where v_battle.id is not null
+            and c.battle_id = v_battle.id
+            and c.character_id = ch.id
+        )
+    )
+  );
+end;
+$$;
+
+create or replace function public.start_campaign_battle(
+  p_session_token text,
+  p_character_ids uuid[],
+  p_grid_width int default 24,
+  p_grid_height int default 24
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+  v_character public.characters%rowtype;
+  v_grid_width int := greatest(5, least(100, coalesce(p_grid_width, 24)));
+  v_grid_height int := greatest(5, least(100, coalesce(p_grid_height, 24)));
+  v_index int := 0;
+  v_x int;
+  v_y int;
+  v_inserted int := 0;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can start combat.';
+  end if;
+
+  if exists (select 1 from public.battles where status = 'active'::public.battle_status) then
+    raise exception 'An encounter is already active.';
+  end if;
+
+  if coalesce(array_length(p_character_ids, 1), 0) = 0 then
+    raise exception 'Choose at least one combatant.';
+  end if;
+
+  insert into public.battles (created_by, status, grid_width, grid_height)
+  values (v_profile.id, 'active'::public.battle_status, v_grid_width, v_grid_height)
+  returning * into v_battle;
+
+  for v_character in
+    select c.*
+    from public.characters c
+    where c.id = any(p_character_ids)
+    order by array_position(p_character_ids, c.id), c.name
+  loop
+    v_x := greatest(0, least(v_grid_width - 1, (v_grid_width / 2)::int + (v_index % 5) - 2));
+    v_y := greatest(0, least(v_grid_height - 1, (v_grid_height / 2)::int + floor(v_index / 5.0)::int));
+
+    insert into public.combatants (
+      battle_id,
+      character_id,
+      x,
+      y,
+      current_hp,
+      current_mana,
+      initiative
+    )
+    values (
+      v_battle.id,
+      v_character.id,
+      v_x,
+      v_y,
+      v_character.current_hp,
+      v_character.current_mana,
+      null
+    );
+
+    v_index := v_index + 1;
+    v_inserted := v_inserted + 1;
+  end loop;
+
+  if v_inserted = 0 then
+    delete from public.battles where id = v_battle.id;
+    raise exception 'No valid combatants were found.';
+  end if;
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+create or replace function public.update_combatant_state(
+  p_session_token text,
+  p_combatant_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_combatant public.combatants%rowtype;
+  v_battle public.battles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_x int;
+  v_y int;
+  v_initiative int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can change combatants.';
+  end if;
+
+  select * into v_combatant from public.combatants where id = p_combatant_id;
+  if v_combatant.id is null then
+    raise exception 'Combatant not found.';
+  end if;
+
+  select * into v_battle from public.battles where id = v_combatant.battle_id and status = 'active'::public.battle_status;
+  if v_battle.id is null then
+    raise exception 'That encounter is not active.';
+  end if;
+
+  v_x := case when v_patch ? 'x' then (v_patch->>'x')::int else v_combatant.x end;
+  v_y := case when v_patch ? 'y' then (v_patch->>'y')::int else v_combatant.y end;
+
+  if v_x < 0 or v_x >= v_battle.grid_width or v_y < 0 or v_y >= v_battle.grid_height then
+    raise exception 'Token position is outside the battlemap.';
+  end if;
+
+  v_initiative := case
+    when v_patch ? 'initiative' and nullif(v_patch->>'initiative', '') is not null then greatest(1, least(20, (v_patch->>'initiative')::int))
+    when v_patch ? 'initiative' then null
+    else v_combatant.initiative
+  end;
+
+  update public.combatants
+  set
+    x = v_x,
+    y = v_y,
+    current_hp = case when v_patch ? 'currentHp' then greatest(0, (v_patch->>'currentHp')::int) else current_hp end,
+    current_mana = case when v_patch ? 'currentMana' then greatest(0, (v_patch->>'currentMana')::int) else current_mana end,
+    initiative = v_initiative
+  where id = p_combatant_id
+  returning * into v_combatant;
+
+  return public.combatant_record_to_json(v_combatant);
+end;
+$$;
+
+create or replace function public.remove_combatant_from_battle(
+  p_session_token text,
+  p_combatant_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_combatant public.combatants%rowtype;
+  v_battle public.battles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can remove combatants.';
+  end if;
+
+  select * into v_combatant from public.combatants where id = p_combatant_id;
+  if v_combatant.id is null then
+    raise exception 'Combatant not found.';
+  end if;
+
+  select * into v_battle from public.battles where id = v_combatant.battle_id and status = 'active'::public.battle_status;
+  if v_battle.id is null then
+    raise exception 'That encounter is not active.';
+  end if;
+
+  update public.characters
+  set current_hp = v_combatant.current_hp,
+      current_mana = v_combatant.current_mana
+  where id = v_combatant.character_id;
+
+  delete from public.combatants where id = p_combatant_id;
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+create or replace function public.end_active_battle(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can end combat.';
+  end if;
+
+  select * into v_battle
+  from public.battles
+  where status = 'active'::public.battle_status
+  order by created_at desc
+  limit 1;
+
+  if v_battle.id is null then
+    return public.get_battle_room(p_session_token);
+  end if;
+
+  update public.characters c
+  set current_hp = cb.current_hp,
+      current_mana = cb.current_mana
+  from public.combatants cb
+  where cb.battle_id = v_battle.id
+    and cb.character_id = c.id;
+
+  update public.battles
+  set status = 'ended'::public.battle_status,
+      ended_at = now()
+  where id = v_battle.id;
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+grant execute on function public.battle_record_to_json(public.battles) to anon, authenticated;
+grant execute on function public.combatant_record_to_json(public.combatants) to anon, authenticated;
+grant execute on function public.get_battle_room(text) to anon, authenticated;
+grant execute on function public.start_campaign_battle(text, uuid[], int, int) to anon, authenticated;
+grant execute on function public.update_combatant_state(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.remove_combatant_from_battle(text, uuid) to anon, authenticated;
+grant execute on function public.end_active_battle(text) to anon, authenticated;

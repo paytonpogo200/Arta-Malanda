@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import type { Profile } from '@/lib/types';
 
 const CharacterLedger = dynamic(() => import('@/components/characters/CharacterLedger').then((module) => module.CharacterLedger), { loading: () => <PanelLoading label="Characters" />, ssr: false });
+const BattleRoom = dynamic(() => import('@/components/battle/BattleRoom').then((module) => module.BattleRoom), { loading: () => <PanelLoading label="Battlefield" />, ssr: false });
 
 function PanelLoading({ label }: { label: string }) {
   return (
@@ -32,7 +33,7 @@ export function DashboardClient({ profile }: { profile: Profile }) {
 
   return (
     <DashboardShell profile={profile} activeTab={tab} onTabChange={setTab}>
-      {tab === 'battle' && <FuturePanel title="Battlefield" />}
+      {tab === 'battle' && <BattleRoom profile={profile} />}
       {tab === 'characters' && <CharacterLedger profile={profile} />}
       {tab === 'cities' && <FuturePanel title="Discovered Cities" />}
       {tab === 'bestiary' && <FuturePanel title="Bestiary" />}
