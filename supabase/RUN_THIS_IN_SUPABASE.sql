@@ -1,5 +1,5 @@
 -- Arta Malanda Supabase SQL runner
--- Updated through checkpoint 13: auth, dashboard shell, character ledger, inventory/loadout/wallets, house/property/storage, battlemap/combat, cities/shops, spells, exploration/loot, bestiary, personal scroll, trades/notifications, update assets foundation.
+-- Updated with legacy unclaimed-character support. Run this before optional data_migrations/202607190001_import_old_campaign_unclaimed.sql.
 -- For manual Supabase use: paste this whole file into the Supabase SQL Editor and run it.
 -- It is designed to be rerunnable; create-or-replace functions update existing code cleanly.
 
@@ -4667,3 +4667,44 @@ grant execute on function public.get_update_assets(text) to anon, authenticated;
 grant execute on function public.update_class_template_asset(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_spell_asset(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_loot_item_asset(text, uuid, jsonb) to anon, authenticated;
+
+
+-- ============================================================
+-- Source: supabase\migrations\20260719000600_legacy_unclaimed_character_context.sql
+-- ============================================================
+
+-- Legacy migration support for unclaimed imported characters.
+
+alter table public.characters
+  add column if not exists legacy_owner_name text not null default '';
+
+create or replace function public.character_record_to_json(p_character public.characters)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_character.id,
+    'name', p_character.name,
+    'kind', p_character.kind,
+    'ownerUserId', p_character.owner_user_id,
+    'classKey', coalesce(p_character.class_key, 'adventurer'),
+    'className', p_character.class_name,
+    'level', p_character.level,
+    'maxHp', p_character.max_hp,
+    'currentHp', p_character.current_hp,
+    'maxMana', p_character.max_mana,
+    'currentMana', p_character.current_mana,
+    'inventorySlots', p_character.inventory_slots,
+    'spellSlots', p_character.spell_slots,
+    'attributes', p_character.attributes,
+    'classPassives', p_character.class_passives,
+    'personalPassives', p_character.personal_passives,
+    'tokenColor', p_character.token_color,
+    'locationName', p_character.location_name,
+    'legacyOwnerName', nullif(p_character.legacy_owner_name, '')
+  )
+$$;
+
+grant execute on function public.character_record_to_json(public.characters) to anon, authenticated;

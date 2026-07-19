@@ -204,7 +204,11 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
               {orderedCharacters.map((character) => {
                 const mine = character.ownerUserId === profile.id;
                 const selected = selectedCharacter?.id === character.id;
-                const owner = ownerLabel(profileById.get(character.ownerUserId ?? ''));
+                const owner = character.ownerUserId
+                  ? ownerLabel(profileById.get(character.ownerUserId))
+                  : character.legacyOwnerName
+                    ? `Unclaimed · formerly ${character.legacyOwnerName}`
+                    : 'Unassigned';
                 return (
                   <button
                     key={character.id}
