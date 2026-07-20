@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Loader2, Plus, RefreshCw, UserRound } from 'lucide-react';
+import { ArrowLeft, Loader2, Plus, RefreshCw, UserRound } from 'lucide-react';
 import { CharacterSheet } from '@/components/characters/CharacterSheet';
 import { TradeModal } from '@/components/trades/TradeModal';
 import { Button } from '@/components/ui/Button';
@@ -62,7 +62,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       setProfiles(ledger.profiles);
       setClasses(ledger.classes.length ? ledger.classes : CLASS_TEMPLATES);
       setCharacters(ledger.characters);
-      setSelectedId((current) => current || ledger.characters[0]?.id || '');
+      setSelectedId((current) => ledger.characters.some((character) => character.id === current) ? current : '');
       setDraft((current) => ({
         ...current,
         classKey: current.classKey || ledger.classes[0]?.key || CLASS_TEMPLATES[0]?.key || '',
@@ -90,7 +90,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
     });
   }, [characters, profile.id]);
 
-  const selectedCharacter = characters.find((entry) => entry.id === selectedId) ?? orderedCharacters[0] ?? null;
+  const selectedCharacter = characters.find((entry) => entry.id === selectedId) ?? null;
   const canOfferTrades = useMemo(() => characters.some((character) => character.ownerUserId === profile.id), [characters, profile.id]);
 
   async function createCharacter(event: FormEvent) {
@@ -134,8 +134,24 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
-      <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
+    <div className="space-y-4">
+      {selectedCharacter ? (
+        <>
+          <Card className="p-3">
+            <Button variant="secondary" type="button" onClick={() => setSelectedId('')} className="w-full justify-center sm:w-auto">
+              <span className="flex items-center justify-center gap-2"><ArrowLeft size={16} /> Back to character list</span>
+            </Button>
+          </Card>
+          <CharacterSheet
+            character={selectedCharacter}
+            profile={profile}
+            profiles={profiles}
+            classes={classes}
+            onSaved={updateCharacter}
+            onOfferTrade={canOfferTrades ? setTradeTarget : undefined}
+          />
+        </>
+      ) : (
         <Card>
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
@@ -200,10 +216,9 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
               <Loader2 className="animate-spin" />
             </div>
           ) : (
-            <div className="thin-scrollbar grid max-h-[62vh] gap-2 overflow-y-auto pr-1">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {orderedCharacters.map((character) => {
                 const mine = character.ownerUserId === profile.id;
-                const selected = selectedCharacter?.id === character.id;
                 const owner = character.ownerUserId
                   ? ownerLabel(profileById.get(character.ownerUserId))
                   : character.legacyOwnerName
@@ -213,7 +228,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                   <button
                     key={character.id}
                     onClick={() => setSelectedId(character.id)}
-                    className={`rounded-xl border p-3 text-left transition ${selected ? 'border-[var(--brass)] bg-[#d1a85b12]' : 'border-[var(--line)] bg-black/10'}`}
+                    className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
                   >
                     <span className="flex items-center gap-3">
                       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/20" style={{ backgroundColor: character.tokenColor }}>
@@ -237,19 +252,6 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
             </div>
           )}
         </Card>
-      </aside>
-
-      {selectedCharacter ? (
-        <CharacterSheet
-          character={selectedCharacter}
-          profile={profile}
-          profiles={profiles}
-          classes={classes}
-          onSaved={updateCharacter}
-          onOfferTrade={canOfferTrades ? setTradeTarget : undefined}
-        />
-      ) : (
-        <Card>No characters yet.</Card>
       )}
 
       {tradeTarget && <TradeModal target={tradeTarget} characters={characters} profileId={profile.id} onClose={() => setTradeTarget(null)} />}

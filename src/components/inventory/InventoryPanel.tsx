@@ -11,7 +11,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
-import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload } from '@/features/inventory/data';
+import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
 import { rarityClass } from '@/lib/utils/rarity';
 import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, LootItem, WalletBalance } from '@/lib/types';
@@ -42,6 +42,17 @@ const EMPTY_DRAFT: ItemDraft = {
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
+}
+
+function stackableItems(a: InventoryItem, b: InventoryItem) {
+  return a.name === b.name
+    && a.type === b.type
+    && a.rarity === b.rarity
+    && !a.isStorage
+    && !b.isStorage
+    && (a.spellImbue ?? '') === (b.spellImbue ?? '')
+    && a.loadoutSlot === null
+    && b.loadoutSlot === null;
 }
 
 function inferStorageCapacity(itemName: string) {
@@ -178,6 +189,34 @@ export function InventoryPanel({
     }
   }
 
+  async function patchItemState(itemId: string, patch: Record<string, unknown>, optimisticItems: InventoryItem[]) {
+    const previousItems = items;
+    setItems(optimisticItems);
+    setError('');
+    try {
+      const response = await fetch(`/api/inventory/items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
+      const updated = payload.item ? normalizeInventoryItem(payload.item) : null;
+      if (!updated) {
+        setItems((current) => current.filter((item) => item.id !== itemId));
+        return;
+      }
+      setItems((current) => {
+        const withoutMoved = current.filter((item) => item.id !== itemId);
+        const replaced = withoutMoved.map((item) => item.id === updated.id ? updated : item);
+        return replaced.some((item) => item.id === updated.id) ? replaced : [...withoutMoved, updated];
+      });
+    } catch (actionError) {
+      setItems(previousItems);
+      setError(actionError instanceof Error ? actionError.message : 'Inventory action failed.');
+    }
+  }
+
   async function addItem(event: FormEvent) {
     event.preventDefault();
     if (!modal || modal.item || !canAdd || !draft.name.trim()) return;
@@ -216,21 +255,28 @@ export function InventoryPanel({
   async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
     if (!canManage) return;
     setTarget(`${parentItemId ?? 'main'}:${slot}`);
-    await requestInventoryChange(`/api/inventory/items/${itemId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parentItemId, slotIndex: slot, loadoutSlot: null })
-    });
+    const movingItem = items.find((item) => item.id === itemId);
+    const targetItem = items.find((item) => item.id !== itemId && sameContainer(item, parentItemId) && item.slotIndex === slot);
+    let optimisticItems = items;
+    if (movingItem) {
+      if (targetItem && stackableItems(movingItem, targetItem)) {
+        optimisticItems = items
+          .filter((item) => item.id !== movingItem.id)
+          .map((item) => item.id === targetItem.id ? { ...item, quantity: item.quantity + movingItem.quantity } : item);
+      } else if (!targetItem) {
+        optimisticItems = items.map((item) => item.id === itemId ? { ...item, parentItemId, slotIndex: slot, loadoutSlot: null } : item);
+      }
+    }
+    await patchItemState(itemId, { parentItemId, slotIndex: slot, loadoutSlot: null }, optimisticItems);
     window.setTimeout(() => setTarget(null), 120);
   }
 
   async function equipItem(itemId: string, loadoutSlot: LoadoutSlot | null) {
     if (!canManage) return;
-    await requestInventoryChange(`/api/inventory/items/${itemId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ loadoutSlot })
-    });
+    const optimisticItems = loadoutSlot
+      ? items.map((item) => item.id === itemId ? { ...item, loadoutSlot, parentItemId: null } : item)
+      : items.map((item) => item.id === itemId ? { ...item, loadoutSlot: null } : item);
+    await patchItemState(itemId, { loadoutSlot }, optimisticItems);
   }
 
   async function dropItem(item: InventoryItem) {
@@ -419,7 +465,7 @@ export function InventoryPanel({
                       className="pl-9"
                     />
                   </label>
-                  <div className="thin-scrollbar grid max-h-72 gap-2 overflow-y-auto pr-1">
+                  <div className="catalog-picker thin-scrollbar grid max-h-[42dvh] gap-2 overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/10 p-2">
                     {catalogLoading ? (
                       <div className="grid h-24 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
                         <Loader2 className="animate-spin" />
@@ -429,7 +475,7 @@ export function InventoryPanel({
                         type="button"
                         key={item.id}
                         onClick={() => chooseCatalogItem(item)}
-                        className={`rounded-2xl border p-3 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
+                        className={`catalog-item rounded-2xl border p-3 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
                       >
                         <span className="flex items-start gap-3">
                           <span className="mt-0.5 text-[var(--brass)]"><ItemIcon type={item.type} size={16} /></span>
