@@ -240,14 +240,21 @@ h3,
   content: '';
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 0;
+  pointer-events: none;
   opacity: .28;
   background-size: 280% 280%;
   transform: translateZ(0);
+  will-change: background-position, opacity;
 }
 
 .rarity-legendary::before {
-  background: linear-gradient(120deg, #8f5615, #e0a64e, #ffe09a, #9b641c, #d18b2c, #8f5615);
+  opacity: .34;
+  background:
+    linear-gradient(112deg, transparent 0%, rgba(255, 238, 177, .08) 24%, rgba(255, 224, 154, .58) 44%, rgba(255, 209, 102, .24) 56%, transparent 76%),
+    linear-gradient(120deg, #8f5615, #e0a64e, #ffe09a, #9b641c, #d18b2c, #8f5615);
+  background-size: 260% 260%, 320% 320%;
+  animation: legendary-shimmer 9.5s ease-in-out infinite;
 }
 
 .rarity-mythical {
@@ -257,15 +264,18 @@ h3,
 }
 
 .rarity-mythical::before {
-  opacity: .38;
+  opacity: .42;
   background: linear-gradient(120deg, #ff5678, #ff9f55, #ffcf58, #8de0a2, #62cfe6, #7898ff, #bd7cff, #ff62d0, #ff5678);
+  animation: mythical-bloom 16s ease-in-out infinite;
 }
 
-.rarity-card[data-animate='true']::before {
-  animation: rarity-shift 14s linear infinite;
+@keyframes legendary-shimmer {
+  0% { background-position: -140% 50%, 0% 50%; opacity: .25; }
+  45% { background-position: 70% 50%, 82% 50%; opacity: .43; }
+  100% { background-position: 180% 50%, 0% 50%; opacity: .25; }
 }
 
-@keyframes rarity-shift {
+@keyframes mythical-bloom {
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
@@ -277,9 +287,28 @@ h3,
   inset: -18%;
   z-index: 0;
   pointer-events: none;
-  opacity: .44;
-  background: linear-gradient(105deg, transparent 18%, rgba(115, 255, 232, .44) 45%, transparent 72%);
-  transform: translateX(-30%) rotate(-4deg);
+  opacity: .5;
+  background:
+    linear-gradient(104deg, transparent 12%, rgba(97, 245, 228, .12) 32%, rgba(111, 255, 235, .58) 48%, rgba(142, 255, 241, .18) 62%, transparent 82%);
+  background-size: 220% 100%;
+  transform: translateX(-42%) rotate(-4deg);
+  animation: enchanted-gleam 7.5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes enchanted-gleam {
+  0% { transform: translateX(-48%) rotate(-4deg); opacity: .22; }
+  42% { transform: translateX(42%) rotate(-4deg); opacity: .56; }
+  100% { transform: translateX(48%) rotate(-4deg); opacity: .22; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rarity-legendary::before,
+  .rarity-mythical::before,
+  .inventory-enchanted::after {
+    animation: none;
+    will-change: auto;
+  }
 }
 
 .inventory-slot > *,
