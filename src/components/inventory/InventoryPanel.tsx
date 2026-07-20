@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Loader2, PackageOpen, RefreshCw } from 'lucide-react';
+import { Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
+import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { LoadoutPanel } from '@/components/inventory/LoadoutPanel';
 import { Button } from '@/components/ui/Button';
@@ -9,9 +10,11 @@ import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
+import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
-import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, WalletBalance } from '@/lib/types';
+import { rarityClass } from '@/lib/utils/rarity';
+import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, LootItem, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -41,6 +44,17 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
 }
 
+function inferStorageCapacity(itemName: string) {
+  const normalized = itemName.toLowerCase();
+  if (normalized.includes('bag of holding')) return 500;
+  if (normalized.includes('heavy duffle')) return 12;
+  if (normalized.includes('light duffle')) return 6;
+  if (normalized.includes('back bag') || normalized.includes('backpack')) return 4;
+  if (normalized.includes('waist pouch') || normalized.includes('pouch')) return 1;
+  if (normalized.includes('satchel')) return 3;
+  return 6;
+}
+
 export function InventoryPanel({
   character,
   canManage,
@@ -60,6 +74,10 @@ export function InventoryPanel({
   const [modal, setModal] = useState<SlotTarget | null>(null);
   const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
   const [dropQuantity, setDropQuantity] = useState(1);
+  const [catalog, setCatalog] = useState<LootItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState('');
+  const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -83,9 +101,39 @@ export function InventoryPanel({
     void loadInventory();
   }, [loadInventory]);
 
+  const loadCatalog = useCallback(async () => {
+    if (!canAdd) return;
+    setCatalogLoading(true);
+    try {
+      const response = await fetch('/api/assets', { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      const normalized = normalizeUpdateAssetsPayload(payload);
+      const uniqueByName = new Map<string, LootItem>();
+      for (const item of normalized.lootItems) {
+        const key = `${item.name.toLowerCase()}|${item.rarity}|${item.type}`;
+        if (!uniqueByName.has(key)) uniqueByName.set(key, item);
+      }
+      setCatalog([...uniqueByName.values()].sort((a, b) => a.name.localeCompare(b.name)));
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, [canAdd]);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
+
   const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null)), [items]);
   const itemByMainSlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const filteredCatalog = useMemo(() => {
+    const search = catalogSearch.trim().toLowerCase();
+    const source = search
+      ? catalog.filter((item) => `${item.name} ${item.type} ${item.rarity} ${item.category}`.toLowerCase().includes(search))
+      : catalog;
+    return source.slice(0, 80);
+  }, [catalog, catalogSearch]);
 
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
@@ -99,6 +147,19 @@ export function InventoryPanel({
       spellImbue: item.spellImbue ?? ''
     } : EMPTY_DRAFT);
     setDropQuantity(item?.quantity ?? 1);
+    setCatalogSearch('');
+    setAddMode(item ? 'custom' : 'catalog');
+  }
+
+  function chooseCatalogItem(item: LootItem) {
+    setDraft({
+      name: item.name,
+      type: item.type,
+      rarity: item.rarity,
+      quantity: Math.max(1, item.minQuantity || 1),
+      storageCapacity: item.type === 'storage' ? inferStorageCapacity(item.name) : 0,
+      spellImbue: ''
+    });
   }
 
   async function requestInventoryChange(url: string, init: RequestInit) {
@@ -342,7 +403,52 @@ export function InventoryPanel({
             </div>
           ) : (
             <form onSubmit={addItem} className="grid gap-3">
-              <TextField autoFocus placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              <div className="grid grid-cols-2 gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-1">
+                <Button type="button" variant={addMode === 'catalog' ? 'primary' : 'ghost'} className="py-2" onClick={() => setAddMode('catalog')}>Catalog</Button>
+                <Button type="button" variant={addMode === 'custom' ? 'primary' : 'ghost'} className="py-2" onClick={() => setAddMode('custom')}>Custom</Button>
+              </div>
+
+              {addMode === 'catalog' && (
+                <div className="grid gap-3">
+                  <label className="relative block">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={16} />
+                    <TextField
+                      placeholder="Search loot catalog"
+                      value={catalogSearch}
+                      onChange={(event) => setCatalogSearch(event.target.value)}
+                      className="pl-9"
+                    />
+                  </label>
+                  <div className="thin-scrollbar grid max-h-72 gap-2 overflow-y-auto pr-1">
+                    {catalogLoading ? (
+                      <div className="grid h-24 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
+                        <Loader2 className="animate-spin" />
+                      </div>
+                    ) : filteredCatalog.length ? filteredCatalog.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        onClick={() => chooseCatalogItem(item)}
+                        className={`rounded-2xl border p-3 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
+                      >
+                        <span className="flex items-start gap-3">
+                          <span className="mt-0.5 text-[var(--brass)]"><ItemIcon type={item.type} size={16} /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block break-words text-sm font-black leading-5">{item.name}</span>
+                            <span className="mt-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{item.rarity} · {item.type}</span>
+                          </span>
+                        </span>
+                      </button>
+                    )) : (
+                      <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
+                        No catalog items found.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <TextField autoFocus={addMode === 'custom'} placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
               <div className="grid gap-2 sm:grid-cols-3">
                 <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                 <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
