@@ -309,30 +309,81 @@ h3,
   text-shadow: 0 1px 1px rgba(0, 0, 0, .45);
 }
 
-.catalog-picker .rarity-card::before,
-.catalog-picker .catalog-item::before {
-  opacity: .16;
+.catalog-search-input {
+  padding-left: 3.2rem !important;
 }
 
-.catalog-picker .catalog-item {
-  min-height: auto;
-  display: block;
-  box-shadow: inset 0 0 16px rgba(0, 0, 0, .2), 0 4px 10px rgba(10, 4, 1, .14);
+.catalog-picker {
+  display: flex !important;
+  flex-direction: column;
+  gap: .8rem;
+}
+
+.catalog-item {
+  width: 100%;
+  min-height: 4.85rem;
+  overflow: visible;
+  border: 1.5px solid rgba(224, 166, 78, .24);
+  border-left-width: 5px;
+  border-radius: 1rem;
+  background: linear-gradient(145deg, rgba(34, 17, 7, .88), rgba(18, 8, 3, .92));
+  padding: 1rem;
+  box-shadow: inset 0 1px rgba(255, 236, 199, .04), 0 5px 13px rgba(10, 4, 1, .14);
+}
+
+.catalog-item[data-selected='true'] {
+  border-color: var(--brass);
+  box-shadow: 0 0 0 3px rgba(224, 166, 78, .18), inset 0 1px rgba(255, 236, 199, .08);
+}
+
+.catalog-item[data-rarity='Common'] { border-left-color: #b7a890; }
+.catalog-item[data-rarity='Uncommon'] { border-left-color: #76d0a5; }
+.catalog-item[data-rarity='Rare'] { border-left-color: #70baff; }
+.catalog-item[data-rarity='Epic'] { border-left-color: #c68cff; }
+.catalog-item[data-rarity='Legendary'] { border-left-color: #ffd166; }
+.catalog-item[data-rarity='Mythical'] { border-left-color: #e46bff; }
+
+.catalog-item-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: .95rem;
+}
+
+.catalog-item-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: .85rem;
+  background: rgba(0, 0, 0, .2);
+  color: var(--brass);
+}
+
+.catalog-item-copy {
+  min-width: 0;
+  flex: 1;
 }
 
 .catalog-item-title {
+  display: block;
+  color: var(--paper);
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.35rem;
+  overflow-wrap: anywhere;
   letter-spacing: .005em;
 }
 
 .catalog-item-meta {
-  word-spacing: .12em;
-}
-
-.catalog-picker .catalog-item > span > span:last-child > span:last-child {
   display: block;
   margin-top: .45rem;
-  font-size: .78rem;
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 900;
   line-height: 1rem;
+  text-transform: uppercase;
+  letter-spacing: .11em;
 }
 
 .inventory-grid {
@@ -452,19 +503,26 @@ h3,
 
   .catalog-picker {
     max-height: 40dvh;
+    gap: .7rem;
   }
 
   .catalog-picker .catalog-item {
-    padding: .9rem;
+    min-height: 4.65rem;
+    padding: .95rem;
     border-radius: 1rem;
   }
 
-  .catalog-picker .catalog-item-title {
+  .catalog-item-icon {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .catalog-item-title {
     font-size: .92rem;
     line-height: 1.25rem;
   }
 
-  .catalog-picker .catalog-item-meta {
+  .catalog-item-meta {
     font-size: .68rem;
     line-height: .95rem;
   }

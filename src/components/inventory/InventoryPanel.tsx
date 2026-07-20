@@ -13,7 +13,6 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
-import { rarityClass } from '@/lib/utils/rarity';
 import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, LootItem, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
@@ -462,7 +461,7 @@ export function InventoryPanel({
                       placeholder="Search loot catalog"
                       value={catalogSearch}
                       onChange={(event) => setCatalogSearch(event.target.value)}
-                      className="pl-12"
+                      className="catalog-search-input"
                     />
                   </label>
                   <div className="catalog-picker thin-scrollbar grid max-h-[46dvh] gap-3 overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/10 p-3">
@@ -475,13 +474,15 @@ export function InventoryPanel({
                         type="button"
                         key={item.id}
                         onClick={() => chooseCatalogItem(item)}
-                        className={`catalog-item rounded-2xl border p-4 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
+                        data-rarity={item.rarity}
+                        data-selected={draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type}
+                        className="catalog-item text-left transition active:scale-[0.99]"
                       >
-                        <span className="flex items-start gap-4">
-                          <span className="mt-0.5 shrink-0 text-[var(--brass)]"><ItemIcon type={item.type} size={18} /></span>
-                          <span className="min-w-0 flex-1">
-                            <span className="catalog-item-title block break-words text-base font-black leading-6">{item.name}</span>
-                            <span className="mt-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{item.rarity} · {item.type}</span>
+                        <span className="catalog-item-inner">
+                          <span className="catalog-item-icon"><ItemIcon type={item.type} size={20} /></span>
+                          <span className="catalog-item-copy">
+                            <span className="catalog-item-title">{item.name}</span>
+                            <span className="catalog-item-meta">{item.rarity} · {item.type}</span>
                           </span>
                         </span>
                       </button>
