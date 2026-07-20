@@ -29,6 +29,12 @@ const DEFAULT_SETTINGS: LootGeneratorSettings = {
     Base: 40
   },
   rareMultiplierKeywords: { capital: 5, base: 2, camp: 1.33 },
+  rareBoostRarities: ['Rare', 'Epic', 'Legendary', 'Mythical'],
+  towerBoostRarities: ['Epic', 'Legendary', 'Mythical'],
+  towerBoostMultiplier: 2,
+  specialRoomBoostRarities: ['Epic', 'Legendary', 'Mythical'],
+  specialRoomTypes: ['Secret Room', 'Tower Boss Room'],
+  specialRoomMultiplier: 2,
   sourceFormulas: {}
 };
 
@@ -137,6 +143,12 @@ export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSet
     roomTypes: Array.isArray(source.roomTypes) && source.roomTypes.length ? source.roomTypes.map(String).filter(Boolean) : DEFAULT_SETTINGS.roomTypes,
     baseRollsByPoolSize: objectOfNumbers(source.baseRollsByPoolSize, DEFAULT_SETTINGS.baseRollsByPoolSize),
     rareMultiplierKeywords: objectOfNumbers(source.rareMultiplierKeywords, DEFAULT_SETTINGS.rareMultiplierKeywords),
+    rareBoostRarities: Array.isArray(source.rareBoostRarities) ? source.rareBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.rareBoostRarities,
+    towerBoostRarities: Array.isArray(source.towerBoostRarities) ? source.towerBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.towerBoostRarities,
+    towerBoostMultiplier: numberFrom(source.towerBoostMultiplier, DEFAULT_SETTINGS.towerBoostMultiplier ?? 2),
+    specialRoomBoostRarities: Array.isArray(source.specialRoomBoostRarities) ? source.specialRoomBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.specialRoomBoostRarities,
+    specialRoomTypes: Array.isArray(source.specialRoomTypes) ? source.specialRoomTypes.map(String).filter(Boolean) : DEFAULT_SETTINGS.specialRoomTypes,
+    specialRoomMultiplier: numberFrom(source.specialRoomMultiplier, DEFAULT_SETTINGS.specialRoomMultiplier ?? 2),
     sourceFormulas: source.sourceFormulas && typeof source.sourceFormulas === 'object' && !Array.isArray(source.sourceFormulas)
       ? Object.fromEntries(Object.entries(source.sourceFormulas).map(([key, val]) => [key, String(val ?? '')]))
       : {}

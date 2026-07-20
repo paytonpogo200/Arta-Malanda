@@ -15,7 +15,7 @@ const EMPTY: BestiaryPayload = {
   totalCount: 0
 };
 
-const PRIMARY_STAT_LABELS = ['HP', 'Mana', 'Wild Score', 'Damage', 'Strength', 'Vitality', 'Magic Res', 'Armor / Hide', 'Armor', 'Str/Acc/Int', 'Strength / Accuracy / Intelligence'];
+const PRIMARY_STAT_LABELS = ['HP', 'Mana', 'Mana Pool', 'Wild Score', 'Damage', 'Strength', 'Vitality', 'Magic Res', 'Magic Resistance', 'Armor / Hide', 'Armor', 'Str/Acc/Int', 'Strength / Accuracy / Intelligence'];
 
 function cleanStatValue(value: string | number | undefined) {
   const text = String(value ?? '').trim();

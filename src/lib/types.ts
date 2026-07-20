@@ -260,6 +260,12 @@ export type LootGeneratorSettings = {
   roomTypes: string[];
   baseRollsByPoolSize: Record<string, number>;
   rareMultiplierKeywords: Record<string, number>;
+  rareBoostRarities?: ItemRarity[];
+  towerBoostRarities?: ItemRarity[];
+  towerBoostMultiplier?: number;
+  specialRoomBoostRarities?: ItemRarity[];
+  specialRoomTypes?: string[];
+  specialRoomMultiplier?: number;
   sourceFormulas: Record<string, string>;
 };
 

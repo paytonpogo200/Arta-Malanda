@@ -22,6 +22,12 @@ const EMPTY: ExplorationPayload = {
     roomTypes: ['Normal'],
     baseRollsByPoolSize: { 'Medium Cave': 15 },
     rareMultiplierKeywords: { capital: 5, base: 2, camp: 1.33 },
+    rareBoostRarities: ['Rare', 'Epic', 'Legendary', 'Mythical'],
+    towerBoostRarities: ['Epic', 'Legendary', 'Mythical'],
+    towerBoostMultiplier: 2,
+    specialRoomBoostRarities: ['Epic', 'Legendary', 'Mythical'],
+    specialRoomTypes: ['Secret Room', 'Tower Boss Room'],
+    specialRoomMultiplier: 2,
     sourceFormulas: {}
   }
 };

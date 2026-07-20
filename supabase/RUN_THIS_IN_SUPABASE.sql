@@ -660,7 +660,7 @@ grant execute on function public.character_record_to_json(public.characters) to 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260720000300_bestiary_markdown_categories.sql
+-- Source: supabase\migrations\20260720000300_bestiary_categories.sql
 -- ============================================================
 
 -- Flexible bestiary categories and full stat storage.
@@ -937,6 +937,9 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can import the bestiary.'; end if;
 
+  delete from public.bestiary_entities;
+  delete from public.bestiary_categories;
+
   for v_category in select value from jsonb_array_elements(coalesce(p_categories, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_category->>'key', ''), 'unsorted');
@@ -998,6 +1001,7 @@ begin
 end;
 $$;
 
+drop function if exists public.import_bestiary_markdown(text, jsonb, jsonb);
 grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.get_character_ledger(text) to anon, authenticated;
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, int, int, int, int, int, int, int, jsonb, jsonb, text, text) to anon, authenticated;
@@ -5126,6 +5130,12 @@ values (
     'roomTypes', jsonb_build_array('Normal', 'Secret Room', 'Tower Boss Room'),
     'baseRollsByPoolSize', jsonb_build_object('Night Encounter', 5, 'Small Cave', 10, 'Medium Cave', 15, 'Large Cave', 20, 'Dragon Lair', 50, 'Tower Floor', 25, 'Base', 40),
     'rareMultiplierKeywords', jsonb_build_object('capital', 5, 'base', 2, 'camp', 1.33),
+    'rareBoostRarities', jsonb_build_array('Rare', 'Epic', 'Legendary', 'Mythical'),
+    'towerBoostRarities', jsonb_build_array('Epic', 'Legendary', 'Mythical'),
+    'towerBoostMultiplier', 2,
+    'specialRoomBoostRarities', jsonb_build_array('Epic', 'Legendary', 'Mythical'),
+    'specialRoomTypes', jsonb_build_array('Secret Room', 'Tower Boss Room'),
+    'specialRoomMultiplier', 2,
     'sourceFormulas', '{}'::jsonb
   )
 )
@@ -5348,6 +5358,12 @@ declare
   v_rare_multiplier numeric := 1;
   v_keyword text;
   v_value numeric;
+  v_rare_boost_rarities text[] := array['Rare', 'Epic', 'Legendary', 'Mythical'];
+  v_tower_boost_rarities text[] := array['Epic', 'Legendary', 'Mythical'];
+  v_special_room_boost_rarities text[] := array['Epic', 'Legendary', 'Mythical'];
+  v_special_room_types text[] := array['Secret Room', 'Tower Boss Room'];
+  v_tower_multiplier numeric := 2;
+  v_special_room_multiplier numeric := 2;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -5356,6 +5372,30 @@ begin
   select settings into v_settings
   from public.loot_generator_configs
   where id = 'default';
+  v_settings := coalesce(v_settings, '{}'::jsonb);
+
+  select array_agg(value) into v_rare_boost_rarities
+  from jsonb_array_elements_text(coalesce(v_settings->'rareBoostRarities', '[]'::jsonb)) as value
+  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
+  if coalesce(array_length(v_rare_boost_rarities, 1), 0) = 0 then v_rare_boost_rarities := array['Rare', 'Epic', 'Legendary', 'Mythical']; end if;
+
+  select array_agg(value) into v_tower_boost_rarities
+  from jsonb_array_elements_text(coalesce(v_settings->'towerBoostRarities', '[]'::jsonb)) as value
+  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
+  if coalesce(array_length(v_tower_boost_rarities, 1), 0) = 0 then v_tower_boost_rarities := array['Epic', 'Legendary', 'Mythical']; end if;
+
+  select array_agg(value) into v_special_room_boost_rarities
+  from jsonb_array_elements_text(coalesce(v_settings->'specialRoomBoostRarities', '[]'::jsonb)) as value
+  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
+  if coalesce(array_length(v_special_room_boost_rarities, 1), 0) = 0 then v_special_room_boost_rarities := array['Epic', 'Legendary', 'Mythical']; end if;
+
+  select array_agg(value) into v_special_room_types
+  from jsonb_array_elements_text(coalesce(v_settings->'specialRoomTypes', '[]'::jsonb)) as value
+  where nullif(trim(value), '') is not null;
+  if coalesce(array_length(v_special_room_types, 1), 0) = 0 then v_special_room_types := array['Secret Room', 'Tower Boss Room']; end if;
+
+  v_tower_multiplier := greatest(0, coalesce(nullif(v_settings->>'towerBoostMultiplier', '')::numeric, 2));
+  v_special_room_multiplier := greatest(0, coalesce(nullif(v_settings->>'specialRoomMultiplier', '')::numeric, 2));
 
   v_base_rolls := coalesce(nullif(v_settings #>> array['baseRollsByPoolSize', p_pool_size], '')::numeric, 1);
   v_rolls := greatest(1, least(200, round(v_base_rolls)::int));
@@ -5379,9 +5419,9 @@ begin
   from (
     select
       greatest(1, i.base_weight)::numeric
-      * case when i.rarity in ('Rare', 'Epic', 'Legendary', 'Mythical') then v_rare_multiplier else 1 end
-      * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity in ('Epic', 'Legendary', 'Mythical') then 2 else 1 end
-      * case when p_room_type in ('Secret Room', 'Tower Boss Room') and i.rarity in ('Epic', 'Legendary', 'Mythical') then 2 else 1 end as adjusted_weight
+      * case when i.rarity::text = any(v_rare_boost_rarities) then v_rare_multiplier else 1 end
+      * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity::text = any(v_tower_boost_rarities) then v_tower_multiplier else 1 end
+      * case when p_room_type = any(v_special_room_types) and i.rarity::text = any(v_special_room_boost_rarities) then v_special_room_multiplier else 1 end as adjusted_weight
     from public.loot_items i
     where i.is_active
       and greatest(1, p_difficulty) between i.min_difficulty and i.max_difficulty
@@ -5410,9 +5450,9 @@ begin
       select
         i.*,
         greatest(1, i.base_weight)::numeric
-        * case when i.rarity in ('Rare', 'Epic', 'Legendary', 'Mythical') then v_rare_multiplier else 1 end
-        * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity in ('Epic', 'Legendary', 'Mythical') then 2 else 1 end
-        * case when p_room_type in ('Secret Room', 'Tower Boss Room') and i.rarity in ('Epic', 'Legendary', 'Mythical') then 2 else 1 end as adjusted_weight
+        * case when i.rarity::text = any(v_rare_boost_rarities) then v_rare_multiplier else 1 end
+        * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity::text = any(v_tower_boost_rarities) then v_tower_multiplier else 1 end
+        * case when p_room_type = any(v_special_room_types) and i.rarity::text = any(v_special_room_boost_rarities) then v_special_room_multiplier else 1 end as adjusted_weight
       from public.loot_items i
       where i.is_active
         and greatest(1, p_difficulty) between i.min_difficulty and i.max_difficulty

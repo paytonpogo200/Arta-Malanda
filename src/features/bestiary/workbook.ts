@@ -59,17 +59,32 @@ function statValue(value: unknown) {
   return text && text !== '—' ? text : '';
 }
 
+const CATEGORY_FILL = '244062';
+const HEADER_FILL = 'D9EAF7';
+
+function cellFill(sheet: XLSX.WorkSheet, row: number, column: number) {
+  const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })] as XLSX.CellObject & { s?: { fgColor?: { rgb?: string } } } | undefined;
+  return cell?.s?.fgColor?.rgb?.toUpperCase() ?? '';
+}
+
+function rowHasFill(sheet: XLSX.WorkSheet, row: number, fill: string) {
+  const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    if (cellFill(sheet, row, column) === fill) return true;
+  }
+  return false;
+}
+
 export function parseBestiaryWorkbook(buffer: ArrayBuffer): ParsedBestiaryWorkbook {
-  const workbook = XLSX.read(buffer, { type: 'array', cellFormula: true, cellDates: false });
+  const workbook = XLSX.read(buffer, { type: 'array', cellFormula: true, cellDates: false, cellStyles: true });
   const sheetName = workbook.SheetNames.includes('Bestiary') ? 'Bestiary' : workbook.SheetNames[0];
   const sheet = workbook.Sheets[sheetName];
   if (!sheet) return { categories: [], entities: [] };
 
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: false });
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
   const categories = new Map<string, BestiaryCategoryRecord>();
   const entities = new Map<string, ParsedBestiaryEntity>();
-  let currentCategoryName = 'Unsorted';
-  let currentCategoryKey = 'unsorted';
+  let currentCategoryKey = '';
   let headers: string[] = [];
   let categoryOrder = 0;
   let entityOrder = 0;
@@ -84,26 +99,24 @@ export function parseBestiaryWorkbook(buffer: ArrayBuffer): ParsedBestiaryWorkbo
     return key;
   }
 
-  currentCategoryKey = ensureCategory(currentCategoryName);
-
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
     const values = filledCells(row);
     if (!values.length) continue;
 
-    if (values.length === 1 && !isHeaderRow(row)) {
-      currentCategoryName = values[0];
-      currentCategoryKey = ensureCategory(currentCategoryName);
+    if (rowHasFill(sheet, rowIndex, CATEGORY_FILL)) {
+      currentCategoryKey = ensureCategory(values[0]);
       headers = [];
       continue;
     }
 
-    if (isHeaderRow(row)) {
+    if (currentCategoryKey && (rowHasFill(sheet, rowIndex, HEADER_FILL) || isHeaderRow(row))) {
       const width = rowWidth(row);
       headers = row.slice(0, width).map((value) => clean(value));
       continue;
     }
 
-    if (!headers.length) continue;
+    if (!currentCategoryKey || !headers.length) continue;
 
     const name = clean(row[0]);
     if (!name) continue;

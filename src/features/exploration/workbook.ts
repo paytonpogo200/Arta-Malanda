@@ -32,7 +32,7 @@ export function categoryToItemType(categoryValue: unknown, itemNameValue: unknow
   const name = text(itemNameValue).toLowerCase();
   const combined = `${category} ${name}`;
 
-  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear')) return 'weapon';
+  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand')) return 'weapon';
   if (combined.includes('shield')) return 'shield';
   if (combined.includes('armor') || combined.includes('armour')) return 'armor';
   if (combined.includes('animal') || combined.includes('horse') || combined.includes('dog') || combined.includes('pet')) return 'pet';
@@ -43,7 +43,7 @@ export function categoryToItemType(categoryValue: unknown, itemNameValue: unknow
   if (combined.includes('plant') || combined.includes('herb') || combined.includes('flower') || combined.includes('root')) return 'plant';
   if (combined.includes('fabric') || combined.includes('cloth') || combined.includes('leather') || combined.includes('clothing') || combined.includes('cloak')) return 'fabric';
   if (combined.includes('scroll') || combined.includes('map') || combined.includes('lore') || combined.includes('tome')) return 'quest';
-  if (combined.includes('ring') || combined.includes('jewel') || combined.includes('gem') || combined.includes('rune') || combined.includes('upgrade')) return 'accessory';
+  if (combined.includes('belt') || combined.includes('ring') || combined.includes('jewel') || combined.includes('jewlery') || combined.includes('jewelry') || combined.includes('gem') || combined.includes('rune') || combined.includes('upgrade')) return 'accessory';
   if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch') || combined.includes('arrows')) return 'tool';
   return 'misc';
 }
@@ -89,6 +89,25 @@ function parseRareMultipliers(formula: string) {
   return Object.keys(result).length ? result : { capital: 5, base: 2, camp: 1.33 };
 }
 
+function parseRarityGroups(formula: string) {
+  const groups: ItemRarity[][] = [];
+  const pattern = /\{([^}]+)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(formula))) {
+    const entries = match[1]
+      .split(',')
+      .map((entry) => rarity(entry.replace(/"/g, '').trim()))
+      .filter((entry, index, array) => array.indexOf(entry) === index);
+    if (entries.length) groups.push(entries);
+  }
+  return groups;
+}
+
+function parseRoomTypesFromFormula(formula: string, fallback: string[]) {
+  const matches = Array.from(formula.matchAll(/Generator!\$B\$4\s*=\s*"([^"]+)"/g)).map((match) => match[1]).filter(Boolean);
+  return matches.length ? Array.from(new Set(matches)) : fallback;
+}
+
 export function parseLootWorkbook(buffer: Buffer) {
   const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: true, cellDates: false });
   const lootRows = tableRows(workbook.Sheets['Loot Table']);
@@ -101,6 +120,13 @@ export function parseLootWorkbook(buffer: Buffer) {
   const roomTypes = valuesFromColumn(settingsRows, 3);
   const rollFormula = text(generator?.B5?.f);
   const rareFormula = text(generator?.D2?.f);
+  const eligibleFormula = text(workbook.Sheets['Roll Helper']?.J2?.f);
+  const adjustedWeightFormula = text(workbook.Sheets['Roll Helper']?.K2?.f);
+  const rarityGroups = parseRarityGroups(adjustedWeightFormula);
+  const rareBoostRarities = rarityGroups[0] ?? ['Rare', 'Epic', 'Legendary', 'Mythical'];
+  const towerBoostRarities = rarityGroups[1] ?? ['Epic', 'Legendary', 'Mythical'];
+  const specialRoomBoostRarities = rarityGroups[2] ?? ['Epic', 'Legendary', 'Mythical'];
+  const specialRoomTypes = parseRoomTypesFromFormula(adjustedWeightFormula, ['Secret Room', 'Tower Boss Room']);
 
   const rows = lootRows.slice(1).map((row) => {
     const name = text(row[0]);
@@ -134,9 +160,17 @@ export function parseLootWorkbook(buffer: Buffer) {
       roomTypes: roomTypes.length ? roomTypes : ['Normal', 'Secret Room', 'Tower Boss Room'],
       baseRollsByPoolSize: parseBaseRolls(rollFormula, poolSizes),
       rareMultiplierKeywords: parseRareMultipliers(rareFormula),
+      rareBoostRarities,
+      towerBoostRarities,
+      towerBoostMultiplier: 2,
+      specialRoomBoostRarities,
+      specialRoomTypes,
+      specialRoomMultiplier: 2,
       sourceFormulas: {
         rareMultiplier: rareFormula,
-        lootRolls: rollFormula
+        lootRolls: rollFormula,
+        eligible: eligibleFormula,
+        adjustedWeight: adjustedWeightFormula
       }
     },
     source: {
