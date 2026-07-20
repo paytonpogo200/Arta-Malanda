@@ -53,7 +53,7 @@ export const InventorySlot = memo(function InventorySlot({
         item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
       } ${target ? 'inventory-slot-target' : ''}`}
     >
-      <span className="pointer-events-none absolute left-2 top-1.5 text-[9px] font-black text-[var(--muted)]">{slot + 1}</span>
+      <span className="inventory-slot-number pointer-events-none absolute top-1.5 text-[9px] font-black text-[var(--muted)]">{slot + 1}</span>
       {item ? (
         <>
           <span className="inventory-slot-icon mt-2 text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
@@ -62,7 +62,11 @@ export const InventorySlot = memo(function InventorySlot({
             {item.quantity > 1 && <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-black">x{item.quantity}</span>}
           </span>
         </>
-      ) : canAdd ? <Plus className="text-[var(--muted)]" size={16} /> : null}
+      ) : canAdd ? (
+        <span className="inventory-empty-plus">
+          <Plus size={18} />
+        </span>
+      ) : null}
     </button>
   );
 });

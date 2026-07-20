@@ -309,6 +309,19 @@ h3,
   text-shadow: 0 1px 1px rgba(0, 0, 0, .45);
 }
 
+.inventory-slot-number {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.inventory-empty-plus {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
 .catalog-search-input {
   padding-left: 3.2rem !important;
 }
