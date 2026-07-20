@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ChevronDown, ChevronRight, Eye, EyeOff, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Store, Unlock, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Store, Unlock, Users } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -31,6 +31,7 @@ type VendorDraft = {
   facility: string;
   category: string;
   hidden: boolean;
+  order: number;
 };
 
 function productToDraft(product: MarketProduct): ProductDraft {
@@ -51,7 +52,8 @@ function vendorToDraft(vendor: ShopVendor): VendorDraft {
     npcName: vendor.npcName,
     facility: vendor.facility,
     category: vendor.category,
-    hidden: vendor.hidden
+    hidden: vendor.hidden,
+    order: vendor.order
   };
 }
 
@@ -174,6 +176,33 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     }
   }
 
+  async function moveVendor(vendor: ShopVendor, direction: -1 | 1) {
+    const cityVendors = payload.vendors
+      .filter((entry) => entry.cityKey === vendor.cityKey)
+      .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+    const currentIndex = cityVendors.findIndex((entry) => entry.id === vendor.id);
+    const swapWith = cityVendors[currentIndex + direction];
+    if (!swapWith) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${vendor.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: swapWith.order })
+      }), 'Shop order could not be changed.');
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${swapWith.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order: vendor.order })
+      }), 'Shop order could not be changed.');
+    } catch (moveError) {
+      setError(moveError instanceof Error ? moveError.message : 'Shop order could not be changed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function buyProduct() {
     if (!selectedProduct || !selectedShopper) return;
     setSaving(true);
@@ -258,6 +287,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       {payload.vendors.map((vendor) => {
         if (vendor.hidden && !isDm) return null;
         const expanded = expandedVendors.has(vendor.id);
+        const cityVendors = payload.vendors.filter((entry) => entry.cityKey === vendor.cityKey).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+        const vendorIndex = cityVendors.findIndex((entry) => entry.id === vendor.id);
         return (
           <Card key={vendor.id} className={`overflow-hidden ${vendor.hidden ? 'opacity-75' : ''}`}>
             <div className="relative">
@@ -299,6 +330,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     {vendor.hidden ? <Eye className="mr-2 inline" size={13} /> : <EyeOff className="mr-2 inline" size={13} />}
                     {vendor.hidden ? 'Show shop' : 'Hide shop'}
                   </Button>
+                  <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => void moveVendor(vendor, -1)} disabled={saving || vendorIndex <= 0} aria-label={`Move ${vendor.name} up`}><ArrowUp size={13} /></Button>
+                  <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => void moveVendor(vendor, 1)} disabled={saving || vendorIndex < 0 || vendorIndex >= cityVendors.length - 1} aria-label={`Move ${vendor.name} down`}><ArrowDown size={13} /></Button>
                 </div>
               )}
             </div>

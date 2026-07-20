@@ -272,7 +272,14 @@ export type LootDrop = {
   quantity: number;
 };
 
-export type BestiaryCategory = 'animal' | 'beast' | 'being' | 'monster' | 'spirit';
+export type BestiaryCategory = string;
+
+export type BestiaryCategoryRecord = {
+  key: string;
+  name: string;
+  hidden: boolean;
+  order: number;
+};
 
 export type BestiaryEntity = {
   id: string;
@@ -286,6 +293,7 @@ export type BestiaryEntity = {
   mana: number;
   summary: string;
   details: string;
+  stats: Record<string, string>;
   unlocked: boolean;
   order: number;
 };

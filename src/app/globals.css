@@ -355,6 +355,10 @@ h3,
   padding-left: 3.2rem !important;
 }
 
+.bestiary-search-input {
+  padding-left: 2.75rem !important;
+}
+
 .catalog-picker {
   display: flex !important;
   flex-direction: column;
