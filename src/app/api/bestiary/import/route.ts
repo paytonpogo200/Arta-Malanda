@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { normalizeBestiaryPayload } from '@/features/bestiary/data';
-import { parseBestiaryMarkdown } from '@/features/bestiary/markdown';
+import { parseBestiaryWorkbook } from '@/features/bestiary/workbook';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
 
@@ -9,17 +9,17 @@ export async function POST(request: NextRequest) {
     const token = await readSessionToken();
     if (!token) return NextResponse.json({ error: 'Log in as the Dungeon Master before importing the bestiary.' }, { status: 401 });
 
-    const body = await request.json().catch(() => ({}));
-    const markdown = String(body.markdown ?? '').trim();
-    if (!markdown) return NextResponse.json({ error: 'Choose a Markdown file before importing.' }, { status: 400 });
+    const form = await request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Choose an Excel bestiary file before importing.' }, { status: 400 });
 
-    const parsed = parseBestiaryMarkdown(markdown);
-    if (!parsed.entities.length) return NextResponse.json({ error: 'No bestiary creature tables were found in that Markdown file.' }, { status: 400 });
+    const parsed = parseBestiaryWorkbook(await file.arrayBuffer());
+    if (!parsed.entities.length) return NextResponse.json({ error: 'No bestiary creature rows were found in that workbook.' }, { status: 400 });
 
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('import_bestiary_markdown', {
+    const { data, error } = await supabase.rpc('import_bestiary_workbook', {
       p_session_token: token,
       p_categories: parsed.categories,
       p_entities: parsed.entities

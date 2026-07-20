@@ -1,0 +1,139 @@
+import * as XLSX from 'xlsx';
+import type { BestiaryCategoryRecord } from '@/lib/types';
+
+export type ParsedBestiaryEntity = {
+  key: string;
+  name: string;
+  category: string;
+  hp: number;
+  mana: number;
+  wildScore: number;
+  summary: string;
+  details: string;
+  stats: Record<string, string>;
+  order: number;
+};
+
+export type ParsedBestiaryWorkbook = {
+  categories: BestiaryCategoryRecord[];
+  entities: ParsedBestiaryEntity[];
+};
+
+function clean(value: unknown) {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function slugify(value: string) {
+  return clean(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'entry';
+}
+
+function numberFrom(value: unknown) {
+  const parsed = Number(clean(value).replace(/[^\d.-]/g, ''));
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function filledCells(row: unknown[]) {
+  return row.map(clean).filter(Boolean);
+}
+
+function rowWidth(row: unknown[]) {
+  let width = 0;
+  row.forEach((value, index) => {
+    if (clean(value)) width = index + 1;
+  });
+  return width;
+}
+
+function isHeaderRow(row: unknown[]) {
+  const first = clean(row[0]).toLowerCase();
+  const cells = filledCells(row).map((cell) => cell.toLowerCase());
+  return ['beast', 'creature', 'monster', 'animal', 'entity'].includes(first)
+    && (cells.includes('hp') || cells.includes('damage') || cells.includes('wild score'));
+}
+
+function statValue(value: unknown) {
+  const text = clean(value);
+  return text && text !== '—' ? text : '';
+}
+
+export function parseBestiaryWorkbook(buffer: ArrayBuffer): ParsedBestiaryWorkbook {
+  const workbook = XLSX.read(buffer, { type: 'array', cellFormula: true, cellDates: false });
+  const sheetName = workbook.SheetNames.includes('Bestiary') ? 'Bestiary' : workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) return { categories: [], entities: [] };
+
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: false });
+  const categories = new Map<string, BestiaryCategoryRecord>();
+  const entities = new Map<string, ParsedBestiaryEntity>();
+  let currentCategoryName = 'Unsorted';
+  let currentCategoryKey = 'unsorted';
+  let headers: string[] = [];
+  let categoryOrder = 0;
+  let entityOrder = 0;
+
+  function ensureCategory(name: string) {
+    const categoryName = clean(name) || 'Unsorted';
+    const key = slugify(categoryName);
+    if (!categories.has(key)) {
+      categories.set(key, { key, name: categoryName, hidden: false, order: categoryOrder });
+      categoryOrder += 10;
+    }
+    return key;
+  }
+
+  currentCategoryKey = ensureCategory(currentCategoryName);
+
+  for (const row of rows) {
+    const values = filledCells(row);
+    if (!values.length) continue;
+
+    if (values.length === 1 && !isHeaderRow(row)) {
+      currentCategoryName = values[0];
+      currentCategoryKey = ensureCategory(currentCategoryName);
+      headers = [];
+      continue;
+    }
+
+    if (isHeaderRow(row)) {
+      const width = rowWidth(row);
+      headers = row.slice(0, width).map((value) => clean(value));
+      continue;
+    }
+
+    if (!headers.length) continue;
+
+    const name = clean(row[0]);
+    if (!name) continue;
+
+    const stats: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      if (index === 0 || !header) return;
+      const value = statValue(row[index]);
+      if (value) stats[header] = value;
+    });
+
+    const special = stats['Special Effects'] ?? stats['Special Effect'] ?? '';
+    const key = `${currentCategoryKey}-${slugify(name)}`;
+    entities.set(key, {
+      key,
+      name,
+      category: currentCategoryKey,
+      hp: numberFrom(stats.HP),
+      mana: numberFrom(stats['Mana Pool'] ?? stats.Mana),
+      wildScore: numberFrom(stats['Wild Score']),
+      summary: special,
+      details: '',
+      stats,
+      order: entityOrder
+    });
+    entityOrder += 10;
+  }
+
+  return {
+    categories: Array.from(categories.values()),
+    entities: Array.from(entities.values())
+  };
+}

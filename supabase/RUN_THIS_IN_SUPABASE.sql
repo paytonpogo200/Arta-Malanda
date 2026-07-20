@@ -663,7 +663,7 @@ grant execute on function public.character_record_to_json(public.characters) to 
 -- Source: supabase\migrations\20260720000300_bestiary_markdown_categories.sql
 -- ============================================================
 
--- Flexible bestiary categories, full stat storage, and Markdown import.
+-- Flexible bestiary categories and full stat storage.
 
 alter table public.bestiary_entities
 drop constraint if exists bestiary_entities_category_check;
@@ -866,7 +866,58 @@ begin
 end;
 $$;
 
-create or replace function public.import_bestiary_markdown(
+create or replace function public.update_shop_vendor(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can change shop details.';
+  end if;
+
+  update public.shop_vendors
+  set
+    name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
+    npc_name = case when v_patch ? 'npcName' then coalesce(nullif(trim(v_patch->>'npcName'), ''), npc_name) else npc_name end,
+    facility = case when v_patch ? 'facility' then coalesce(nullif(trim(v_patch->>'facility'), ''), facility) else facility end,
+    category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
+    is_hidden = case when v_patch ? 'hidden' then (v_patch->>'hidden')::boolean else is_hidden end,
+    display_order = case when v_patch ? 'order' then (v_patch->>'order')::int else display_order end
+  where id = p_vendor_id;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
+grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
+grant execute on function public.get_bestiary(text) to anon, authenticated;
+grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
+grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
+
+
+-- ============================================================
+-- Source: supabase\migrations\20260720000400_bestiary_workbook_import.sql
+-- ============================================================
+
+-- Excel workbook import endpoint for bestiary updates.
+
+create or replace function public.import_bestiary_workbook(
   p_session_token text,
   p_categories jsonb,
   p_entities jsonb
@@ -947,50 +998,7 @@ begin
 end;
 $$;
 
-create or replace function public.update_shop_vendor(
-  p_session_token text,
-  p_vendor_id uuid,
-  p_patch jsonb
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_profile public.profiles%rowtype;
-  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
-begin
-  select * into v_profile from public.profile_from_campaign_session(p_session_token);
-  if v_profile.id is null then
-    raise exception 'Invalid or expired session.';
-  end if;
-
-  if v_profile.role <> 'dm'::public.user_role then
-    raise exception 'Only the Dungeon Master can change shop details.';
-  end if;
-
-  update public.shop_vendors
-  set
-    name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
-    npc_name = case when v_patch ? 'npcName' then coalesce(nullif(trim(v_patch->>'npcName'), ''), npc_name) else npc_name end,
-    facility = case when v_patch ? 'facility' then coalesce(nullif(trim(v_patch->>'facility'), ''), facility) else facility end,
-    category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
-    is_hidden = case when v_patch ? 'hidden' then (v_patch->>'hidden')::boolean else is_hidden end,
-    display_order = case when v_patch ? 'order' then (v_patch->>'order')::int else display_order end
-  where id = p_vendor_id;
-
-  return public.get_discovered_cities(p_session_token);
-end;
-$$;
-
-grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
-grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
-grant execute on function public.get_bestiary(text) to anon, authenticated;
-grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
-grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
-grant execute on function public.import_bestiary_markdown(text, jsonb, jsonb) to anon, authenticated;
-grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.get_character_ledger(text) to anon, authenticated;
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, int, int, int, int, int, int, int, jsonb, jsonb, text, text) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;

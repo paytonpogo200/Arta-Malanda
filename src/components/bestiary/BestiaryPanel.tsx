@@ -226,16 +226,16 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
     }
   }
 
-  async function importMarkdown(file: File | null) {
+  async function importWorkbook(file: File | null) {
     if (!file || !isDm) return;
     setSaving(true);
     setError('');
     try {
-      const markdown = await file.text();
+      const form = new FormData();
+      form.append('file', file);
       await replaceFromResponse(await fetch('/api/bestiary/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ markdown })
+        body: form
       }), 'Bestiary import failed.');
       if (fileRef.current) fileRef.current.value = '';
     } catch (importError) {
@@ -260,9 +260,9 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
           <div className="flex flex-wrap gap-2">
             {isDm && (
               <>
-                <input ref={fileRef} type="file" accept=".md,text/markdown,text/plain" className="hidden" onChange={(event) => void importMarkdown(event.target.files?.[0] ?? null)} />
+                <input ref={fileRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" onChange={(event) => void importWorkbook(event.target.files?.[0] ?? null)} />
                 <Button variant="teal" className="px-3 py-2 text-xs" disabled={saving} onClick={() => fileRef.current?.click()}>
-                  <Upload className="mr-2 inline" size={14} /> Import .md
+                  <Upload className="mr-2 inline" size={14} /> Import .xlsx
                 </Button>
               </>
             )}
