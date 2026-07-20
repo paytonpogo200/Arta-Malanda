@@ -457,15 +457,15 @@ export function InventoryPanel({
               {addMode === 'catalog' && (
                 <div className="grid gap-3">
                   <label className="relative block">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={16} />
+                    <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" size={17} />
                     <TextField
                       placeholder="Search loot catalog"
                       value={catalogSearch}
                       onChange={(event) => setCatalogSearch(event.target.value)}
-                      className="pl-9"
+                      className="pl-12"
                     />
                   </label>
-                  <div className="catalog-picker thin-scrollbar grid max-h-[42dvh] gap-2 overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/10 p-2">
+                  <div className="catalog-picker thin-scrollbar grid max-h-[46dvh] gap-3 overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/10 p-3">
                     {catalogLoading ? (
                       <div className="grid h-24 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
                         <Loader2 className="animate-spin" />
@@ -475,12 +475,12 @@ export function InventoryPanel({
                         type="button"
                         key={item.id}
                         onClick={() => chooseCatalogItem(item)}
-                        className={`catalog-item rounded-2xl border p-3 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
+                        className={`catalog-item rounded-2xl border p-4 text-left transition active:scale-[0.99] ${rarityClass(item.rarity)} ${draft.name === item.name && draft.rarity === item.rarity && draft.type === item.type ? 'ring-2 ring-[var(--brass)]' : ''}`}
                       >
-                        <span className="flex items-start gap-3">
-                          <span className="mt-0.5 text-[var(--brass)]"><ItemIcon type={item.type} size={16} /></span>
+                        <span className="flex items-start gap-4">
+                          <span className="mt-0.5 shrink-0 text-[var(--brass)]"><ItemIcon type={item.type} size={18} /></span>
                           <span className="min-w-0 flex-1">
-                            <span className="block break-words text-sm font-black leading-5">{item.name}</span>
+                            <span className="catalog-item-title block break-words text-base font-black leading-6">{item.name}</span>
                             <span className="mt-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{item.rarity} · {item.type}</span>
                           </span>
                         </span>
