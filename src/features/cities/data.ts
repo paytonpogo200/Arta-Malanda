@@ -74,6 +74,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
     cityKey: String(source.cityKey ?? ''),
     key: String(source.key ?? ''),
     name: String(source.name ?? 'Vendor'),
+    npcName: String(source.npcName ?? 'Shopkeeper'),
     facility: String(source.facility ?? 'Market'),
     category: String(source.category ?? 'General'),
     hidden: Boolean(source.hidden),

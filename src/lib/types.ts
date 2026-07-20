@@ -198,6 +198,7 @@ export type ShopVendor = {
   cityKey: string;
   key: string;
   name: string;
+  npcName: string;
   facility: string;
   category: string;
   hidden: boolean;
