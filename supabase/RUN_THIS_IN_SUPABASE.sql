@@ -3750,7 +3750,6 @@ create table if not exists public.loot_items (
 );
 
 create index if not exists loot_items_pool_idx on public.loot_items(pool_id);
-create index if not exists loot_items_workbook_filter_idx on public.loot_items(is_active, difficulty_min, difficulty_max, rarity);
 
 create table if not exists public.loot_workbook_settings (
   id text primary key default 'default',
@@ -3794,6 +3793,8 @@ alter table public.loot_items add column if not exists difficulty_min int not nu
 alter table public.loot_items add column if not exists difficulty_max int not null default 5 check (difficulty_max >= difficulty_min);
 alter table public.loot_items add column if not exists loot_weight numeric not null default 1 check (loot_weight >= 0);
 alter table public.loot_items add column if not exists tower_base_only boolean not null default false;
+
+create index if not exists loot_items_workbook_filter_idx on public.loot_items(is_active, difficulty_min, difficulty_max, rarity);
 
 alter table public.loot_items drop column if exists category;
 alter table public.loot_items drop column if exists biomes;
