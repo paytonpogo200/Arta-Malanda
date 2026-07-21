@@ -120,7 +120,7 @@ create table if not exists public.inventory_items (
   item_type public.item_type not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity int not null default 1 check (quantity > 0),
-  slot_index int not null default 0 check (slot_index >= 0),
+  slot_index int not null default 0,
   loadout_slot text,
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
@@ -129,6 +129,18 @@ create table if not exists public.inventory_items (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.inventory_items drop constraint if exists inventory_items_slot_index_check;
+alter table public.inventory_items drop constraint if exists inventory_items_visible_or_storage_slot_check;
+alter table public.inventory_items add constraint inventory_items_visible_or_storage_slot_check
+  check (
+    slot_index >= 0
+    or (
+      is_storage = true
+      and parent_item_id is null
+      and loadout_slot is null
+    )
+  );
 
 create unique index if not exists inventory_container_slot_unique
   on public.inventory_items (character_id, coalesce(parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid), slot_index)
