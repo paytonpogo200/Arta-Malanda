@@ -28,13 +28,14 @@ export function ExplorationPanel() {
   const [difficulty, setDifficulty] = useState(DEFAULT_LOOT_GENERATOR_SETTINGS.difficulties[0]);
   const [poolSize, setPoolSize] = useState('Medium Cave');
   const [roomType, setRoomType] = useState('Normal');
+  const [luckPotion, setLuckPotion] = useState('None');
   const [rollPayload, setRollPayload] = useState<LootRollPayload | null>(null);
   const [awardDrafts, setAwardDrafts] = useState<Record<string, AwardDraft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const multiplier = useMemo(() => getLootMultiplier(payload.settings, poolSize, roomType), [payload.settings, poolSize, roomType]);
+  const multiplier = useMemo(() => getLootMultiplier(payload.settings, poolSize, roomType, luckPotion), [payload.settings, poolSize, roomType, luckPotion]);
   const rollCount = useMemo(() => getLootRollCount(payload.settings, poolSize, roomType), [payload.settings, poolSize, roomType]);
   const defaultCharacterId = payload.characters[0]?.id ?? '';
 
@@ -50,6 +51,7 @@ export function ExplorationPanel() {
       setDifficulty((current) => normalized.settings.difficulties.includes(current) ? current : normalized.settings.difficulties[0] || 1);
       setPoolSize((current) => normalized.settings.poolSizes.includes(current) ? current : normalized.settings.poolSizes[0] || 'Medium Cave');
       setRoomType((current) => normalized.settings.roomTypes.includes(current) ? current : normalized.settings.roomTypes[0] || 'Normal');
+      setLuckPotion((current) => normalized.settings.luckPotionOptions.includes(current) ? current : 'None');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Exploration tools could not be loaded.');
     } finally {
@@ -77,6 +79,7 @@ export function ExplorationPanel() {
       setDifficulty(normalized.settings.difficulties[0] || 1);
       setPoolSize(normalized.settings.poolSizes.includes('Medium Cave') ? 'Medium Cave' : normalized.settings.poolSizes[0] || 'Medium Cave');
       setRoomType(normalized.settings.roomTypes[0] || 'Normal');
+      setLuckPotion(normalized.settings.luckPotionOptions.includes('None') ? 'None' : normalized.settings.luckPotionOptions[0] || 'None');
       setRollPayload(null);
       setAwardDrafts({});
     } catch (importError) {
@@ -93,7 +96,7 @@ export function ExplorationPanel() {
       const response = await fetch('/api/exploration/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ biome, difficulty, poolSize, roomType })
+        body: JSON.stringify({ biome, difficulty, poolSize, roomType, luckPotion })
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? 'Loot could not be generated.');
@@ -176,7 +179,7 @@ export function ExplorationPanel() {
 
       <Card>
         <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loot Generator</h3></div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_7rem_1fr_1fr_auto]">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_7rem_1fr_1fr_1fr_auto]">
           <SelectField value={biome} onChange={(event) => setBiome(event.target.value)}>
             {payload.settings.biomes.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
           </SelectField>
@@ -189,12 +192,17 @@ export function ExplorationPanel() {
           <SelectField value={roomType} onChange={(event) => setRoomType(event.target.value)}>
             {payload.settings.roomTypes.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
           </SelectField>
+          <SelectField value={luckPotion} onChange={(event) => setLuckPotion(event.target.value)}>
+            {payload.settings.luckPotionOptions.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
+          </SelectField>
           <Button variant="primary" disabled={saving || !payload.items.length} onClick={generateLoot}><Dice6 className="mr-2 inline" size={15} /> Generate {rollCount}</Button>
         </div>
-        <div className="mt-3 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs font-bold text-[var(--muted)] sm:grid-cols-4">
+        <div className="mt-3 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs font-bold text-[var(--muted)] sm:grid-cols-6">
           <span>Rare+ multiplier: <b className="text-[var(--paper)]">{multiplier.total.toFixed(2)}×</b></span>
           <span>Pool: <b className="text-[var(--paper)]">{multiplier.pool.toFixed(2)}×</b></span>
           <span>Room: <b className="text-[var(--paper)]">{multiplier.room.toFixed(2)}×</b></span>
+          <span>Legendary luck: <b className="text-[var(--paper)]">{multiplier.legendaryLuck.toFixed(2)}×</b></span>
+          <span>Mythical luck: <b className="text-[var(--paper)]">{multiplier.mythicalLuck.toFixed(2)}×</b></span>
           <span>Rolls: <b className="text-[var(--paper)]">{rollCount}</b></span>
         </div>
       </Card>

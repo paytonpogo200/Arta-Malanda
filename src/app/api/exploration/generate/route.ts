@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
     const difficulty = Math.max(1, Number(body.difficulty ?? 1));
     const poolSize = String(body.poolSize ?? 'Medium Cave');
     const roomType = String(body.roomType ?? 'Normal');
+    const luckPotion = String(body.luckPotion ?? 'None');
 
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
@@ -45,14 +46,17 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
 
     const payload = normalizeExplorationPayload(data);
-    const multiplier = getLootMultiplier(payload.settings, poolSize, roomType);
+    const multiplier = getLootMultiplier(payload.settings, poolSize, roomType, luckPotion);
     const rolls = getLootRollCount(payload.settings, poolSize, roomType);
     const boosted = new Set(payload.settings.rareBoostRarities);
     const eligible = payload.items
       .filter((item) => isEligible(item, biome, difficulty, poolSize))
       .map((item) => ({
         item,
-        adjustedWeight: item.weight * (boosted.has(item.rarity) ? multiplier.total : 1)
+        adjustedWeight: item.weight
+          * (boosted.has(item.rarity) ? multiplier.total : 1)
+          * (item.rarity === 'Legendary' ? multiplier.legendaryLuck : 1)
+          * (item.rarity === 'Mythical' ? multiplier.mythicalLuck : 1)
       }))
       .filter((entry) => entry.adjustedWeight > 0);
 

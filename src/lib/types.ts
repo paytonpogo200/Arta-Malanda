@@ -259,9 +259,11 @@ export type LootGeneratorSettings = {
   difficulties: number[];
   poolSizes: string[];
   roomTypes: string[];
+  luckPotionOptions: string[];
   baseRollsByPoolSize: Record<string, number>;
   poolMultipliers: Record<string, number>;
   roomMultipliers: Record<string, number>;
+  luckPotionMultipliers: Record<string, { legendary: number; mythical: number }>;
   rareBoostRarities: ItemRarity[];
   sourceFormulas: Record<string, string>;
 };

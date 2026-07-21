@@ -4788,9 +4788,16 @@ begin
       'difficulties', jsonb_build_array(1, 2, 3, 4, 5),
       'poolSizes', jsonb_build_array('Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'),
       'roomTypes', jsonb_build_array('Normal', 'Secret Room', 'Tower Boss Room'),
+      'luckPotionOptions', jsonb_build_array('None', 'Lesser', 'Greater', 'Greatest'),
       'baseRollsByPoolSize', jsonb_build_object('Night Encounter', 5, 'Small Cave', 10, 'Medium Cave', 15, 'Large Cave', 20, 'Dragon Lair', 50, 'Tower Floor', 25, 'Base', 50),
       'poolMultipliers', jsonb_build_object('Large Cave', 1.33, 'Dragon Lair', 5, 'Tower Floor', 2, 'Base', 2),
       'roomMultipliers', jsonb_build_object('Secret Room', 2, 'Tower Boss Room', 2),
+      'luckPotionMultipliers', jsonb_build_object(
+        'None', jsonb_build_object('legendary', 1, 'mythical', 1),
+        'Lesser', jsonb_build_object('legendary', 2, 'mythical', 2),
+        'Greater', jsonb_build_object('legendary', 3, 'mythical', 3),
+        'Greatest', jsonb_build_object('legendary', 3, 'mythical', 5)
+      ),
       'rareBoostRarities', jsonb_build_array('Rare', 'Epic', 'Legendary', 'Mythical'),
       'sourceFormulas', '{}'::jsonb
     ))

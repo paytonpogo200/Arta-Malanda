@@ -128,8 +128,11 @@ export function parseLootWorkbook(buffer: Buffer) {
   const difficulties = numbersFromColumn(settingsRows, 1);
   const poolSizes = valuesFromColumn(settingsRows, 2);
   const roomTypes = valuesFromColumn(settingsRows, 3);
+  const luckPotionOptions = valuesFromColumn(settingsRows, 4);
   const rollFormula = text(generator?.B5?.f);
   const multiplierFormula = text(generator?.D2?.f);
+  const legendaryLuckFormula = text(generator?.F2?.f);
+  const mythicalLuckFormula = text(generator?.F3?.f);
   const eligibilityFormula = text(helper?.J2?.f);
   const adjustedWeightFormula = text(helper?.K2?.f);
 
@@ -164,13 +167,22 @@ export function parseLootWorkbook(buffer: Buffer) {
       difficulties: difficulties.length ? difficulties : [1, 2, 3, 4, 5],
       poolSizes: poolSizes.length ? poolSizes : ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
       roomTypes: roomTypes.length ? roomTypes : ['Normal', 'Secret Room', 'Tower Boss Room'],
+      luckPotionOptions: luckPotionOptions.length ? luckPotionOptions : ['None', 'Lesser', 'Greater', 'Greatest'],
       baseRollsByPoolSize: parseBaseRolls(rollFormula, poolSizes),
       poolMultipliers: parseSwitchMultipliers(multiplierFormula, '$B$3', poolSizes),
       roomMultipliers: parseSwitchMultipliers(multiplierFormula, '$B$4', roomTypes),
+      luckPotionMultipliers: {
+        None: { legendary: 1, mythical: 1 },
+        Lesser: { legendary: 2, mythical: 2 },
+        Greater: { legendary: 3, mythical: 3 },
+        Greatest: { legendary: 3, mythical: 5 }
+      },
       rareBoostRarities: parseRarityBoosts(adjustedWeightFormula),
       sourceFormulas: {
         lootRolls: rollFormula,
         multiplier: multiplierFormula,
+        legendaryLuck: legendaryLuckFormula,
+        mythicalLuck: mythicalLuckFormula,
         eligibility: eligibilityFormula,
         adjustedWeight: adjustedWeightFormula
       }

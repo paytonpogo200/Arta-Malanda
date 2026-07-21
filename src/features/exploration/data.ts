@@ -18,6 +18,8 @@ export type LootRollPayload = {
     total: number;
     pool: number;
     room: number;
+    legendaryLuck: number;
+    mythicalLuck: number;
   };
 };
 
@@ -28,6 +30,7 @@ export const DEFAULT_LOOT_GENERATOR_SETTINGS: LootGeneratorSettings = {
   difficulties: [1, 2, 3, 4, 5],
   poolSizes: ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
   roomTypes: ['Normal', 'Secret Room', 'Tower Boss Room'],
+  luckPotionOptions: ['None', 'Lesser', 'Greater', 'Greatest'],
   baseRollsByPoolSize: {
     'Night Encounter': 5,
     'Small Cave': 10,
@@ -46,6 +49,12 @@ export const DEFAULT_LOOT_GENERATOR_SETTINGS: LootGeneratorSettings = {
   roomMultipliers: {
     'Secret Room': 2,
     'Tower Boss Room': 2
+  },
+  luckPotionMultipliers: {
+    None: { legendary: 1, mythical: 1 },
+    Lesser: { legendary: 2, mythical: 2 },
+    Greater: { legendary: 3, mythical: 3 },
+    Greatest: { legendary: 3, mythical: 5 }
   },
   rareBoostRarities: ['Rare', 'Epic', 'Legendary', 'Mythical'],
   sourceFormulas: {}
@@ -85,6 +94,22 @@ function numberRecord(value: unknown, fallback: Record<string, number>) {
   return Object.keys(result).length ? result : fallback;
 }
 
+function luckPotionRecord(value: unknown, fallback: Record<string, { legendary: number; mythical: number }>) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
+  const result: Record<string, { legendary: number; mythical: number }> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const entry = raw as Record<string, unknown>;
+    const legendary = numberFrom(entry.legendary, NaN);
+    const mythical = numberFrom(entry.mythical, NaN);
+    if (key && Number.isFinite(legendary) && Number.isFinite(mythical)) result[key] = {
+      legendary: Math.max(0, legendary),
+      mythical: Math.max(0, mythical)
+    };
+  }
+  return Object.keys(result).length ? result : fallback;
+}
+
 export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
@@ -92,9 +117,11 @@ export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSet
     difficulties: numberList(source.difficulties, DEFAULT_LOOT_GENERATOR_SETTINGS.difficulties),
     poolSizes: stringList(source.poolSizes, DEFAULT_LOOT_GENERATOR_SETTINGS.poolSizes),
     roomTypes: stringList(source.roomTypes, DEFAULT_LOOT_GENERATOR_SETTINGS.roomTypes),
+    luckPotionOptions: stringList(source.luckPotionOptions, DEFAULT_LOOT_GENERATOR_SETTINGS.luckPotionOptions),
     baseRollsByPoolSize: numberRecord(source.baseRollsByPoolSize, DEFAULT_LOOT_GENERATOR_SETTINGS.baseRollsByPoolSize),
     poolMultipliers: numberRecord(source.poolMultipliers, DEFAULT_LOOT_GENERATOR_SETTINGS.poolMultipliers),
     roomMultipliers: numberRecord(source.roomMultipliers, DEFAULT_LOOT_GENERATOR_SETTINGS.roomMultipliers),
+    luckPotionMultipliers: luckPotionRecord(source.luckPotionMultipliers, DEFAULT_LOOT_GENERATOR_SETTINGS.luckPotionMultipliers),
     rareBoostRarities: Array.isArray(source.rareBoostRarities) ? source.rareBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.rareBoostRarities,
     sourceFormulas: source.sourceFormulas && typeof source.sourceFormulas === 'object' && !Array.isArray(source.sourceFormulas)
       ? Object.fromEntries(Object.entries(source.sourceFormulas).map(([key, val]) => [key, String(val ?? '')]))
@@ -170,15 +197,18 @@ export function normalizeLootRollPayload(value: unknown): LootRollPayload {
     multiplier: {
       total: Math.max(0, numberFrom(multiplier.total, 1)),
       pool: Math.max(0, numberFrom(multiplier.pool, 1)),
-      room: Math.max(0, numberFrom(multiplier.room, 1))
+      room: Math.max(0, numberFrom(multiplier.room, 1)),
+      legendaryLuck: Math.max(0, numberFrom(multiplier.legendaryLuck, 1)),
+      mythicalLuck: Math.max(0, numberFrom(multiplier.mythicalLuck, 1))
     }
   };
 }
 
-export function getLootMultiplier(settings: LootGeneratorSettings, poolSize: string, roomType: string) {
+export function getLootMultiplier(settings: LootGeneratorSettings, poolSize: string, roomType: string, luckPotion = 'None') {
   const pool = settings.poolMultipliers[poolSize] ?? 1;
   const room = settings.roomMultipliers[roomType] ?? 1;
-  return { pool, room, total: pool * room };
+  const luck = settings.luckPotionMultipliers[luckPotion] ?? settings.luckPotionMultipliers.None ?? { legendary: 1, mythical: 1 };
+  return { pool, room, total: pool * room, legendaryLuck: luck.legendary, mythicalLuck: luck.mythical };
 }
 
 export function getLootRollCount(settings: LootGeneratorSettings, poolSize: string, roomType: string) {
