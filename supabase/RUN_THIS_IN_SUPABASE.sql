@@ -586,8 +586,6 @@ begin
 end;
 $$;
 
-select public.purge_retired_bestiary_categories();
-
 insert into public.bestiary_categories (category_key, name, display_order)
 select distinct
   e.category,
