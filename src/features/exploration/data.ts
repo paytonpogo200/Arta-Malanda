@@ -1,42 +1,12 @@
-import { normalizeCharacter } from '@/features/characters/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
-import type { Character, ItemRarity, ItemType, LootDrop, LootGeneratorSettings, LootItem, LootPool } from '@/lib/types';
+import type { ItemRarity, ItemType, LootItem, LootPool } from '@/lib/types';
 
-export type ExplorationPayload = {
-  characters: Character[];
+export type ItemCatalogPayload = {
   pools: LootPool[];
   items: LootItem[];
-  settings: LootGeneratorSettings;
-};
-
-export type LootRollPayload = {
-  drops: LootDrop[];
 };
 
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
-export const DEFAULT_LOOT_GENERATOR_SETTINGS: LootGeneratorSettings = {
-  biomes: ['Any', 'Caves', 'Goblin Camp', 'Goblin Tower', 'Goblin Base', 'Ruined Camp', 'Ruined Base'],
-  difficulties: [1, 2, 3, 4, 5],
-  poolSizes: ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
-  roomTypes: ['Normal', 'Secret Room', 'Tower Boss Room'],
-  baseRollsByPoolSize: {
-    'Night Encounter': 5,
-    'Small Cave': 10,
-    'Medium Cave': 15,
-    'Large Cave': 20,
-    'Dragon Lair': 50,
-    'Tower Floor': 25,
-    Base: 40
-  },
-  rareMultiplierKeywords: { capital: 5, base: 2, camp: 1.33 },
-  rareBoostRarities: ['Rare', 'Epic', 'Legendary', 'Mythical'],
-  towerBoostRarities: ['Epic', 'Legendary', 'Mythical'],
-  towerBoostMultiplier: 2,
-  specialRoomBoostRarities: ['Epic', 'Legendary', 'Mythical'],
-  specialRoomTypes: ['Secret Room', 'Tower Boss Room'],
-  specialRoomMultiplier: 2,
-  sourceFormulas: {}
-};
 
 function numberFrom(value: unknown, fallback = 0) {
   const parsed = Number(value);
@@ -51,19 +21,12 @@ function normalizeRarity(value: unknown): ItemRarity {
   return RARITIES.includes(value as ItemRarity) ? value as ItemRarity : 'Common';
 }
 
-function stringListOrDefault(value: unknown, fallback: string[], options: { replaceStaleAnyOnly?: boolean } = {}) {
-  const list = Array.isArray(value) ? value.map(String).map((entry) => entry.trim()).filter(Boolean) : [];
-  if (!list.length) return fallback;
-  if (options.replaceStaleAnyOnly && list.length === 1 && list[0].toLowerCase() === 'any' && fallback.length > 1) return fallback;
-  return list;
-}
-
 export function normalizeLootPool(value: unknown): LootPool {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     id: String(source.id ?? ''),
     key: String(source.key ?? ''),
-    name: String(source.name ?? 'Loot Pool'),
+    name: String(source.name ?? 'Item Catalog'),
     description: String(source.description ?? ''),
     order: numberFrom(source.order, 0)
   };
@@ -71,87 +34,24 @@ export function normalizeLootPool(value: unknown): LootPool {
 
 export function normalizeLootItem(value: unknown): LootItem {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const type = normalizeItemType(source.type);
   return {
     id: String(source.id ?? ''),
     poolId: String(source.poolId ?? ''),
     name: String(source.name ?? 'Unknown Item'),
-    category: String(source.category ?? ''),
-    biomes: Array.isArray(source.biomes) ? source.biomes.map(String).filter(Boolean) : ['Any'],
-    minDifficulty: Math.max(1, numberFrom(source.minDifficulty, 1)),
-    maxDifficulty: Math.max(1, numberFrom(source.maxDifficulty, 5)),
-    type: normalizeItemType(source.type),
+    category: String(source.category ?? type),
+    type,
     rarity: normalizeRarity(source.rarity),
     minQuantity: Math.max(1, numberFrom(source.minQuantity, 1)),
     maxQuantity: Math.max(1, numberFrom(source.maxQuantity, 1)),
-    weight: Math.max(1, numberFrom(source.weight, 1)),
-    baseWeight: Math.max(1, numberFrom(source.baseWeight, numberFrom(source.weight, 1))),
     notes: String(source.notes ?? '')
   };
 }
 
-export function normalizeLootDrop(value: unknown): LootDrop {
+export function normalizeItemCatalogPayload(value: unknown): ItemCatalogPayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
-    id: String(source.id ?? crypto.randomUUID()),
-    itemId: String(source.itemId ?? ''),
-    name: String(source.name ?? 'Unknown Item'),
-    type: normalizeItemType(source.type),
-    rarity: normalizeRarity(source.rarity),
-    quantity: Math.max(1, numberFrom(source.quantity, 1))
-  };
-}
-
-export function normalizeExplorationPayload(value: unknown): ExplorationPayload {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  return {
-    characters: Array.isArray(source.characters) ? source.characters.map(normalizeCharacter).filter((entry) => entry.id) : [],
     pools: Array.isArray(source.pools) ? source.pools.map(normalizeLootPool).filter((entry) => entry.id) : [],
-    items: Array.isArray(source.items) ? source.items.map(normalizeLootItem).filter((entry) => entry.id) : [],
-    settings: normalizeLootGeneratorSettings(source.settings)
+    items: Array.isArray(source.items) ? source.items.map(normalizeLootItem).filter((entry) => entry.id) : []
   };
-}
-
-export function normalizeLootRollPayload(value: unknown): LootRollPayload {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  return {
-    drops: Array.isArray(source.drops) ? source.drops.map(normalizeLootDrop).filter((entry) => entry.itemId) : []
-  };
-}
-
-export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSettings {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const objectOfNumbers = (entry: unknown, fallback: Record<string, number>) => {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return fallback;
-    const result: Record<string, number> = {};
-    for (const [key, val] of Object.entries(entry)) {
-      const parsed = Number(val);
-      if (key && Number.isFinite(parsed)) result[key] = parsed;
-    }
-    return Object.keys(result).length ? result : fallback;
-  };
-
-  return {
-    biomes: stringListOrDefault(source.biomes, DEFAULT_LOOT_GENERATOR_SETTINGS.biomes, { replaceStaleAnyOnly: true }),
-    difficulties: Array.isArray(source.difficulties) && source.difficulties.length ? source.difficulties.map((entry) => numberFrom(entry, 1)).filter((entry) => entry > 0) : DEFAULT_LOOT_GENERATOR_SETTINGS.difficulties,
-    poolSizes: stringListOrDefault(source.poolSizes, DEFAULT_LOOT_GENERATOR_SETTINGS.poolSizes),
-    roomTypes: stringListOrDefault(source.roomTypes, DEFAULT_LOOT_GENERATOR_SETTINGS.roomTypes),
-    baseRollsByPoolSize: objectOfNumbers(source.baseRollsByPoolSize, DEFAULT_LOOT_GENERATOR_SETTINGS.baseRollsByPoolSize),
-    rareMultiplierKeywords: objectOfNumbers(source.rareMultiplierKeywords, DEFAULT_LOOT_GENERATOR_SETTINGS.rareMultiplierKeywords),
-    rareBoostRarities: Array.isArray(source.rareBoostRarities) ? source.rareBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.rareBoostRarities,
-    towerBoostRarities: Array.isArray(source.towerBoostRarities) ? source.towerBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.towerBoostRarities,
-    towerBoostMultiplier: numberFrom(source.towerBoostMultiplier, DEFAULT_LOOT_GENERATOR_SETTINGS.towerBoostMultiplier ?? 2),
-    specialRoomBoostRarities: Array.isArray(source.specialRoomBoostRarities) ? source.specialRoomBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomBoostRarities,
-    specialRoomTypes: Array.isArray(source.specialRoomTypes) ? source.specialRoomTypes.map(String).filter(Boolean) : DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomTypes,
-    specialRoomMultiplier: numberFrom(source.specialRoomMultiplier, DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomMultiplier ?? 2),
-    sourceFormulas: source.sourceFormulas && typeof source.sourceFormulas === 'object' && !Array.isArray(source.sourceFormulas)
-      ? Object.fromEntries(Object.entries(source.sourceFormulas).map(([key, val]) => [key, String(val ?? '')]))
-      : {}
-  };
-}
-
-export function estimateLootRollCount(settings: LootGeneratorSettings, poolSize: string, roomType: string) {
-  const base = Math.max(1, Math.round(settings.baseRollsByPoolSize[poolSize] ?? 1));
-  if (roomType === 'Secret Room') return Math.max(1, Math.ceil(base / 2));
-  if (roomType === 'Tower Boss Room') return base * 2;
-  return base;
 }

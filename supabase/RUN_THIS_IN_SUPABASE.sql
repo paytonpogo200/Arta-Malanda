@@ -3703,7 +3703,7 @@ grant execute on function public.use_character_spell(text, uuid) to anon, authen
 -- ============================================================
 -- ============================================================
 
--- Exploration and loot generator foundation.
+-- Item catalog foundation.
 
 create table if not exists public.loot_pools (
   id uuid primary key default gen_random_uuid(),
@@ -3723,7 +3723,6 @@ create table if not exists public.loot_items (
   rarity public.item_rarity not null default 'Common',
   min_quantity int not null default 1 check (min_quantity >= 1),
   max_quantity int not null default 1 check (max_quantity >= min_quantity),
-  weight int not null default 1 check (weight >= 1),
   notes text not null default '',
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -3748,38 +3747,18 @@ create trigger loot_items_touch_updated_at
 before update on public.loot_items
 for each row execute function public.touch_updated_at();
 
-insert into public.loot_pools (pool_key, name, description, display_order)
-values
-  ('forage', 'Forage', 'Plants, ingredients, food, and small natural finds.', 10),
-  ('creature', 'Creature Drops', 'Common creature materials and trophies.', 20),
-  ('cache', 'Hidden Cache', 'Coin, tools, and occasional equipment.', 30)
-on conflict (pool_key) do update
-set name = excluded.name,
-    description = excluded.description,
-    display_order = excluded.display_order;
+drop function if exists public.roll_loot_pool(text, uuid, int);
+drop function if exists public.award_loot_item(text, uuid, uuid, int);
+drop function if exists public.roll_loot_generator(text, text, int, text, text);
+drop table if exists public.loot_generator_configs;
+drop index if exists public.loot_items_generator_filter_idx;
 
-insert into public.loot_items (pool_id, item_name, item_type, rarity, min_quantity, max_quantity, weight, notes)
-select p.id, seed.item_name, seed.item_type::public.item_type, seed.rarity::public.item_rarity, seed.min_quantity, seed.max_quantity, seed.weight, seed.notes
-from public.loot_pools p
-join (
-  values
-    ('forage', 'Wild Herb', 'plant', 'Common', 1, 4, 12, 'Basic potion ingredient.'),
-    ('forage', 'Bitter Root', 'plant', 'Common', 1, 3, 10, 'Useful in rough brews.'),
-    ('forage', 'Arcane Nectar', 'plant', 'Uncommon', 1, 2, 4, 'Magical brewing catalyst.'),
-    ('creature', 'Hide Scrap', 'fabric', 'Common', 1, 5, 12, 'Creature material.'),
-    ('creature', 'Small Fang', 'misc', 'Common', 1, 3, 8, 'Trophy or crafting component.'),
-    ('creature', 'Glowing Core', 'quest', 'Rare', 1, 1, 2, 'A strange inner organ or gem.'),
-    ('cache', 'Loose Coin', 'misc', 'Common', 5, 40, 14, 'Currency found in a cache.'),
-    ('cache', 'Repair Kit', 'tool', 'Common', 1, 1, 6, 'Basic tools.'),
-    ('cache', 'Old Dagger', 'weapon', 'Uncommon', 1, 1, 3, 'Still sharp enough.')
-) as seed(pool_key, item_name, item_type, rarity, min_quantity, max_quantity, weight, notes)
-on p.pool_key = seed.pool_key
-where not exists (
-  select 1
-  from public.loot_items i
-  where i.pool_id = p.id
-    and i.item_name = seed.item_name
-);
+alter table public.loot_items drop column if exists category;
+alter table public.loot_items drop column if exists biomes;
+alter table public.loot_items drop column if exists min_difficulty;
+alter table public.loot_items drop column if exists max_difficulty;
+alter table public.loot_items drop column if exists base_weight;
+alter table public.loot_items drop column if exists weight;
 
 create or replace function public.loot_pool_record_to_json(p_pool public.loot_pools)
 returns jsonb
@@ -3797,133 +3776,27 @@ $$;
 
 
 
-create or replace function public.roll_loot_pool(
-  p_session_token text,
-  p_pool_id uuid,
-  p_rolls int default 1
-)
+create or replace function public.loot_item_record_to_json(p_item public.loot_items)
 returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
+language sql
+stable
 as $$
-declare
-  v_profile public.profiles%rowtype;
-  v_rolls int := greatest(1, least(200, coalesce(p_rolls, 1)));
-  v_index int;
-  v_total_weight int;
-  v_pick int;
-  v_running int;
-  v_item public.loot_items%rowtype;
-  v_drops jsonb := '[]'::jsonb;
-  v_quantity int;
-begin
-  select * into v_profile from public.profile_from_campaign_session(p_session_token);
-  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can roll loot.'; end if;
-
-  select coalesce(sum(weight), 0) into v_total_weight
-  from public.loot_items
-  where pool_id = p_pool_id
-    and is_active;
-
-  if v_total_weight <= 0 then
-    raise exception 'That loot pool has no active items.';
-  end if;
-
-  for v_index in 1..v_rolls loop
-    v_pick := floor(random() * v_total_weight)::int + 1;
-    v_running := 0;
-
-    for v_item in
-      select *
-      from public.loot_items
-      where pool_id = p_pool_id
-        and is_active
-      order by item_name
-    loop
-      v_running := v_running + v_item.weight;
-      if v_running >= v_pick then
-        v_quantity := v_item.min_quantity + floor(random() * (v_item.max_quantity - v_item.min_quantity + 1))::int;
-        v_drops := v_drops || jsonb_build_array(jsonb_build_object(
-          'id', gen_random_uuid(),
-          'itemId', v_item.id,
-          'name', v_item.item_name,
-          'type', v_item.item_type,
-          'rarity', v_item.rarity,
-          'quantity', v_quantity
-        ));
-        exit;
-      end if;
-    end loop;
-  end loop;
-
-  return jsonb_build_object('drops', v_drops);
-end;
-$$;
-
-create or replace function public.award_loot_item(
-  p_session_token text,
-  p_character_id uuid,
-  p_loot_item_id uuid,
-  p_quantity int default 1
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_profile public.profiles%rowtype;
-  v_character public.characters%rowtype;
-  v_loot public.loot_items%rowtype;
-  v_slot int;
-  v_target public.inventory_items%rowtype;
-  v_item public.inventory_items%rowtype;
-  v_quantity int := greatest(1, coalesce(p_quantity, 1));
-begin
-  select * into v_profile from public.profile_from_campaign_session(p_session_token);
-  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  v_character := public.assert_inventory_access(v_profile, p_character_id, true);
-
-  select * into v_loot from public.loot_items where id = p_loot_item_id and is_active;
-  if v_loot.id is null then raise exception 'Loot item not found.'; end if;
-
-  select * into v_target
-  from public.inventory_items i
-  where i.character_id = v_character.id
-    and i.parent_item_id is null
-    and i.loadout_slot is null
-    and i.item_name = v_loot.item_name
-    and i.item_type = v_loot.item_type
-    and i.rarity = v_loot.rarity
-    and i.is_storage = false
-    and coalesce(i.spell_imbue, '') = ''
-  order by i.slot_index
-  limit 1;
-
-  if v_target.id is not null then
-    update public.inventory_items
-    set quantity = quantity + v_quantity
-    where id = v_target.id
-    returning * into v_item;
-  else
-    v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
-    if v_slot is null then raise exception 'Inventory full.'; end if;
-
-    insert into public.inventory_items (character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity, is_storage, storage_capacity, modifiers, spell_imbue)
-    values (v_character.id, null, v_slot, v_loot.item_name, v_loot.item_type, v_loot.rarity, v_quantity, v_loot.item_type = 'storage'::public.item_type, case when v_loot.item_type = 'storage'::public.item_type then 1 else 0 end, '{}'::jsonb, null)
-    returning * into v_item;
-  end if;
-
-  return jsonb_build_object('item', public.inventory_item_record_to_json(v_item));
-end;
+  select jsonb_build_object(
+    'id', p_item.id,
+    'poolId', p_item.pool_id,
+    'name', p_item.item_name,
+    'category', p_item.item_type::text,
+    'type', p_item.item_type,
+    'rarity', p_item.rarity,
+    'minQuantity', p_item.min_quantity,
+    'maxQuantity', p_item.max_quantity,
+    'notes', p_item.notes
+  )
 $$;
 
 
 grant execute on function public.loot_pool_record_to_json(public.loot_pools) to anon, authenticated;
-grant execute on function public.roll_loot_pool(text, uuid, int) to anon, authenticated;
-grant execute on function public.award_loot_item(text, uuid, uuid, int) to anon, authenticated;
+grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
 
 
 -- ============================================================
@@ -4609,7 +4482,6 @@ begin
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     min_quantity = v_min,
     max_quantity = v_max,
-    weight = case when v_patch ? 'weight' then greatest(1, (v_patch->>'weight')::int) else weight end,
     notes = case when v_patch ? 'notes' then coalesce(v_patch->>'notes', '') else notes end,
     is_active = case when v_patch ? 'active' then (v_patch->>'active')::boolean else is_active end
   where id = p_loot_item_id;
@@ -4625,86 +4497,7 @@ grant execute on function public.update_spell_asset(text, uuid, jsonb) to anon, 
 grant execute on function public.update_loot_item_asset(text, uuid, jsonb) to anon, authenticated;
 
 
--- Workbook-backed loot generator.
-
-create table if not exists public.loot_generator_configs (
-  id text primary key default 'default',
-  settings jsonb not null default '{}'::jsonb,
-  source jsonb not null default '{}'::jsonb,
-  imported_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-alter table public.loot_generator_configs enable row level security;
-revoke all on public.loot_generator_configs from anon, authenticated;
-
-drop trigger if exists loot_generator_configs_touch_updated_at on public.loot_generator_configs;
-create trigger loot_generator_configs_touch_updated_at
-before update on public.loot_generator_configs
-for each row execute function public.touch_updated_at();
-
-alter table public.loot_items add column if not exists category text not null default '';
-alter table public.loot_items add column if not exists biomes text[] not null default array['Any']::text[];
-alter table public.loot_items add column if not exists min_difficulty int not null default 1 check (min_difficulty >= 1);
-alter table public.loot_items add column if not exists max_difficulty int not null default 5 check (max_difficulty >= min_difficulty);
-alter table public.loot_items add column if not exists base_weight int not null default 1 check (base_weight >= 1);
-
-update public.loot_items
-set base_weight = greatest(1, weight)
-where base_weight is null or base_weight < 1;
-
-create index if not exists loot_items_generator_filter_idx
-  on public.loot_items (is_active, min_difficulty, max_difficulty, rarity);
-
-insert into public.loot_generator_configs (id, settings)
-values (
-  'default',
-  jsonb_build_object(
-    'biomes', jsonb_build_array('Any', 'Caves', 'Goblin Camp', 'Goblin Tower', 'Goblin Base', 'Ruined Camp', 'Ruined Base'),
-    'difficulties', jsonb_build_array(1, 2, 3, 4, 5),
-    'poolSizes', jsonb_build_array('Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'),
-    'roomTypes', jsonb_build_array('Normal', 'Secret Room', 'Tower Boss Room'),
-    'baseRollsByPoolSize', jsonb_build_object('Night Encounter', 5, 'Small Cave', 10, 'Medium Cave', 15, 'Large Cave', 20, 'Dragon Lair', 50, 'Tower Floor', 25, 'Base', 40),
-    'rareMultiplierKeywords', jsonb_build_object('capital', 5, 'base', 2, 'camp', 1.33),
-    'rareBoostRarities', jsonb_build_array('Rare', 'Epic', 'Legendary', 'Mythical'),
-    'towerBoostRarities', jsonb_build_array('Epic', 'Legendary', 'Mythical'),
-    'towerBoostMultiplier', 2,
-    'specialRoomBoostRarities', jsonb_build_array('Epic', 'Legendary', 'Mythical'),
-    'specialRoomTypes', jsonb_build_array('Secret Room', 'Tower Boss Room'),
-    'specialRoomMultiplier', 2,
-    'sourceFormulas', '{}'::jsonb
-  )
-)
-on conflict (id) do update
-set settings = excluded.settings
-where case
-  when jsonb_typeof(public.loot_generator_configs.settings->'biomes') = 'array'
-    then jsonb_array_length(public.loot_generator_configs.settings->'biomes')
-  else 0
-end <= 1;
-
-create or replace function public.loot_item_record_to_json(p_item public.loot_items)
-returns jsonb
-language sql
-stable
-as $$
-  select jsonb_build_object(
-    'id', p_item.id,
-    'poolId', p_item.pool_id,
-    'name', p_item.item_name,
-    'category', p_item.category,
-    'biomes', to_jsonb(p_item.biomes),
-    'minDifficulty', p_item.min_difficulty,
-    'maxDifficulty', p_item.max_difficulty,
-    'type', p_item.item_type,
-    'rarity', p_item.rarity,
-    'minQuantity', p_item.min_quantity,
-    'maxQuantity', p_item.max_quantity,
-    'weight', p_item.weight,
-    'baseWeight', p_item.base_weight,
-    'notes', p_item.notes
-  )
-$$;
+-- Workbook-backed item catalog import.
 
 create or replace function public.get_exploration_state(p_session_token text)
 returns jsonb
@@ -4714,22 +4507,12 @@ set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
-  v_settings jsonb;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can use exploration tools.'; end if;
-
-  select settings into v_settings
-  from public.loot_generator_configs
-  where id = 'default';
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can update the item catalog.'; end if;
 
   return jsonb_build_object(
-    'characters', (
-      select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
-      from public.characters c
-      where c.kind = 'player'
-    ),
     'pools', (
       select coalesce(jsonb_agg(public.loot_pool_record_to_json(p) order by p.display_order, p.name), '[]'::jsonb)
       from public.loot_pools p
@@ -4738,8 +4521,7 @@ begin
       select coalesce(jsonb_agg(public.loot_item_record_to_json(i) order by i.item_name), '[]'::jsonb)
       from public.loot_items i
       where i.is_active
-    ),
-    'settings', coalesce(v_settings, '{}'::jsonb)
+    )
   );
 end;
 $$;
@@ -4757,9 +4539,7 @@ declare
   v_profile public.profiles%rowtype;
   v_payload jsonb := coalesce(p_rows, '[]'::jsonb);
   v_rows jsonb;
-  v_settings jsonb;
-  v_source jsonb;
-  v_replace boolean := false;
+  v_replace boolean := true;
   v_row jsonb;
   v_pool_key text;
   v_pool_name text;
@@ -4767,32 +4547,18 @@ declare
   v_name text;
   v_type_text text;
   v_rarity_text text;
-  v_biomes text[];
   v_min_quantity int;
   v_max_quantity int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can import loot.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can import the item catalog.'; end if;
 
   if jsonb_typeof(v_payload) = 'object' then
     v_rows := coalesce(v_payload->'rows', '[]'::jsonb);
-    v_settings := v_payload->'settings';
-    v_source := coalesce(v_payload->'source', '{}'::jsonb);
-    v_replace := coalesce((v_payload->>'replace')::boolean, false);
+    v_replace := coalesce((v_payload->>'replace')::boolean, true);
   else
     v_rows := v_payload;
-    v_settings := null;
-    v_source := '{}'::jsonb;
-  end if;
-
-  if v_settings is not null then
-    insert into public.loot_generator_configs (id, settings, source, imported_at)
-    values ('default', v_settings, v_source, now())
-    on conflict (id) do update
-    set settings = excluded.settings,
-        source = excluded.source,
-        imported_at = excluded.imported_at;
   end if;
 
   if v_replace then
@@ -4801,8 +4567,6 @@ begin
   end if;
 
   for v_row in select * from jsonb_array_elements(coalesce(v_rows, '[]'::jsonb)) loop
-    v_pool_key := lower(regexp_replace(coalesce(v_row->>'poolKey', v_row->>'pool_key', v_row->>'pool', 'workbook-loot'), '[^a-z0-9]+', '-', 'g'));
-    v_pool_name := coalesce(nullif(trim(v_row->>'pool'), ''), initcap(replace(v_pool_key, '-', ' ')));
     v_name := nullif(trim(coalesce(v_row->>'name', v_row->>'item', v_row->>'item_name', '')), '');
     if v_name is null then
       continue;
@@ -4813,58 +4577,41 @@ begin
       v_type_text := 'misc';
     end if;
 
+    v_pool_key := lower(regexp_replace(coalesce(v_row->>'poolKey', v_row->>'pool_key', v_row->>'pool', 'catalog-' || v_type_text), '[^a-z0-9]+', '-', 'g'));
+    v_pool_name := coalesce(nullif(trim(v_row->>'pool'), ''), initcap(replace(v_pool_key, '-', ' ')));
+
     v_rarity_text := coalesce(nullif(v_row->>'rarity', ''), 'Common');
     if v_rarity_text not in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical') then
       v_rarity_text := 'Common';
     end if;
 
-    if jsonb_typeof(v_row->'biomes') = 'array' then
-      select coalesce(array_agg(nullif(trim(value), '')), array['Any']::text[]) into v_biomes
-      from jsonb_array_elements_text(v_row->'biomes') as value;
-    else
-      select coalesce(array_agg(nullif(trim(value), '')), array['Any']::text[]) into v_biomes
-      from regexp_split_to_table(coalesce(v_row->>'biomes', 'Any'), ',') as value;
-    end if;
-    v_biomes := array(select entry from unnest(v_biomes) as entry where entry is not null);
-    if coalesce(array_length(v_biomes, 1), 0) = 0 then v_biomes := array['Any']::text[]; end if;
-
     v_min_quantity := greatest(1, coalesce(nullif(v_row->>'minQuantity', '')::int, nullif(v_row->>'min_quantity', '')::int, nullif(v_row->>'min', '')::int, 1));
     v_max_quantity := greatest(v_min_quantity, coalesce(nullif(v_row->>'maxQuantity', '')::int, nullif(v_row->>'max_quantity', '')::int, nullif(v_row->>'max', '')::int, v_min_quantity));
 
     insert into public.loot_pools (pool_key, name, description, display_order)
-    values (v_pool_key, v_pool_name, 'Imported loot pool.', 100)
-    on conflict (pool_key) do update set name = excluded.name
+    values (v_pool_key, v_pool_name, 'Imported item catalog group.', 100)
+    on conflict (pool_key) do update
+    set name = excluded.name,
+        description = excluded.description
     returning * into v_pool;
 
     insert into public.loot_items (
       pool_id,
       item_name,
-      category,
-      biomes,
-      min_difficulty,
-      max_difficulty,
       item_type,
       rarity,
       min_quantity,
       max_quantity,
-      weight,
-      base_weight,
       notes,
       is_active
     )
     values (
       v_pool.id,
       v_name,
-      coalesce(v_row->>'category', ''),
-      v_biomes,
-      greatest(1, coalesce(nullif(v_row->>'minDifficulty', '')::int, nullif(v_row->>'min_difficulty', '')::int, 1)),
-      greatest(greatest(1, coalesce(nullif(v_row->>'minDifficulty', '')::int, nullif(v_row->>'min_difficulty', '')::int, 1)), coalesce(nullif(v_row->>'maxDifficulty', '')::int, nullif(v_row->>'max_difficulty', '')::int, 5)),
       v_type_text::public.item_type,
       v_rarity_text::public.item_rarity,
       v_min_quantity,
       v_max_quantity,
-      greatest(1, coalesce(nullif(v_row->>'weight', '')::int, nullif(v_row->>'baseWeight', '')::int, nullif(v_row->>'base_weight', '')::int, 1)),
-      greatest(1, coalesce(nullif(v_row->>'baseWeight', '')::int, nullif(v_row->>'base_weight', '')::int, nullif(v_row->>'weight', '')::int, 1)),
       coalesce(v_row->>'notes', ''),
       true
     );
@@ -4873,166 +4620,6 @@ begin
   return public.get_exploration_state(p_session_token);
 end;
 $$;
-
-create or replace function public.roll_loot_generator(
-  p_session_token text,
-  p_biome text default 'Any',
-  p_difficulty int default 1,
-  p_pool_size text default 'Medium Cave',
-  p_room_type text default 'Normal'
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_profile public.profiles%rowtype;
-  v_settings jsonb;
-  v_rolls int;
-  v_base_rolls numeric;
-  v_index int;
-  v_total_weight numeric;
-  v_pick numeric;
-  v_running numeric;
-  v_item record;
-  v_drops jsonb := '[]'::jsonb;
-  v_quantity int;
-  v_rare_multiplier numeric := 1;
-  v_keyword text;
-  v_value numeric;
-  v_rare_boost_rarities text[] := array['Rare', 'Epic', 'Legendary', 'Mythical'];
-  v_tower_boost_rarities text[] := array['Epic', 'Legendary', 'Mythical'];
-  v_special_room_boost_rarities text[] := array['Epic', 'Legendary', 'Mythical'];
-  v_special_room_types text[] := array['Secret Room', 'Tower Boss Room'];
-  v_tower_multiplier numeric := 2;
-  v_special_room_multiplier numeric := 2;
-begin
-  select * into v_profile from public.profile_from_campaign_session(p_session_token);
-  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can roll loot.'; end if;
-
-  select settings into v_settings
-  from public.loot_generator_configs
-  where id = 'default';
-  v_settings := coalesce(v_settings, '{}'::jsonb);
-
-  select array_agg(value) into v_rare_boost_rarities
-  from jsonb_array_elements_text(coalesce(v_settings->'rareBoostRarities', '[]'::jsonb)) as value
-  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
-  if coalesce(array_length(v_rare_boost_rarities, 1), 0) = 0 then v_rare_boost_rarities := array['Rare', 'Epic', 'Legendary', 'Mythical']; end if;
-
-  select array_agg(value) into v_tower_boost_rarities
-  from jsonb_array_elements_text(coalesce(v_settings->'towerBoostRarities', '[]'::jsonb)) as value
-  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
-  if coalesce(array_length(v_tower_boost_rarities, 1), 0) = 0 then v_tower_boost_rarities := array['Epic', 'Legendary', 'Mythical']; end if;
-
-  select array_agg(value) into v_special_room_boost_rarities
-  from jsonb_array_elements_text(coalesce(v_settings->'specialRoomBoostRarities', '[]'::jsonb)) as value
-  where value in ('Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical');
-  if coalesce(array_length(v_special_room_boost_rarities, 1), 0) = 0 then v_special_room_boost_rarities := array['Epic', 'Legendary', 'Mythical']; end if;
-
-  select array_agg(value) into v_special_room_types
-  from jsonb_array_elements_text(coalesce(v_settings->'specialRoomTypes', '[]'::jsonb)) as value
-  where nullif(trim(value), '') is not null;
-  if coalesce(array_length(v_special_room_types, 1), 0) = 0 then v_special_room_types := array['Secret Room', 'Tower Boss Room']; end if;
-
-  v_tower_multiplier := greatest(0, coalesce(nullif(v_settings->>'towerBoostMultiplier', '')::numeric, 2));
-  v_special_room_multiplier := greatest(0, coalesce(nullif(v_settings->>'specialRoomMultiplier', '')::numeric, 2));
-
-  v_base_rolls := coalesce(nullif(v_settings #>> array['baseRollsByPoolSize', p_pool_size], '')::numeric, 1);
-  v_rolls := greatest(1, least(200, round(v_base_rolls)::int));
-  if p_room_type = 'Secret Room' then
-    v_rolls := greatest(1, ceil(v_base_rolls / 2)::int);
-  elsif p_room_type = 'Tower Boss Room' then
-    v_rolls := greatest(1, least(200, round(v_base_rolls * 2)::int));
-  end if;
-
-  for v_keyword, v_value in
-    select key, value::text::numeric
-    from jsonb_each(coalesce(v_settings->'rareMultiplierKeywords', '{}'::jsonb))
-    where value::text ~ '^-?[0-9]+(\.[0-9]+)?$'
-  loop
-    if position(v_keyword in lower(coalesce(p_biome, ''))) > 0 then
-      v_rare_multiplier := greatest(v_rare_multiplier, v_value);
-    end if;
-  end loop;
-
-  select coalesce(sum(adjusted_weight), 0) into v_total_weight
-  from (
-    select
-      greatest(1, i.base_weight)::numeric
-      * case when i.rarity::text = any(v_rare_boost_rarities) then v_rare_multiplier else 1 end
-      * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity::text = any(v_tower_boost_rarities) then v_tower_multiplier else 1 end
-      * case when p_room_type = any(v_special_room_types) and i.rarity::text = any(v_special_room_boost_rarities) then v_special_room_multiplier else 1 end as adjusted_weight
-    from public.loot_items i
-    where i.is_active
-      and greatest(1, p_difficulty) between i.min_difficulty and i.max_difficulty
-      and (
-        coalesce(p_biome, 'Any') = 'Any'
-        or 'Any' = any(i.biomes)
-        or exists (
-          select 1
-          from unnest(i.biomes) as biome
-          where position(lower(coalesce(p_biome, '')) in lower(biome)) > 0
-             or (position('tower' in lower(coalesce(p_biome, ''))) > 0 and position('tower' in lower(biome)) > 0)
-             or (position('base' in lower(coalesce(p_biome, ''))) > 0 and position('base' in lower(biome)) > 0)
-        )
-      )
-  ) eligible;
-
-  if v_total_weight <= 0 then
-    raise exception 'No matching loot for those settings.';
-  end if;
-
-  for v_index in 1..v_rolls loop
-    v_pick := random() * v_total_weight;
-    v_running := 0;
-
-    for v_item in
-      select
-        i.*,
-        greatest(1, i.base_weight)::numeric
-        * case when i.rarity::text = any(v_rare_boost_rarities) then v_rare_multiplier else 1 end
-        * case when position('tower' in lower(coalesce(p_biome, ''))) > 0 and i.rarity::text = any(v_tower_boost_rarities) then v_tower_multiplier else 1 end
-        * case when p_room_type = any(v_special_room_types) and i.rarity::text = any(v_special_room_boost_rarities) then v_special_room_multiplier else 1 end as adjusted_weight
-      from public.loot_items i
-      where i.is_active
-        and greatest(1, p_difficulty) between i.min_difficulty and i.max_difficulty
-        and (
-          coalesce(p_biome, 'Any') = 'Any'
-          or 'Any' = any(i.biomes)
-          or exists (
-            select 1
-            from unnest(i.biomes) as biome
-            where position(lower(coalesce(p_biome, '')) in lower(biome)) > 0
-               or (position('tower' in lower(coalesce(p_biome, ''))) > 0 and position('tower' in lower(biome)) > 0)
-               or (position('base' in lower(coalesce(p_biome, ''))) > 0 and position('base' in lower(biome)) > 0)
-          )
-        )
-      order by i.item_name
-    loop
-      v_running := v_running + v_item.adjusted_weight;
-      if v_running >= v_pick then
-        v_quantity := v_item.min_quantity + floor(random() * (v_item.max_quantity - v_item.min_quantity + 1))::int;
-        v_drops := v_drops || jsonb_build_array(jsonb_build_object(
-          'id', gen_random_uuid(),
-          'itemId', v_item.id,
-          'name', v_item.item_name,
-          'type', v_item.item_type,
-          'rarity', v_item.rarity,
-          'quantity', v_quantity
-        ));
-        exit;
-      end if;
-    end loop;
-  end loop;
-
-  return jsonb_build_object('drops', v_drops, 'rolls', v_rolls);
-end;
-$$;
-
-grant execute on function public.roll_loot_generator(text, text, int, text, text) to anon, authenticated;
 
 -- Consolidated final grants
 grant execute on function public.get_character_ledger(text) to anon, authenticated;

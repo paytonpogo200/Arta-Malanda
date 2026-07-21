@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import type { ItemRarity, ItemType } from '@/lib/types';
 
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
+const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc'];
 
 function text(value: unknown, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -14,12 +15,11 @@ function number(value: unknown, fallback: number) {
 }
 
 function slug(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'loot';
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'catalog';
 }
 
-function splitList(value: unknown) {
-  const raw = text(value, 'Any');
-  return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+function typeLabel(value: ItemType) {
+  return value.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
 function rarity(value: unknown): ItemRarity {
@@ -27,16 +27,18 @@ function rarity(value: unknown): ItemRarity {
   return RARITIES.includes(normalized as ItemRarity) ? normalized as ItemRarity : 'Common';
 }
 
-export function categoryToItemType(categoryValue: unknown, itemNameValue: unknown): ItemType {
-  const category = text(categoryValue).toLowerCase();
-  const name = text(itemNameValue).toLowerCase();
-  const combined = `${category} ${name}`;
+export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): ItemType {
+  const explicitType = text(typeValue).toLowerCase();
+  if (ITEM_TYPES.includes(explicitType as ItemType)) return explicitType as ItemType;
 
-  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand')) return 'weapon';
+  const name = text(itemNameValue).toLowerCase();
+  const combined = `${explicitType} ${name}`;
+
   if (combined.includes('shield')) return 'shield';
   if (combined.includes('armor') || combined.includes('armour')) return 'armor';
+  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand') || combined.includes('arrows')) return 'weapon';
   if (combined.includes('animal') || combined.includes('horse') || combined.includes('dog') || combined.includes('pet')) return 'pet';
-  if (combined.includes('storage') || combined.includes('bag') || combined.includes('duffle') || combined.includes('pouch')) return 'storage';
+  if (combined.includes('storage') || combined.includes('bag') || combined.includes('duffle') || combined.includes('pouch') || combined.includes('satchel')) return 'storage';
   if (combined.includes('potion') || combined.includes('elixir') || combined.includes('nectar')) return 'potion';
   if (combined.includes('ore') || combined.includes('ingot') || combined.includes('metal')) return 'ore';
   if (combined.includes('food') || combined.includes('ration')) return 'food';
@@ -44,135 +46,38 @@ export function categoryToItemType(categoryValue: unknown, itemNameValue: unknow
   if (combined.includes('fabric') || combined.includes('cloth') || combined.includes('leather') || combined.includes('clothing') || combined.includes('cloak')) return 'fabric';
   if (combined.includes('scroll') || combined.includes('map') || combined.includes('lore') || combined.includes('tome')) return 'quest';
   if (combined.includes('belt') || combined.includes('ring') || combined.includes('jewel') || combined.includes('jewlery') || combined.includes('jewelry') || combined.includes('gem') || combined.includes('rune') || combined.includes('upgrade')) return 'accessory';
-  if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch') || combined.includes('arrows')) return 'tool';
+  if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch')) return 'tool';
   return 'misc';
 }
 
 function tableRows(sheet: XLSX.WorkSheet | undefined) {
   if (!sheet) return [];
-  return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '' });
-}
-
-function valuesFromColumn(rows: unknown[][], columnIndex: number) {
-  return rows.slice(1).map((row) => text(row[columnIndex])).filter(Boolean);
-}
-
-function parseBaseRolls(formula: string, fallbackPoolSizes: string[]) {
-  const result: Record<string, number> = {};
-  const pattern = /"([^"]+)"\s*,\s*([0-9]+(?:\.[0-9]+)?)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(formula))) {
-    const key = match[1];
-    const value = Number(match[2]);
-    if (fallbackPoolSizes.includes(key) && Number.isFinite(value)) result[key] = value;
-  }
-  return Object.keys(result).length ? result : {
-    'Night Encounter': 5,
-    'Small Cave': 10,
-    'Medium Cave': 15,
-    'Large Cave': 20,
-    'Dragon Lair': 50,
-    'Tower Floor': 25,
-    Base: 40
-  };
-}
-
-function parseRareMultipliers(formula: string) {
-  const result: Record<string, number> = {};
-  const pattern = /SEARCH\("([^"]+)"[\s\S]*?\)\s*,\s*([0-9]+(?:\.[0-9]+)?)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(formula))) {
-    const keyword = match[1].toLowerCase();
-    const value = Number(match[2]);
-    if (Number.isFinite(value)) result[keyword] = value;
-  }
-  return Object.keys(result).length ? result : { capital: 5, base: 2, camp: 1.33 };
-}
-
-function parseRarityGroups(formula: string) {
-  const groups: ItemRarity[][] = [];
-  const pattern = /\{([^}]+)\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(formula))) {
-    const entries = match[1]
-      .split(',')
-      .map((entry) => rarity(entry.replace(/"/g, '').trim()))
-      .filter((entry, index, array) => array.indexOf(entry) === index);
-    if (entries.length) groups.push(entries);
-  }
-  return groups;
-}
-
-function parseRoomTypesFromFormula(formula: string, fallback: string[]) {
-  const matches = Array.from(formula.matchAll(/Generator!\$B\$4\s*=\s*"([^"]+)"/g)).map((match) => match[1]).filter(Boolean);
-  return matches.length ? Array.from(new Set(matches)) : fallback;
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: false });
 }
 
 export function parseLootWorkbook(buffer: Buffer) {
-  const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: true, cellDates: false });
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: false, cellDates: false });
   const lootRows = tableRows(workbook.Sheets['Loot Table']);
-  const settingsRows = tableRows(workbook.Sheets.Settings);
-  const generator = workbook.Sheets.Generator;
-
-  const biomes = valuesFromColumn(settingsRows, 0);
-  const difficulties = valuesFromColumn(settingsRows, 1).map((entry) => number(entry, NaN)).filter(Number.isFinite);
-  const poolSizes = valuesFromColumn(settingsRows, 2);
-  const roomTypes = valuesFromColumn(settingsRows, 3);
-  const rollFormula = text(generator?.B5?.f);
-  const rareFormula = text(generator?.D2?.f);
-  const eligibleFormula = text(workbook.Sheets['Roll Helper']?.J2?.f);
-  const adjustedWeightFormula = text(workbook.Sheets['Roll Helper']?.K2?.f);
-  const rarityGroups = parseRarityGroups(adjustedWeightFormula);
-  const rareBoostRarities = rarityGroups[0] ?? ['Rare', 'Epic', 'Legendary', 'Mythical'];
-  const towerBoostRarities = rarityGroups[1] ?? ['Epic', 'Legendary', 'Mythical'];
-  const specialRoomBoostRarities = rarityGroups[2] ?? ['Epic', 'Legendary', 'Mythical'];
-  const specialRoomTypes = parseRoomTypesFromFormula(adjustedWeightFormula, ['Secret Room', 'Tower Boss Room']);
-
   const rows = lootRows.slice(1).map((row) => {
     const name = text(row[0]);
     if (!name) return null;
-    const category = text(row[1], 'Item');
+    const type = categoryToItemType(row[1], name);
+    const pool = `${typeLabel(type)} Catalog`;
     return {
-      pool: 'Workbook Loot',
-      poolKey: 'workbook-loot',
+      pool,
+      poolKey: `catalog-${slug(type)}`,
       name,
-      category,
-      type: categoryToItemType(category, name),
-      biomes: splitList(row[2]),
-      minDifficulty: Math.max(1, number(row[3], 1)),
-      maxDifficulty: Math.max(1, number(row[4], 5)),
+      type,
       rarity: rarity(row[5]),
-      weight: Math.max(1, number(row[6], 1)),
-      baseWeight: Math.max(1, number(row[6], 1)),
       minQuantity: Math.max(1, number(row[7], 1)),
       maxQuantity: Math.max(Math.max(1, number(row[7], 1)), number(row[8], 1)),
-      notes: text(row[9])
+      notes: ''
     };
   }).filter(Boolean);
 
   return {
     replace: true,
     rows,
-    settings: {
-      biomes: biomes.length ? biomes : ['Any'],
-      difficulties: difficulties.length ? difficulties : [1, 2, 3, 4, 5],
-      poolSizes: poolSizes.length ? poolSizes : ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
-      roomTypes: roomTypes.length ? roomTypes : ['Normal', 'Secret Room', 'Tower Boss Room'],
-      baseRollsByPoolSize: parseBaseRolls(rollFormula, poolSizes),
-      rareMultiplierKeywords: parseRareMultipliers(rareFormula),
-      rareBoostRarities,
-      towerBoostRarities,
-      towerBoostMultiplier: 2,
-      specialRoomBoostRarities,
-      specialRoomTypes,
-      specialRoomMultiplier: 2,
-      sourceFormulas: {
-        rareMultiplier: rareFormula,
-        lootRolls: rollFormula,
-        eligible: eligibleFormula,
-        adjustedWeight: adjustedWeightFormula
-      }
-    },
     source: {
       sheets: workbook.SheetNames,
       importedRows: rows.length

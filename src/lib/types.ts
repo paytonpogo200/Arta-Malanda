@@ -241,41 +241,11 @@ export type LootItem = {
   poolId: string;
   name: string;
   category: string;
-  biomes: string[];
-  minDifficulty: number;
-  maxDifficulty: number;
   type: ItemType;
   rarity: ItemRarity;
   minQuantity: number;
   maxQuantity: number;
-  weight: number;
-  baseWeight: number;
   notes: string;
-};
-
-export type LootGeneratorSettings = {
-  biomes: string[];
-  difficulties: number[];
-  poolSizes: string[];
-  roomTypes: string[];
-  baseRollsByPoolSize: Record<string, number>;
-  rareMultiplierKeywords: Record<string, number>;
-  rareBoostRarities?: ItemRarity[];
-  towerBoostRarities?: ItemRarity[];
-  towerBoostMultiplier?: number;
-  specialRoomBoostRarities?: ItemRarity[];
-  specialRoomTypes?: string[];
-  specialRoomMultiplier?: number;
-  sourceFormulas: Record<string, string>;
-};
-
-export type LootDrop = {
-  id: string;
-  itemId: string;
-  name: string;
-  type: ItemType;
-  rarity: ItemRarity;
-  quantity: number;
 };
 
 export type BestiaryCategory = string;

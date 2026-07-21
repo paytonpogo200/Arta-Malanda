@@ -205,7 +205,7 @@ export function UpdateAssetsPanel() {
           </Card>
 
           <Card>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loot Generator</h3></div>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Item Catalog</h3></div>
             <div className="grid gap-3">
               {lootByPool.map(({ pool, items }) => (
                 <details key={pool.id} className="rounded-2xl border border-[var(--line)] bg-black/15">
@@ -301,7 +301,6 @@ export function UpdateAssetsPanel() {
                   <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                   <NumberInput value={Number(draft.minQuantity ?? 1)} onValueChange={(value) => updateDraft('minQuantity', value)} />
                   <NumberInput value={Number(draft.maxQuantity ?? 1)} onValueChange={(value) => updateDraft('maxQuantity', value)} />
-                  <NumberInput value={Number(draft.weight ?? 1)} onValueChange={(value) => updateDraft('weight', value)} />
                 </div>
                 <TextAreaField rows={3} value={String(draft.notes ?? '')} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Notes" />
               </>
