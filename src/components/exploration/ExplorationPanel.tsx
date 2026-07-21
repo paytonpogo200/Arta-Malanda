@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { estimateLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload, type ExplorationPayload } from '@/features/exploration/data';
+import { DEFAULT_LOOT_GENERATOR_SETTINGS, estimateLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload, type ExplorationPayload } from '@/features/exploration/data';
 import { rarityClass } from '@/lib/utils/rarity';
 import type { LootDrop } from '@/lib/types';
 
@@ -15,21 +15,7 @@ const EMPTY: ExplorationPayload = {
   characters: [],
   pools: [],
   items: [],
-  settings: {
-    biomes: ['Any'],
-    difficulties: [1, 2, 3, 4, 5],
-    poolSizes: ['Medium Cave'],
-    roomTypes: ['Normal'],
-    baseRollsByPoolSize: { 'Medium Cave': 15 },
-    rareMultiplierKeywords: { capital: 5, base: 2, camp: 1.33 },
-    rareBoostRarities: ['Rare', 'Epic', 'Legendary', 'Mythical'],
-    towerBoostRarities: ['Epic', 'Legendary', 'Mythical'],
-    towerBoostMultiplier: 2,
-    specialRoomBoostRarities: ['Epic', 'Legendary', 'Mythical'],
-    specialRoomTypes: ['Secret Room', 'Tower Boss Room'],
-    specialRoomMultiplier: 2,
-    sourceFormulas: {}
-  }
+  settings: DEFAULT_LOOT_GENERATOR_SETTINGS
 };
 
 const ADVENTURE_NOTES = [

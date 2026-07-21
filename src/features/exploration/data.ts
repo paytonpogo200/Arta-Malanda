@@ -14,8 +14,8 @@ export type LootRollPayload = {
 };
 
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
-const DEFAULT_SETTINGS: LootGeneratorSettings = {
-  biomes: ['Any'],
+export const DEFAULT_LOOT_GENERATOR_SETTINGS: LootGeneratorSettings = {
+  biomes: ['Any', 'Caves', 'Goblin Camp', 'Goblin Tower', 'Goblin Base', 'Ruined Camp', 'Ruined Base'],
   difficulties: [1, 2, 3, 4, 5],
   poolSizes: ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
   roomTypes: ['Normal', 'Secret Room', 'Tower Boss Room'],
@@ -49,6 +49,13 @@ function normalizeItemType(value: unknown): ItemType {
 
 function normalizeRarity(value: unknown): ItemRarity {
   return RARITIES.includes(value as ItemRarity) ? value as ItemRarity : 'Common';
+}
+
+function stringListOrDefault(value: unknown, fallback: string[], options: { replaceStaleAnyOnly?: boolean } = {}) {
+  const list = Array.isArray(value) ? value.map(String).map((entry) => entry.trim()).filter(Boolean) : [];
+  if (!list.length) return fallback;
+  if (options.replaceStaleAnyOnly && list.length === 1 && list[0].toLowerCase() === 'any' && fallback.length > 1) return fallback;
+  return list;
 }
 
 export function normalizeLootPool(value: unknown): LootPool {
@@ -124,18 +131,18 @@ export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSet
   };
 
   return {
-    biomes: Array.isArray(source.biomes) && source.biomes.length ? source.biomes.map(String).filter(Boolean) : DEFAULT_SETTINGS.biomes,
-    difficulties: Array.isArray(source.difficulties) && source.difficulties.length ? source.difficulties.map((entry) => numberFrom(entry, 1)).filter((entry) => entry > 0) : DEFAULT_SETTINGS.difficulties,
-    poolSizes: Array.isArray(source.poolSizes) && source.poolSizes.length ? source.poolSizes.map(String).filter(Boolean) : DEFAULT_SETTINGS.poolSizes,
-    roomTypes: Array.isArray(source.roomTypes) && source.roomTypes.length ? source.roomTypes.map(String).filter(Boolean) : DEFAULT_SETTINGS.roomTypes,
-    baseRollsByPoolSize: objectOfNumbers(source.baseRollsByPoolSize, DEFAULT_SETTINGS.baseRollsByPoolSize),
-    rareMultiplierKeywords: objectOfNumbers(source.rareMultiplierKeywords, DEFAULT_SETTINGS.rareMultiplierKeywords),
-    rareBoostRarities: Array.isArray(source.rareBoostRarities) ? source.rareBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.rareBoostRarities,
-    towerBoostRarities: Array.isArray(source.towerBoostRarities) ? source.towerBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.towerBoostRarities,
-    towerBoostMultiplier: numberFrom(source.towerBoostMultiplier, DEFAULT_SETTINGS.towerBoostMultiplier ?? 2),
-    specialRoomBoostRarities: Array.isArray(source.specialRoomBoostRarities) ? source.specialRoomBoostRarities.map(normalizeRarity) : DEFAULT_SETTINGS.specialRoomBoostRarities,
-    specialRoomTypes: Array.isArray(source.specialRoomTypes) ? source.specialRoomTypes.map(String).filter(Boolean) : DEFAULT_SETTINGS.specialRoomTypes,
-    specialRoomMultiplier: numberFrom(source.specialRoomMultiplier, DEFAULT_SETTINGS.specialRoomMultiplier ?? 2),
+    biomes: stringListOrDefault(source.biomes, DEFAULT_LOOT_GENERATOR_SETTINGS.biomes, { replaceStaleAnyOnly: true }),
+    difficulties: Array.isArray(source.difficulties) && source.difficulties.length ? source.difficulties.map((entry) => numberFrom(entry, 1)).filter((entry) => entry > 0) : DEFAULT_LOOT_GENERATOR_SETTINGS.difficulties,
+    poolSizes: stringListOrDefault(source.poolSizes, DEFAULT_LOOT_GENERATOR_SETTINGS.poolSizes),
+    roomTypes: stringListOrDefault(source.roomTypes, DEFAULT_LOOT_GENERATOR_SETTINGS.roomTypes),
+    baseRollsByPoolSize: objectOfNumbers(source.baseRollsByPoolSize, DEFAULT_LOOT_GENERATOR_SETTINGS.baseRollsByPoolSize),
+    rareMultiplierKeywords: objectOfNumbers(source.rareMultiplierKeywords, DEFAULT_LOOT_GENERATOR_SETTINGS.rareMultiplierKeywords),
+    rareBoostRarities: Array.isArray(source.rareBoostRarities) ? source.rareBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.rareBoostRarities,
+    towerBoostRarities: Array.isArray(source.towerBoostRarities) ? source.towerBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.towerBoostRarities,
+    towerBoostMultiplier: numberFrom(source.towerBoostMultiplier, DEFAULT_LOOT_GENERATOR_SETTINGS.towerBoostMultiplier ?? 2),
+    specialRoomBoostRarities: Array.isArray(source.specialRoomBoostRarities) ? source.specialRoomBoostRarities.map(normalizeRarity) : DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomBoostRarities,
+    specialRoomTypes: Array.isArray(source.specialRoomTypes) ? source.specialRoomTypes.map(String).filter(Boolean) : DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomTypes,
+    specialRoomMultiplier: numberFrom(source.specialRoomMultiplier, DEFAULT_LOOT_GENERATOR_SETTINGS.specialRoomMultiplier ?? 2),
     sourceFormulas: source.sourceFormulas && typeof source.sourceFormulas === 'object' && !Array.isArray(source.sourceFormulas)
       ? Object.fromEntries(Object.entries(source.sourceFormulas).map(([key, val]) => [key, String(val ?? '')]))
       : {}

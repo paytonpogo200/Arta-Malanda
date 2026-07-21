@@ -550,12 +550,31 @@ create trigger bestiary_categories_touch_updated_at
 before update on public.bestiary_categories
 for each row execute function public.touch_updated_at();
 
-delete from public.bestiary_entities
-where lower(category) in ('animal', 'beast', 'being', 'monster', 'spirit');
+create or replace function public.is_retired_bestiary_category(p_category text)
+returns boolean
+language sql
+immutable
+as $$
+  select lower(trim(coalesce(p_category, ''))) in ('animal', 'beast', 'being', 'monster', 'spirit')
+$$;
 
-delete from public.bestiary_categories
-where lower(category_key) in ('animal', 'beast', 'being', 'monster', 'spirit')
-   or lower(name) in ('animal', 'beast', 'being', 'monster', 'spirit');
+create or replace function public.purge_retired_bestiary_categories()
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  delete from public.bestiary_entities
+  where public.is_retired_bestiary_category(category);
+
+  delete from public.bestiary_categories
+  where public.is_retired_bestiary_category(category_key)
+     or public.is_retired_bestiary_category(name);
+end;
+$$;
+
+select public.purge_retired_bestiary_categories();
 
 insert into public.bestiary_categories (category_key, name, display_order)
 select distinct
@@ -563,7 +582,8 @@ select distinct
   initcap(replace(e.category, '-', ' ')),
   1000
 from public.bestiary_entities e
-where not exists (
+where not public.is_retired_bestiary_category(e.category)
+  and not exists (
   select 1 from public.bestiary_categories c where c.category_key = e.category
 );
 
@@ -616,32 +636,38 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   v_is_dm := v_profile.role = 'dm'::public.user_role;
+  perform public.purge_retired_bestiary_categories();
 
   return jsonb_build_object(
     'categories', (
       select coalesce(jsonb_agg(public.bestiary_category_record_to_json(c) order by c.display_order, c.name), '[]'::jsonb)
       from public.bestiary_categories c
-      where v_is_dm or not c.is_hidden
+      where not public.is_retired_bestiary_category(c.category_key)
+        and not public.is_retired_bestiary_category(c.name)
+        and (v_is_dm or not c.is_hidden)
     ),
     'entities', (
       select coalesce(jsonb_agg(public.bestiary_entity_record_to_json(e) order by coalesce(c.display_order, 999999), e.display_order, e.name), '[]'::jsonb)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where (v_is_dm or e.is_unlocked)
+      where not public.is_retired_bestiary_category(e.category)
+        and (v_is_dm or e.is_unlocked)
         and (v_is_dm or coalesce(c.is_hidden, false) = false)
     ),
     'unlockedCount', (
       select count(*)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where e.is_unlocked
+      where not public.is_retired_bestiary_category(e.category)
+        and e.is_unlocked
         and (v_is_dm or coalesce(c.is_hidden, false) = false)
     ),
     'totalCount', (
       select count(*)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where v_is_dm or (e.is_unlocked and coalesce(c.is_hidden, false) = false)
+      where not public.is_retired_bestiary_category(e.category)
+        and (v_is_dm or (e.is_unlocked and coalesce(c.is_hidden, false) = false))
     )
   );
 end;
@@ -665,9 +691,15 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can update bestiary categories.'; end if;
+  v_category_key := coalesce(nullif(trim(p_category_key), ''), 'unsorted');
+
+  if public.is_retired_bestiary_category(v_category_key)
+    or public.is_retired_bestiary_category(v_patch->>'name') then
+    raise exception 'That retired bestiary category cannot be restored.';
+  end if;
 
   insert into public.bestiary_categories (category_key, name, display_order)
-  values (p_category_key, initcap(replace(p_category_key, '-', ' ')), 1000)
+  values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
   on conflict (category_key) do nothing;
 
   update public.bestiary_categories
@@ -675,7 +707,7 @@ begin
     name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
     is_hidden = case when v_patch ? 'hidden' then (v_patch->>'hidden')::boolean else is_hidden end,
     display_order = case when v_patch ? 'order' then (v_patch->>'order')::int else display_order end
-  where category_key = p_category_key;
+  where category_key = v_category_key;
 
   return public.get_bestiary(p_session_token);
 end;
@@ -694,6 +726,7 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_category_key text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -701,6 +734,9 @@ begin
 
   if v_patch ? 'category' then
     v_category_key := coalesce(nullif(trim(v_patch->>'category'), ''), 'uncategorized');
+    if public.is_retired_bestiary_category(v_category_key) then
+      raise exception 'That retired bestiary category cannot be restored.';
+    end if;
     insert into public.bestiary_categories (category_key, name, display_order)
     values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
     on conflict (category_key) do nothing;
@@ -710,7 +746,7 @@ begin
   set
     is_unlocked = case when v_patch ? 'unlocked' then (v_patch->>'unlocked')::boolean else is_unlocked end,
     name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
-    category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
+    category = case when v_patch ? 'category' then v_category_key else category end,
     habitat = case when v_patch ? 'habitat' then coalesce(v_patch->>'habitat', '') else habitat end,
     temperament = case when v_patch ? 'temperament' then coalesce(v_patch->>'temperament', '') else temperament end,
     wild_score = case when v_patch ? 'wildScore' then greatest(0, (v_patch->>'wildScore')::int) else wild_score end,
@@ -729,6 +765,8 @@ $$;
 
 grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
 grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
+grant execute on function public.is_retired_bestiary_category(text) to anon, authenticated;
+grant execute on function public.purge_retired_bestiary_categories() to anon, authenticated;
 grant execute on function public.get_bestiary(text) to anon, authenticated;
 grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
@@ -765,6 +803,11 @@ begin
   for v_category in select value from jsonb_array_elements(coalesce(p_categories, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_category->>'key', ''), 'unsorted');
+    if public.is_retired_bestiary_category(v_category_key)
+      or public.is_retired_bestiary_category(v_category->>'name') then
+      continue;
+    end if;
+
     insert into public.bestiary_categories (category_key, name, display_order)
     values (
       v_category_key,
@@ -779,6 +822,10 @@ begin
   for v_entity in select value from jsonb_array_elements(coalesce(p_entities, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_entity->>'category', ''), 'unsorted');
+    if public.is_retired_bestiary_category(v_category_key) then
+      continue;
+    end if;
+
     insert into public.bestiary_categories (category_key, name, display_order)
     values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
     on conflict (category_key) do nothing;
@@ -818,6 +865,8 @@ begin
         stats = excluded.stats,
         display_order = excluded.display_order;
   end loop;
+
+  perform public.purge_retired_bestiary_categories();
 
   return public.get_bestiary(p_session_token);
 end;
@@ -4611,7 +4660,7 @@ insert into public.loot_generator_configs (id, settings)
 values (
   'default',
   jsonb_build_object(
-    'biomes', jsonb_build_array('Any'),
+    'biomes', jsonb_build_array('Any', 'Caves', 'Goblin Camp', 'Goblin Tower', 'Goblin Base', 'Ruined Camp', 'Ruined Base'),
     'difficulties', jsonb_build_array(1, 2, 3, 4, 5),
     'poolSizes', jsonb_build_array('Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'),
     'roomTypes', jsonb_build_array('Normal', 'Secret Room', 'Tower Boss Room'),
@@ -4626,7 +4675,13 @@ values (
     'sourceFormulas', '{}'::jsonb
   )
 )
-on conflict (id) do nothing;
+on conflict (id) do update
+set settings = excluded.settings
+where case
+  when jsonb_typeof(public.loot_generator_configs.settings->'biomes') = 'array'
+    then jsonb_array_length(public.loot_generator_configs.settings->'biomes')
+  else 0
+end <= 1;
 
 create or replace function public.loot_item_record_to_json(p_item public.loot_items)
 returns jsonb

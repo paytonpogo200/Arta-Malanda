@@ -7,6 +7,12 @@ export type BestiaryPayload = {
   totalCount: number;
 };
 
+const FORBIDDEN_CATEGORY_KEYS = new Set(['animal', 'beast', 'being', 'monster', 'spirit']);
+
+function isForbiddenBestiaryCategory(value: unknown) {
+  return FORBIDDEN_CATEGORY_KEYS.has(String(value ?? '').trim().toLowerCase());
+}
+
 function numberFrom(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -62,12 +68,19 @@ export function normalizeBestiaryEntity(value: unknown): BestiaryEntity {
 
 export function normalizeBestiaryPayload(value: unknown): BestiaryPayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const entities = Array.isArray(source.entities) ? source.entities.map(normalizeBestiaryEntity).filter((entity) => entity.id) : [];
-  const derivedCategories = Array.from(new Set(entities.map((entity) => entity.category)))
-    .map((key, index) => ({ key, name: categoryLabel(key), hidden: false, order: index * 10 }));
-  const categories = Array.isArray(source.categories)
-    ? source.categories.map(normalizeBestiaryCategory).filter((entry) => entry.key)
-    : derivedCategories;
+  const entities = Array.isArray(source.entities)
+    ? source.entities.map(normalizeBestiaryEntity).filter((entity) => entity.id && !isForbiddenBestiaryCategory(entity.category))
+    : [];
+  const providedCategories = Array.isArray(source.categories)
+    ? source.categories.map(normalizeBestiaryCategory).filter((entry) => entry.key && !isForbiddenBestiaryCategory(entry.key) && !isForbiddenBestiaryCategory(entry.name))
+    : [];
+  const categoryByKey = new Map(providedCategories.map((entry) => [entry.key, entry]));
+  for (const key of Array.from(new Set(entities.map((entity) => entity.category)))) {
+    if (!categoryByKey.has(key) && !isForbiddenBestiaryCategory(key)) {
+      categoryByKey.set(key, { key, name: categoryLabel(key), hidden: false, order: 1000 + categoryByKey.size * 10 });
+    }
+  }
+  const categories = Array.from(categoryByKey.values());
 
   return {
     categories,
