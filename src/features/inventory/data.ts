@@ -5,7 +5,7 @@ export type CharacterInventoryPayload = {
   wallet: WalletBalance[];
 };
 
-export const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
+export const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc'];
 export const LOADOUT_SLOTS: LoadoutSlot[] = ['weapon', 'armor', 'shield', 'active-pet', 'accessory-1', 'accessory-2', 'accessory-3', 'accessory-4'];
 
 export function acceptsLoadoutItem(slot: LoadoutSlot, type: ItemType) {

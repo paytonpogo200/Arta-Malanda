@@ -57,6 +57,7 @@ function numberFrom(value: unknown, fallback = 0) {
 }
 
 function normalizeItemType(value: unknown): ItemType {
+  if (value === 'currency') return 'currency';
   return ITEM_TYPES.includes(value as ItemType) ? value as ItemType : 'misc';
 }
 

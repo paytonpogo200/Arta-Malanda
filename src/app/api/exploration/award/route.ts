@@ -19,6 +19,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
+    if (data && typeof data === 'object' && !Array.isArray(data) && 'currency' in data) {
+      return NextResponse.json({ wallet: data });
+    }
     return NextResponse.json({ item: normalizeInventoryItem(data) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Loot could not be given.' }, { status: 500 });

@@ -29,23 +29,8 @@ end $$;
 
 do $$
 begin
-  create type public.item_type as enum ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc');
+  create type public.item_type as enum ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc');
 exception when duplicate_object then null;
-end $$;
-
-do $$
-begin
-  if not exists (
-    select 1
-    from pg_enum e
-    join pg_type t on t.oid = e.enumtypid
-    join pg_namespace n on n.oid = t.typnamespace
-    where n.nspname = 'public'
-      and t.typname = 'item_type'
-      and e.enumlabel = 'currency'
-  ) then
-    raise exception 'The item_type enum is missing currency. Run this by itself first, then rerun the full SQL file: alter type public.item_type add value if not exists ''currency'' before ''misc'';';
-  end if;
 end $$;
 
 do $$
@@ -3230,7 +3215,7 @@ begin
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
     description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
-    item_type = case when v_patch ? 'type' then (v_patch->>'type')::public.item_type else item_type end,
+    item_type = case when v_patch ? 'type' then (case when v_patch->>'type' = 'currency' then 'misc' else v_patch->>'type' end)::public.item_type else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     price_coin = case when v_patch ? 'priceCoin' then greatest(0, (v_patch->>'priceCoin')::int) else price_coin end,
     stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::int) else stock_quantity end,
@@ -3818,6 +3803,20 @@ as $$
 $$;
 
 
+create or replace function public.is_currency_loot_item(p_item public.loot_items)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.loot_pools p
+    where p.id = p_item.pool_id
+      and p.pool_key = 'catalog-currency'
+  )
+  or lower(p_item.item_name) in ('coin', 'callis', 'callor', 'cal')
+$$;
+
 
 create or replace function public.loot_item_record_to_json(p_item public.loot_items)
 returns jsonb
@@ -3828,11 +3827,11 @@ as $$
     'id', p_item.id,
     'poolId', p_item.pool_id,
     'name', p_item.item_name,
-    'category', p_item.item_type::text,
+    'category', case when public.is_currency_loot_item(p_item) then 'currency' else p_item.item_type::text end,
     'biomes', to_jsonb(p_item.generator_biomes),
     'minDifficulty', p_item.difficulty_min,
     'maxDifficulty', p_item.difficulty_max,
-    'type', p_item.item_type,
+    'type', case when public.is_currency_loot_item(p_item) then 'currency' else p_item.item_type::text end,
     'rarity', p_item.rarity,
     'minQuantity', p_item.min_quantity,
     'maxQuantity', p_item.max_quantity,
@@ -3844,6 +3843,7 @@ $$;
 
 
 grant execute on function public.loot_pool_record_to_json(public.loot_pools) to anon, authenticated;
+grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
 
 
@@ -4727,7 +4727,7 @@ begin
     values (
       v_pool.id,
       v_name,
-      v_type_text::public.item_type,
+      (case when v_type_text = 'currency' then 'misc' else v_type_text end)::public.item_type,
       v_rarity_text::public.item_rarity,
       v_biomes,
       greatest(1, coalesce(nullif(v_row->>'minDifficulty', '')::int, nullif(v_row->>'min_difficulty', '')::int, 1)),
@@ -4799,7 +4799,7 @@ begin
     ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Cloth', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 80, false, 1, 3, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Fine Cloth', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 3, 5, 75, false, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Magic Bow', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 25, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Coin', 'currency'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 80, false, 1, 50, '', true),
+    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Coin', 'misc'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 80, false, 1, 50, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Fishing Rod', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 1, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Hunting Trap', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 2, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-food'), 'Dried Rations', 'food'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 3, '', true),
@@ -4808,7 +4808,7 @@ begin
     ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Glass Flasks', 'potion'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 5, 60, false, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Small Net', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 3, 60, false, 1, 3, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Looks like a good walking stick', 'misc'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 3, 60, false, 1, 200, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callis', 'currency'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 2, 4, 60, false, 1, 50, '', true),
+    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callis', 'misc'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 2, 4, 60, false, 1, 50, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Longbow', 'weapon'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 3, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Fur Skin', 'fabric'::public.item_type, 'Uncommon'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 60, false, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Light Duffle', 'storage'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 2, 4, 50, false, 1, 2, '', true),
@@ -4838,7 +4838,7 @@ begin
     ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Clear-Mind Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Wake-Up Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 30, false, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Clotting Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callor', 'currency'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 35, false, 1, 50, '', true),
+    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callor', 'misc'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 35, false, 1, 50, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-pet'), 'Horse', 'pet'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 3, 35, true, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-pet'), 'War Horse', 'pet'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 35, true, 1, 5, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Quartz', 'ore'::public.item_type, 'Rare'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 40, false, 1, 5, '', true),
@@ -4901,7 +4901,7 @@ begin
     ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Frost Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Mountains', 'Snow']::text[], 4, 5, 5, false, 1, 3, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Storm Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Caves']::text[], 4, 5, 5, false, 1, 3, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Mountian Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Mountains', 'Caves']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Cal', 'currency'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 5, 5, 5, false, 1, 50, '', true),
+    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Cal', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 5, 5, 5, false, 1, 50, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Bow', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 1, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Fire Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
     ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Frost Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
@@ -4971,6 +4971,8 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_loot public.loot_items%rowtype;
+  v_currency_unit public.currency_units%rowtype;
+  v_currency_key text;
   v_slot int;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
@@ -4984,6 +4986,41 @@ begin
 
   select * into v_loot from public.loot_items where id = p_loot_item_id and is_active;
   if v_loot.id is null then raise exception 'Loot item not found.'; end if;
+
+  if public.is_currency_loot_item(v_loot) then
+    v_currency_key := case lower(v_loot.item_name)
+      when 'coin' then 'coin'
+      when 'callis' then 'callis'
+      when 'callor' then 'callor'
+      when 'cal' then 'cal'
+      else null
+    end;
+
+    if v_currency_key is null then
+      raise exception 'Currency loot item is missing a matching wallet unit.';
+    end if;
+
+    select * into v_currency_unit
+    from public.currency_units
+    where unit_key = v_currency_key;
+
+    if v_currency_unit.id is null then
+      raise exception 'Currency unit % was not found.', v_currency_key;
+    end if;
+
+    insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
+    values (v_character.id, v_currency_unit.id, v_quantity)
+    on conflict (character_id, currency_unit_id) do update
+    set amount = public.character_wallet_balances.amount + excluded.amount;
+
+    return jsonb_build_object(
+      'currency', true,
+      'characterId', v_character.id,
+      'unitKey', v_currency_unit.unit_key,
+      'unitName', v_currency_unit.name,
+      'amount', v_quantity
+    );
+  end if;
 
   select * into v_target
   from public.inventory_items i
@@ -5046,6 +5083,7 @@ grant execute on function public.create_campaign_character(text, text, uuid, tex
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;
+grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
 grant execute on function public.get_exploration_state(text) to anon, authenticated;
 grant execute on function public.import_loot_items(text, jsonb) to anon, authenticated;
