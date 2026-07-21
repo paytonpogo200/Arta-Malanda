@@ -76,7 +76,7 @@ export function normalizeCharacter(value: unknown): Character {
     personalPassives: String(source.personalPassives ?? ''),
     tokenColor: String(source.tokenColor ?? '#9caf79'),
     locationName: String(source.locationName ?? 'Calostrynn'),
-    legacyOwnerName: source.legacyOwnerName ? String(source.legacyOwnerName) : undefined
+    previousOwnerName: source.previousOwnerName ? String(source.previousOwnerName) : undefined
   };
 }
 
@@ -124,6 +124,6 @@ export function characterFromClassTemplate(template: ClassTemplate, ownerUserId:
     personalPassives,
     tokenColor: template.tokenColor,
     locationName: 'Calostrynn',
-    legacyOwnerName: undefined
+    previousOwnerName: undefined
   };
 }

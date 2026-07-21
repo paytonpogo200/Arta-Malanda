@@ -13,7 +13,9 @@ Arta Malanda is built around small feature modules instead of large all-in-one s
 
 ## Data direction
 
-The rebuild targets a fresh Supabase schema. During early development, the UI can run against typed mock data so the interface can be tested before database setup.
+The app is database-backed. Supabase schema, functions, seed data, workbook import behavior, and one-time data transitions live in `supabase/RUN_THIS_IN_SUPABASE.sql`.
+
+There should not be separate migration folders, sidecar data imports, or old-site compatibility files. If the database model changes, rewrite the affected runner section cleanly and remove the old path in the same checkpoint.
 
 ## Feature boundaries
 
@@ -22,4 +24,8 @@ The rebuild targets a fresh Supabase schema. During early development, the UI ca
 - `components/characters`: character ledger and sheet.
 - `components/inventory`: item slots, grids, loadout, containers.
 - `components/battle`: map, tokens, encounter roster.
-- `features/campaign`: local campaign state and future data gateway.
+- `features/*`: data normalization and focused helpers for each feature.
+
+## Patch discipline
+
+See `docs/project-rules.md`. In short: fix the system that owns the problem. Do not add side-effect patches while leaving the contradiction in place.

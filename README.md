@@ -20,4 +20,14 @@ This repo is intentionally separate from the live production app. The goal is to
 3. Install dependencies.
 4. Run `npm run dev`.
 
-The app can render its first core preview with local mock campaign data while the fresh Supabase project/schema is being prepared.
+## Supabase
+
+Use one SQL source only:
+
+- `supabase/RUN_THIS_IN_SUPABASE.sql`
+
+Do not add numbered migration folders or separate data migration files. If schema or seed behavior changes, rewrite the affected section in the runner cleanly.
+
+## Project discipline
+
+See `docs/project-rules.md`.

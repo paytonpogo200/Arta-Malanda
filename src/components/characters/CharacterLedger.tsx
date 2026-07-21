@@ -221,8 +221,8 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                 const mine = character.ownerUserId === profile.id;
                 const owner = character.ownerUserId
                   ? ownerLabel(profileById.get(character.ownerUserId))
-                  : character.legacyOwnerName
-                    ? `Unclaimed · formerly ${character.legacyOwnerName}`
+                  : character.previousOwnerName
+                    ? `Unclaimed · formerly ${character.previousOwnerName}`
                     : 'Unassigned';
                 return (
                   <button

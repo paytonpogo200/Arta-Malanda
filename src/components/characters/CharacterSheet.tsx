@@ -138,9 +138,9 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
               <h2 className="mt-1 text-3xl font-black tracking-tight">{character.name}</h2>
               <p className="mt-1 text-sm text-[var(--muted)]">Level {character.level} {character.className}</p>
               <p className="mt-2 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-[var(--brass)]"><MapPin size={13} /> {character.locationName}</p>
-              {!character.ownerUserId && character.legacyOwnerName && (
+              {!character.ownerUserId && character.previousOwnerName && (
                 <p className="mt-2 rounded-full border border-[var(--line)] bg-black/15 px-3 py-1 text-xs font-black text-[var(--muted)]">
-                  Unclaimed · formerly {character.legacyOwnerName}
+                  Unclaimed · formerly {character.previousOwnerName}
                 </p>
               )}
             </div>

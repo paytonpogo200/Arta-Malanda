@@ -1,11 +1,6 @@
 -- Arta Malanda Supabase SQL runner
--- Updated with legacy unclaimed-character support. Run this before optional data_migrations/202607190001_import_old_campaign_unclaimed.sql.
 -- For manual Supabase use: paste this whole file into the Supabase SQL Editor and run it.
 -- It is designed to be rerunnable; create-or-replace functions update existing code cleanly.
-
--- ============================================================
--- Source: supabase\core-v1.sql
--- ============================================================
 
 -- Arta Malanda clean core schema v1
 -- Fresh Supabase project/schema only. This rebuild uses username + password campaign accounts.
@@ -112,6 +107,7 @@ create table if not exists public.characters (
   personal_passives text not null default '',
   token_color text not null default '#9caf79',
   location_name text not null default 'Calostrynn',
+  previous_owner_name text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -407,11 +403,9 @@ grant execute on function public.logout_campaign_session(text) to anon, authenti
 
 
 -- ============================================================
--- Source: supabase\migrations\20260711000300_character_ledger_foundation.sql
 -- ============================================================
 
 -- Character ledger foundation
--- Run this after the username auth core + auth crypto fix migrations.
 
 alter table public.characters
   add column if not exists class_key text;
@@ -422,6 +416,27 @@ where class_key is null;
 
 alter table public.characters
   alter column class_key set default 'adventurer';
+
+alter table public.characters
+  add column if not exists previous_owner_name text not null default '';
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'characters'
+      and column_name = 'legacy_owner_name'
+  ) then
+    update public.characters
+    set previous_owner_name = legacy_owner_name
+    where previous_owner_name = ''
+      and legacy_owner_name <> '';
+
+    alter table public.characters drop column legacy_owner_name;
+  end if;
+end $$;
 
 create index if not exists characters_class_key_idx on public.characters(class_key);
 
@@ -465,7 +480,8 @@ as $$
     'classPassives', p_character.class_passives,
     'personalPassives', p_character.personal_passives,
     'tokenColor', p_character.token_color,
-    'locationName', p_character.location_name
+    'locationName', p_character.location_name,
+    'previousOwnerName', nullif(p_character.previous_owner_name, '')
   )
 $$;
 
@@ -660,7 +676,6 @@ grant execute on function public.character_record_to_json(public.characters) to 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260720000300_bestiary_categories.sql
 -- ============================================================
 
 -- Flexible bestiary categories and full stat storage.
@@ -901,7 +916,6 @@ grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260720000400_bestiary_workbook_import.sql
 -- ============================================================
 
 -- Excel workbook import endpoint for bestiary updates.
@@ -998,7 +1012,6 @@ grant execute on function public.update_campaign_character(text, uuid, jsonb) to
 
 
 -- ============================================================
--- Source: supabase\migrations\20260711000400_dashboard_shell_state.sql
 -- ============================================================
 
 -- Dashboard shell state
@@ -1039,7 +1052,6 @@ grant execute on function public.get_dashboard_state(text) to anon, authenticate
 
 
 -- ============================================================
--- Source: supabase\migrations\20260711000500_character_ledger_expansion.sql
 -- ============================================================
 
 -- Character ledger expansion
@@ -1355,7 +1367,6 @@ grant execute on function public.update_campaign_character(text, uuid, jsonb) to
 
 
 -- ============================================================
--- Source: supabase\migrations\20260711000600_inventory_loadout_wallet_foundation.sql
 -- ============================================================
 
 -- Inventory, loadout, and wallet foundation.
@@ -1911,7 +1922,6 @@ grant execute on function public.set_character_wallet_balances(text, uuid, jsonb
 
 
 -- ============================================================
--- Source: supabase\migrations\20260718000100_house_property_storage_foundation.sql
 -- ============================================================
 
 -- House, property, and storage foundation.
@@ -2599,7 +2609,6 @@ grant execute on function public.update_campaign_property(text, uuid, jsonb) to 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260718000200_battlemap_combat_foundation.sql
 -- ============================================================
 
 -- Battlemap and combat foundation.
@@ -2926,7 +2935,6 @@ grant execute on function public.end_active_battle(text) to anon, authenticated;
 
 
 -- ============================================================
--- Source: supabase\migrations\20260718000300_cities_shops_foundation.sql
 -- ============================================================
 
 -- Cities and shops foundation.
@@ -3422,7 +3430,6 @@ grant execute on function public.update_market_product(text, uuid, jsonb) to ano
 
 
 -- ============================================================
--- Source: supabase\migrations\20260720000200_shop_vendor_visibility_controls.sql
 -- ============================================================
 
 -- Shop vendor controls for Discovered Cities.
@@ -3495,7 +3502,6 @@ grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260718000400_spells_foundation.sql
 -- ============================================================
 
 -- Spell catalog, character spell slots, and mana use foundation.
@@ -3889,7 +3895,6 @@ grant execute on function public.use_character_spell(text, uuid) to anon, authen
 
 
 -- ============================================================
--- Source: supabase\migrations\20260719000100_exploration_loot_foundation.sql
 -- ============================================================
 
 -- Exploration and loot generator foundation.
@@ -4216,7 +4221,6 @@ grant execute on function public.import_loot_items(text, jsonb) to anon, authent
 
 
 -- ============================================================
--- Source: supabase\migrations\20260719000200_bestiary_foundation.sql
 -- ============================================================
 
 -- Bestiary catalog and discovery foundation.
@@ -4375,7 +4379,6 @@ grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to an
 
 
 -- ============================================================
--- Source: supabase\migrations\20260719000300_personal_scroll_foundation.sql
 -- ============================================================
 
 -- Personal Scroll foundation.
@@ -4479,7 +4482,6 @@ grant execute on function public.update_personal_scroll(text, text, text) to ano
 
 
 -- ============================================================
--- Source: supabase\migrations\20260719000400_trades_notifications_foundation.sql
 -- ============================================================
 
 -- Trades and notifications foundation.
@@ -4873,7 +4875,6 @@ grant execute on function public.update_trade_offer_status(text, uuid, text) to 
 
 
 -- ============================================================
--- Source: supabase\migrations\20260719000500_update_assets_foundation.sql
 -- ============================================================
 
 -- DM update assets foundation.
@@ -5076,7 +5077,6 @@ grant execute on function public.update_class_template_asset(text, uuid, jsonb) 
 grant execute on function public.update_spell_asset(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_loot_item_asset(text, uuid, jsonb) to anon, authenticated;
 
--- Source: supabase\migrations\20260719000700_workbook_loot_generator.sql
 
 -- Workbook-backed loot generator.
 
@@ -5479,44 +5479,3 @@ end;
 $$;
 
 grant execute on function public.roll_loot_generator(text, text, int, text, text) to anon, authenticated;
-
-
--- ============================================================
--- Source: supabase\migrations\20260719000600_legacy_unclaimed_character_context.sql
--- ============================================================
-
--- Legacy migration support for unclaimed imported characters.
-
-alter table public.characters
-  add column if not exists legacy_owner_name text not null default '';
-
-create or replace function public.character_record_to_json(p_character public.characters)
-returns jsonb
-language sql
-stable
-set search_path = public
-as $$
-  select jsonb_build_object(
-    'id', p_character.id,
-    'name', p_character.name,
-    'kind', p_character.kind,
-    'ownerUserId', p_character.owner_user_id,
-    'classKey', coalesce(p_character.class_key, 'adventurer'),
-    'className', p_character.class_name,
-    'level', p_character.level,
-    'maxHp', p_character.max_hp,
-    'currentHp', p_character.current_hp,
-    'maxMana', p_character.max_mana,
-    'currentMana', p_character.current_mana,
-    'inventorySlots', p_character.inventory_slots,
-    'spellSlots', p_character.spell_slots,
-    'attributes', p_character.attributes,
-    'classPassives', p_character.class_passives,
-    'personalPassives', p_character.personal_passives,
-    'tokenColor', p_character.token_color,
-    'locationName', p_character.location_name,
-    'legacyOwnerName', nullif(p_character.legacy_owner_name, '')
-  )
-$$;
-
-grant execute on function public.character_record_to_json(public.characters) to anon, authenticated;

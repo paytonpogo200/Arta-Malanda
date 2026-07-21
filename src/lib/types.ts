@@ -107,7 +107,7 @@ export type Character = {
   personalPassives: string;
   tokenColor: string;
   locationName: string;
-  legacyOwnerName?: string;
+  previousOwnerName?: string;
 };
 
 export type LoadoutSlot =
