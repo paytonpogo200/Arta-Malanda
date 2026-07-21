@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { normalizeItemCatalogPayload } from '@/features/exploration/data';
+import { normalizeExplorationPayload } from '@/features/exploration/data';
 import { parseLootWorkbook } from '@/features/exploration/workbook';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
@@ -7,10 +7,10 @@ import { readSessionToken } from '@/lib/auth/session';
 export async function POST(request: NextRequest) {
   try {
     const token = await readSessionToken();
-    if (!token) return NextResponse.json({ error: 'Log in before importing the item catalog.' }, { status: 401 });
+    if (!token) return NextResponse.json({ error: 'Log in before importing loot.' }, { status: 401 });
     const contentType = request.headers.get('content-type') ?? '';
     if (!contentType.includes('multipart/form-data')) {
-      return NextResponse.json({ error: 'Upload a Loot Drops workbook to update the item catalog.' }, { status: 400 });
+      return NextResponse.json({ error: 'Upload a Loot Drops workbook to update the generator.' }, { status: 400 });
     }
 
     const form = await request.formData();
@@ -26,8 +26,8 @@ export async function POST(request: NextRequest) {
       p_rows: importPayload
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
-    return NextResponse.json(normalizeItemCatalogPayload(data));
+    return NextResponse.json(normalizeExplorationPayload(data));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Item catalog import failed.' }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Loot workbook import failed.' }, { status: 500 });
   }
 }

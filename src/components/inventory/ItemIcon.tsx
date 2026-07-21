@@ -1,4 +1,4 @@
-import { Apple, Box, FlaskConical, Leaf, PackageOpen, PawPrint, Pickaxe, ScrollText, Shield, Shirt, Sparkles, Sword, Wrench } from 'lucide-react';
+import { Apple, Box, Coins, FlaskConical, Leaf, PackageOpen, PawPrint, Pickaxe, ScrollText, Shield, Shirt, Sparkles, Sword, Wrench } from 'lucide-react';
 import type { ItemType } from '@/lib/types';
 
 export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number }) {
@@ -16,6 +16,7 @@ export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number })
     fabric: Shirt,
     tool: Wrench,
     quest: ScrollText,
+    currency: Coins,
     misc: Box
   }[type] ?? Box;
 

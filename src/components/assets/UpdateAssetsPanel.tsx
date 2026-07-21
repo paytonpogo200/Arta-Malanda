@@ -105,6 +105,13 @@ export function UpdateAssetsPanel() {
       });
       return;
     }
+    if (next.kind === 'loot') {
+      setDraft({
+        ...next.value,
+        biomesText: next.value.biomes.join(', ')
+      });
+      return;
+    }
     setDraft(next.value);
   }
 
@@ -299,9 +306,17 @@ export function UpdateAssetsPanel() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   <SelectField value={String(draft.type ?? 'misc')} onChange={(event) => updateDraft('type', event.target.value)}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                   <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
+                  <NumberInput value={Number(draft.minDifficulty ?? 1)} onValueChange={(value) => updateDraft('minDifficulty', value)} />
+                  <NumberInput value={Number(draft.maxDifficulty ?? 5)} onValueChange={(value) => updateDraft('maxDifficulty', value)} />
+                  <NumberInput value={Number(draft.weight ?? 1)} onValueChange={(value) => updateDraft('weight', value)} />
                   <NumberInput value={Number(draft.minQuantity ?? 1)} onValueChange={(value) => updateDraft('minQuantity', value)} />
                   <NumberInput value={Number(draft.maxQuantity ?? 1)} onValueChange={(value) => updateDraft('maxQuantity', value)} />
                 </div>
+                <TextField value={String(draft.biomesText ?? 'Any')} onChange={(event) => updateDraft('biomesText', event.target.value)} placeholder="Biomes, comma separated" />
+                <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black">
+                  <input type="checkbox" checked={Boolean(draft.towerBaseOnly)} onChange={(event) => updateDraft('towerBaseOnly', event.target.checked)} />
+                  Tower/Base only
+                </label>
                 <TextAreaField rows={3} value={String(draft.notes ?? '')} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Notes" />
               </>
             )}

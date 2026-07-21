@@ -16,6 +16,7 @@ export type ItemType =
   | 'fabric'
   | 'tool'
   | 'quest'
+  | 'currency'
   | 'misc';
 
 export const ATTRIBUTE_KEYS = [
@@ -241,11 +242,39 @@ export type LootItem = {
   poolId: string;
   name: string;
   category: string;
+  biomes: string[];
+  minDifficulty: number;
+  maxDifficulty: number;
   type: ItemType;
   rarity: ItemRarity;
   minQuantity: number;
   maxQuantity: number;
+  weight: number;
+  towerBaseOnly: boolean;
   notes: string;
+};
+
+export type LootGeneratorSettings = {
+  biomes: string[];
+  difficulties: number[];
+  poolSizes: string[];
+  roomTypes: string[];
+  baseRollsByPoolSize: Record<string, number>;
+  poolMultipliers: Record<string, number>;
+  roomMultipliers: Record<string, number>;
+  rareBoostRarities: ItemRarity[];
+  sourceFormulas: Record<string, string>;
+};
+
+export type LootDrop = {
+  id: string;
+  rollNumber: number;
+  itemId: string;
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  quantity: number;
+  remaining: number;
 };
 
 export type BestiaryCategory = string;
