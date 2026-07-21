@@ -7,8 +7,6 @@ export type BestiaryPayload = {
   totalCount: number;
 };
 
-export const BESTIARY_CATEGORIES: BestiaryCategory[] = ['animal', 'beast', 'being', 'monster', 'spirit'];
-
 function numberFrom(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

@@ -91,6 +91,10 @@ export function UpdateAssetsPanel() {
     }));
   }, [assets.lootItems, assets.lootPools]);
 
+  const bestiaryCategoryOptions = useMemo(() => {
+    return Array.from(new Set(assets.bestiary.map((entity) => entity.category).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [assets.bestiary]);
+
   function openEditor(next: EditorTarget) {
     setTarget(next);
     if (next.kind === 'class') {
@@ -307,8 +311,8 @@ export function UpdateAssetsPanel() {
               <>
                 <TextField value={String(draft.name ?? '')} onChange={(event) => updateDraft('name', event.target.value)} placeholder="Entity name" />
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <SelectField value={String(draft.category ?? 'beast')} onChange={(event) => updateDraft('category', event.target.value)}>
-                    {['animal', 'beast', 'being', 'monster', 'spirit'].map((category) => <option key={category} value={category}>{category}</option>)}
+                  <SelectField value={String(draft.category ?? bestiaryCategoryOptions[0] ?? '')} onChange={(event) => updateDraft('category', event.target.value)}>
+                    {bestiaryCategoryOptions.map((category) => <option key={category} value={category}>{category}</option>)}
                   </SelectField>
                   <NumberInput value={Number(draft.wildScore ?? 0)} onValueChange={(value) => updateDraft('wildScore', value)} />
                   <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.unlocked)} onChange={(event) => updateDraft('unlocked', event.target.checked)} /> Visible</label>

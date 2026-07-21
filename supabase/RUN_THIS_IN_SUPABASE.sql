@@ -689,17 +689,6 @@ before update on public.bestiary_categories
 for each row execute function public.touch_updated_at();
 
 insert into public.bestiary_categories (category_key, name, display_order)
-values
-  ('animal', 'Animal', 10),
-  ('beast', 'Beast', 20),
-  ('being', 'Being', 30),
-  ('monster', 'Monster', 40),
-  ('spirit', 'Spirit', 50)
-on conflict (category_key) do update
-set name = excluded.name,
-    display_order = excluded.display_order;
-
-insert into public.bestiary_categories (category_key, name, display_order)
 select distinct
   e.category,
   initcap(replace(e.category, '-', ' ')),
