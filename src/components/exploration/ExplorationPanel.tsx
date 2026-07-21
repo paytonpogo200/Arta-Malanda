@@ -5,9 +5,9 @@ import { Compass, Dice6, FileUp, Gift, Loader2, Mountain, RefreshCw } from 'luci
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField, TextAreaField } from '@/components/ui/Field';
+import { SelectField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { estimateLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload, parseLootImport, type ExplorationPayload } from '@/features/exploration/data';
+import { estimateLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload, type ExplorationPayload } from '@/features/exploration/data';
 import { rarityClass } from '@/lib/utils/rarity';
 import type { LootDrop } from '@/lib/types';
 
@@ -49,7 +49,6 @@ export function ExplorationPanel() {
   const [selectedDropId, setSelectedDropId] = useState('');
   const [characterId, setCharacterId] = useState('');
   const [awardQuantity, setAwardQuantity] = useState(1);
-  const [importText, setImportText] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -117,27 +116,6 @@ export function ExplorationPanel() {
       if (!response.ok) throw new Error(body.error ?? 'Loot could not be awarded.');
     } catch (awardError) {
       setError(awardError instanceof Error ? awardError.message : 'Loot could not be awarded.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function importLoot() {
-    setSaving(true);
-    setError('');
-    try {
-      const rows = parseLootImport(importText);
-      const response = await fetch('/api/exploration/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows })
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? 'Loot import failed.');
-      setPayload(normalizeExplorationPayload(body));
-      setImportText('');
-    } catch (importError) {
-      setError(importError instanceof Error ? importError.message : 'Loot import failed.');
     } finally {
       setSaving(false);
     }
@@ -240,7 +218,7 @@ export function ExplorationPanel() {
             <label className="mb-3 grid cursor-pointer gap-2 rounded-2xl border border-dashed border-[var(--line)] bg-black/15 p-4 text-center transition hover:border-[var(--brass)]">
               <FileUp className="mx-auto text-[var(--brass)]" size={22} />
               <span className="text-sm font-black">Upload Loot Drops.xlsx</span>
-              <span className="text-xs text-[var(--muted)]">Replaces the generator catalog with workbook items, settings, and known formula rules.</span>
+              <span className="text-xs text-[var(--muted)]">Replaces the generator catalog with workbook items, settings, and formula rules.</span>
               <input
                 type="file"
                 accept=".xlsx,.xls"
@@ -249,8 +227,12 @@ export function ExplorationPanel() {
                 onChange={(event) => void importWorkbook(event.target.files?.[0] ?? null)}
               />
             </label>
-            <TextAreaField rows={6} value={importText} onChange={(event) => setImportText(event.target.value)} placeholder="CSV headers: pool,name,type,rarity,min,max,weight,notes&#10;or paste a JSON array with those fields." />
-            <Button className="mt-2" variant="secondary" disabled={!importText.trim() || saving} onClick={importLoot}><FileUp className="mr-2 inline" size={15} /> Import rows</Button>
+            <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs font-bold text-[var(--muted)] sm:grid-cols-2">
+              <span>Biomes: <b className="text-[var(--paper)]">{payload.settings.biomes.length}</b></span>
+              <span>Pool sizes: <b className="text-[var(--paper)]">{payload.settings.poolSizes.length}</b></span>
+              <span>Room types: <b className="text-[var(--paper)]">{payload.settings.roomTypes.length}</b></span>
+              <span>Catalog items: <b className="text-[var(--paper)]">{payload.items.length}</b></span>
+            </div>
           </Card>
         </div>
 

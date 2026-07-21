@@ -111,19 +111,6 @@ export function normalizeLootRollPayload(value: unknown): LootRollPayload {
   };
 }
 
-export function parseLootImport(text: string) {
-  const trimmed = text.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith('[')) return JSON.parse(trimmed);
-
-  const [headerLine, ...rows] = trimmed.split(/\r?\n/);
-  const headers = headerLine.split(',').map((header) => header.trim().toLowerCase());
-  return rows.filter(Boolean).map((row) => {
-    const cells = row.split(',').map((cell) => cell.trim());
-    return Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? '']));
-  });
-}
-
 export function normalizeLootGeneratorSettings(value: unknown): LootGeneratorSettings {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const objectOfNumbers = (entry: unknown, fallback: Record<string, number>) => {

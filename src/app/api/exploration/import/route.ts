@@ -9,18 +9,15 @@ export async function POST(request: NextRequest) {
     const token = await readSessionToken();
     if (!token) return NextResponse.json({ error: 'Log in before importing loot.' }, { status: 401 });
     const contentType = request.headers.get('content-type') ?? '';
-    let importPayload: unknown;
-
-    if (contentType.includes('multipart/form-data')) {
-      const form = await request.formData();
-      const file = form.get('file');
-      if (!(file instanceof File)) return NextResponse.json({ error: 'Choose a loot workbook first.' }, { status: 400 });
-      const buffer = Buffer.from(await file.arrayBuffer());
-      importPayload = parseLootWorkbook(buffer);
-    } else {
-      const body = await request.json().catch(() => ({}));
-      importPayload = Array.isArray(body.rows) ? body.rows : body;
+    if (!contentType.includes('multipart/form-data')) {
+      return NextResponse.json({ error: 'Upload Loot Drops.xlsx to update the loot generator.' }, { status: 400 });
     }
+
+    const form = await request.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) return NextResponse.json({ error: 'Choose a loot workbook first.' }, { status: 400 });
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const importPayload = parseLootWorkbook(buffer);
 
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });

@@ -46,7 +46,7 @@ export function normalizeBestiaryEntity(value: unknown): BestiaryEntity {
     id: String(source.id ?? ''),
     key: String(source.key ?? ''),
     name: String(source.name ?? 'Unknown Entity'),
-    category: String(source.category ?? 'beast'),
+    category: String(source.category ?? 'uncategorized'),
     habitat: String(source.habitat ?? ''),
     temperament: String(source.temperament ?? ''),
     wildScore: Math.max(0, numberFrom(source.wildScore, 0)),
