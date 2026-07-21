@@ -44,7 +44,7 @@ begin
       and t.typname = 'item_type'
       and e.enumlabel = 'currency'
   ) then
-    alter type public.item_type add value 'currency' before 'misc';
+    raise exception 'The item_type enum is missing currency. Run this by itself first, then rerun the full SQL file: alter type public.item_type add value if not exists ''currency'' before ''misc'';';
   end if;
 end $$;
 
