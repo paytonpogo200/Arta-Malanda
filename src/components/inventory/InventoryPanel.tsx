@@ -120,7 +120,7 @@ export function InventoryPanel({
       if (!response.ok) return;
       const normalized = normalizeUpdateAssetsPayload(payload);
       const uniqueByName = new Map<string, LootItem>();
-      for (const item of normalized.lootItems) {
+      for (const item of normalized.lootItems.filter((entry) => entry.type !== 'currency')) {
         const key = `${item.name.toLowerCase()}|${item.rarity}|${item.type}`;
         if (!uniqueByName.has(key)) uniqueByName.set(key, item);
       }
@@ -134,7 +134,7 @@ export function InventoryPanel({
     void loadCatalog();
   }, [loadCatalog]);
 
-  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null)), [items]);
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
   const itemByMainSlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
   const filteredCatalog = useMemo(() => {

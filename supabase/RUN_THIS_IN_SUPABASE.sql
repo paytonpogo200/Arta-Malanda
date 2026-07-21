@@ -1442,6 +1442,91 @@ begin
 end;
 $$;
 
+create or replace function public.next_storage_container_slot(p_character_id uuid)
+returns int
+language sql
+stable
+as $$
+  select coalesce(min(i.slot_index), 0) - 1
+  from public.inventory_items i
+  where i.character_id = p_character_id
+    and i.parent_item_id is null
+    and i.loadout_slot is null
+    and i.slot_index < 0
+$$;
+
+create or replace function public.character_storage_container_exists(
+  p_character_id uuid,
+  p_item_name text
+)
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.inventory_items i
+    where i.character_id = p_character_id
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.item_type = 'storage'::public.item_type
+      and i.is_storage = true
+      and lower(i.item_name) = lower(trim(coalesce(p_item_name, '')))
+  )
+$$;
+
+with duplicate_empty_storage as (
+  select id
+  from (
+    select i.id,
+      row_number() over (
+        partition by i.character_id, lower(i.item_name)
+        order by i.created_at, i.id
+      ) as duplicate_rank
+    from public.inventory_items i
+    where i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.item_type = 'storage'::public.item_type
+      and i.is_storage = true
+  ) ranked
+  where duplicate_rank > 1
+    and not exists (
+      select 1 from public.inventory_items child where child.parent_item_id = ranked.id
+    )
+)
+update public.inventory_items i
+set is_storage = false,
+    storage_capacity = 0
+where i.id in (select id from duplicate_empty_storage);
+
+with active_storage as (
+  select i.id,
+    row_number() over (partition by i.character_id order by i.created_at, i.id) as storage_rank
+  from public.inventory_items i
+  where i.parent_item_id is null
+    and i.loadout_slot is null
+    and i.item_type = 'storage'::public.item_type
+    and i.is_storage = true
+)
+update public.inventory_items i
+set slot_index = -100000 - active_storage.storage_rank
+from active_storage
+where i.id = active_storage.id;
+
+with active_storage as (
+  select i.id,
+    row_number() over (partition by i.character_id order by i.created_at, i.id) as storage_rank
+  from public.inventory_items i
+  where i.parent_item_id is null
+    and i.loadout_slot is null
+    and i.item_type = 'storage'::public.item_type
+    and i.is_storage = true
+)
+update public.inventory_items i
+set slot_index = -active_storage.storage_rank
+from active_storage
+where i.id = active_storage.id;
+
 create or replace function public.inventory_items_stackable(a public.inventory_items, b public.inventory_items)
 returns boolean
 language sql
@@ -1479,16 +1564,62 @@ declare
   v_character public.characters%rowtype;
   v_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
+  v_item_type public.item_type;
+  v_quantity int := greatest(1, coalesce(p_quantity, 1));
+  v_make_storage_container boolean := false;
+  v_storage_item public.inventory_items%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, true);
-  perform public.assert_inventory_slot_capacity(v_character, p_parent_item_id, p_slot_index);
 
   if length(trim(coalesce(p_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
   end if;
+
+  v_item_type := p_item_type::public.item_type;
+  v_make_storage_container := v_item_type = 'storage'::public.item_type
+    and coalesce(p_is_storage, false)
+    and p_parent_item_id is null
+    and not public.character_storage_container_exists(p_character_id, p_item_name);
+
+  if v_make_storage_container then
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      spell_imbue
+    )
+    values (
+      p_character_id,
+      null,
+      public.next_storage_container_slot(p_character_id),
+      trim(p_item_name),
+      v_item_type,
+      p_rarity::public.item_rarity,
+      1,
+      true,
+      greatest(1, coalesce(p_storage_capacity, 6)),
+      case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+      nullif(trim(coalesce(p_spell_imbue, '')), '')
+    )
+    returning * into v_storage_item;
+
+    v_quantity := v_quantity - 1;
+    if v_quantity <= 0 then
+      return public.inventory_item_record_to_json(v_storage_item);
+    end if;
+  end if;
+
+  perform public.assert_inventory_slot_capacity(v_character, p_parent_item_id, p_slot_index);
 
   select * into v_target
   from public.inventory_items i
@@ -1500,14 +1631,13 @@ begin
 
   if v_target.id is not null then
     if v_target.item_name = trim(p_item_name)
-      and v_target.item_type = p_item_type::public.item_type
+      and v_target.item_type = v_item_type
       and v_target.rarity = p_rarity::public.item_rarity
       and coalesce(v_target.spell_imbue, '') = coalesce(nullif(trim(p_spell_imbue), ''), '')
       and v_target.is_storage = false
-      and not coalesce(p_is_storage, false)
     then
       update public.inventory_items
-      set quantity = quantity + greatest(1, coalesce(p_quantity, 1))
+      set quantity = quantity + v_quantity
       where id = v_target.id
       returning * into v_item;
       return public.inventory_item_record_to_json(v_item);
@@ -1534,11 +1664,11 @@ begin
     p_parent_item_id,
     p_slot_index,
     trim(p_item_name),
-    p_item_type::public.item_type,
+    v_item_type,
     p_rarity::public.item_rarity,
-    greatest(1, coalesce(p_quantity, 1)),
-    coalesce(p_is_storage, false),
-    case when coalesce(p_is_storage, false) then greatest(1, coalesce(p_storage_capacity, 6)) else 0 end,
+    v_quantity,
+    false,
+    0,
     case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
     nullif(trim(coalesce(p_spell_imbue, '')), '')
   )
@@ -1745,6 +1875,8 @@ grant execute on function public.get_character_inventory(text, uuid) to anon, au
 grant execute on function public.assert_inventory_access(public.profiles, uuid, boolean) to anon, authenticated;
 grant execute on function public.find_first_free_inventory_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.assert_inventory_slot_capacity(public.characters, uuid, int) to anon, authenticated;
+grant execute on function public.next_storage_container_slot(uuid) to anon, authenticated;
+grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
 grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, int, boolean, int, jsonb, text) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
@@ -3053,6 +3185,8 @@ declare
   v_cost int;
   v_wallet int;
   v_slot int;
+  v_inventory_quantity int;
+  v_storage_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
 begin
@@ -3092,6 +3226,44 @@ begin
     raise exception 'Not enough currency.';
   end if;
 
+  v_inventory_quantity := v_quantity;
+
+  if v_product.item_type = 'storage'::public.item_type
+    and not public.character_storage_container_exists(v_character.id, v_product.item_name)
+  then
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      spell_imbue
+    )
+    values (
+      v_character.id,
+      null,
+      public.next_storage_container_slot(v_character.id),
+      v_product.item_name,
+      v_product.item_type,
+      v_product.rarity,
+      1,
+      true,
+      public.catalog_storage_capacity(v_product.item_name),
+      '{}'::jsonb,
+      null
+    )
+    returning * into v_storage_item;
+
+    v_inventory_quantity := v_inventory_quantity - 1;
+  end if;
+
+  if v_inventory_quantity > 0 then
+
   select * into v_target
   from public.inventory_items i
   where i.character_id = v_character.id
@@ -3107,7 +3279,7 @@ begin
 
   if v_target.id is not null then
     update public.inventory_items
-    set quantity = quantity + v_quantity
+    set quantity = quantity + v_inventory_quantity
     where id = v_target.id
     returning * into v_item;
   else
@@ -3136,13 +3308,15 @@ begin
       v_product.item_name,
       v_product.item_type,
       v_product.rarity,
-      v_quantity,
-      v_product.item_type = 'storage'::public.item_type,
-      case when v_product.item_type = 'storage'::public.item_type then 1 else 0 end,
+      v_inventory_quantity,
+      false,
+      0,
       '{}'::jsonb,
       null
     )
     returning * into v_item;
+  end if;
+
   end if;
 
   perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
@@ -4746,200 +4920,6 @@ end;
 $$;
 
 
--- One-time clean seed from the attached Loot Drops.xlsm workbook.
-create table if not exists public.app_migrations (
-  id text primary key,
-  applied_at timestamptz not null default now()
-);
-
-revoke all on public.app_migrations from anon, authenticated;
-
-do $$
-begin
-  if not exists (select 1 from public.app_migrations where id = 'seed_loot_drops_xlsm_20260721') then
-    delete from public.loot_items where true;
-    delete from public.loot_pools where true;
-
-    insert into public.loot_workbook_settings (id, settings, source, imported_at)
-    values ('default', '{"biomes":["Any","Caves","Goblins","Elven","Volcano","Mountains","Snow","Voidlands"],"difficulties":[1,2,3,4,5],"poolSizes":["Night Encounter","Small Cave","Medium Cave","Large Cave","Dragon Lair","Tower Floor","Base"],"roomTypes":["Normal","Secret Room","Tower Boss Room"],"baseRollsByPoolSize":{"Night Encounter":5,"Small Cave":10,"Medium Cave":15,"Large Cave":20,"Dragon Lair":50,"Tower Floor":25,"Base":50},"poolMultipliers":{"Large Cave":1.33,"Dragon Lair":5,"Tower Floor":2,"Base":2},"roomMultipliers":{"Secret Room":2,"Tower Boss Room":2},"rareBoostRarities":["Rare","Epic","Legendary","Mythical"],"sourceFormulas":{"lootRolls":"SWITCH($B$4,\"Secret Room\",MAX(1,ROUNDUP(SWITCH($B$3,\"Night Encounter\",5,\"Small Cave\",10,\"Medium Cave\",15,\"Large Cave\",20,\"Dragon Lair\",50,\"Tower Floor\",25,\"Base\",50)/2,0)),\"Tower Boss Room\",SWITCH($B$3,\"Night Encounter\",5,\"Small Cave\",10,\"Medium Cave\",15,\"Large Cave\",20,\"Dragon Lair\",50,\"Tower Floor\",25,\"Base\",50)*2,SWITCH($B$3,\"Night Encounter\",5,\"Small Cave\",10,\"Medium Cave\",15,\"Large Cave\",20,\"Dragon Lair\",50,\"Tower Floor\",25,\"Base\",50))","multiplier":"SWITCH($B$3,\"Large Cave\",1.33,\"Dragon Lair\",5,\"Tower Floor\",2,\"Base\",2,1)*SWITCH($B$4,\"Secret Room\",2,\"Tower Boss Room\",2,1)","eligibility":"IF(AND(A2<>\"\",OR(Generator!$B$1=\"Any\",ISNUMBER(SEARCH(\",Any,\",\",\"&SUBSTITUTE(C2,\" \",\"\")&\",\")),ISNUMBER(SEARCH(\",\"&SUBSTITUTE(Generator!$B$1,\" \",\"\")&\",\",\",\"&SUBSTITUTE(C2,\" \",\"\")&\",\"))),VALUE(D2)<=VALUE(Generator!$B$2),VALUE(E2)>=VALUE(Generator!$B$2),OR(''Loot Table''!$J2<>TRUE,Generator!$B$3=\"Tower Floor\",Generator!$B$3=\"Base\")),1,0)","adjustedWeight":"IF(J2=1,G2*IF(ISNUMBER(MATCH(F2,{\"Rare\",\"Epic\",\"Legendary\",\"Mythical\"},0)),Generator!$D$2,1),0)"}}'::jsonb, '{"seededFrom":"Loot Drops.xlsm","sheets":["Loot Table","Generator","Roll Helper","Settings"],"importedRows":146}'::jsonb, now())
-    on conflict (id) do update
-    set settings = excluded.settings,
-        source = excluded.source,
-        imported_at = excluded.imported_at;
-
-    insert into public.loot_pools (pool_key, name, description, display_order)
-    values
-    ('catalog-tool', 'Tool Catalog', 'Imported from Loot Drops.xlsm.', 1),
-    ('catalog-storage', 'Storage Catalog', 'Imported from Loot Drops.xlsm.', 2),
-    ('catalog-fabric', 'Fabric Catalog', 'Imported from Loot Drops.xlsm.', 3),
-    ('catalog-accessory', 'Accessory Catalog', 'Imported from Loot Drops.xlsm.', 4),
-    ('catalog-weapon', 'Weapon Catalog', 'Imported from Loot Drops.xlsm.', 5),
-    ('catalog-currency', 'Currency Catalog', 'Imported from Loot Drops.xlsm.', 6),
-    ('catalog-food', 'Food Catalog', 'Imported from Loot Drops.xlsm.', 7),
-    ('catalog-misc', 'Misc Catalog', 'Imported from Loot Drops.xlsm.', 8),
-    ('catalog-potion', 'Potion Catalog', 'Imported from Loot Drops.xlsm.', 9),
-    ('catalog-pet', 'Pet Catalog', 'Imported from Loot Drops.xlsm.', 10),
-    ('catalog-ore', 'Ore Catalog', 'Imported from Loot Drops.xlsm.', 11),
-    ('catalog-shield', 'Shield Catalog', 'Imported from Loot Drops.xlsm.', 12),
-    ('catalog-quest', 'Quest Catalog', 'Imported from Loot Drops.xlsm.', 13)
-    on conflict (pool_key) do update
-    set name = excluded.name,
-        description = excluded.description,
-        display_order = excluded.display_order;
-
-    insert into public.loot_items (pool_id, item_name, item_type, rarity, generator_biomes, difficulty_min, difficulty_max, loot_weight, tower_base_only, min_quantity, max_quantity, notes, is_active)
-    values
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Torch', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 3, 100, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Rope', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 3, 90, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Waist Pouch', 'storage'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 70, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Back Bag', 'storage'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 3, 60, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Leather', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 100, false, 1, 10, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-accessory'), 'Jewlery', 'accessory'::public.item_type, 'Common'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 80, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Loose Arrows', 'weapon'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 5, 80, false, 3, 25, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Cloth', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 80, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Fine Cloth', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 3, 5, 75, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Magic Bow', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 25, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Coin', 'misc'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 2, 80, false, 1, 50, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Fishing Rod', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Hunting Trap', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-food'), 'Dried Rations', 'food'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Tattered Cloak', 'fabric'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 5, 60, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Leather Belt', 'misc'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 5, 60, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Glass Flasks', 'potion'::public.item_type, 'Common'::public.item_rarity, array['Any']::text[], 1, 5, 60, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Small Net', 'tool'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 3, 60, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Looks like a good walking stick', 'misc'::public.item_type, 'Common'::public.item_rarity, array['Caves']::text[], 1, 3, 60, false, 1, 200, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callis', 'misc'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 2, 4, 60, false, 1, 50, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Longbow', 'weapon'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-fabric'), 'Fur Skin', 'fabric'::public.item_type, 'Uncommon'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 60, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Light Duffle', 'storage'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 2, 4, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Steel Shovel', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Steel Pickaxe', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Steel Sword', 'weapon'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Steel Axe', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Spyglass', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Caves']::text[], 1, 5, 50, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Smoke Bomb', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Caves']::text[], 1, 5, 50, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-accessory'), 'Steel ring', 'accessory'::public.item_type, 'Uncommon'::public.item_rarity, array['Caves']::text[], 1, 5, 50, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Large Net', 'tool'::public.item_type, 'Uncommon'::public.item_rarity, array['Caves']::text[], 1, 5, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'An actual walking stick', 'misc'::public.item_type, 'Uncommon'::public.item_rarity, array['Caves']::text[], 1, 5, 50, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Steel Battleaxe', 'weapon'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 55, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Steel Mace', 'weapon'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 55, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Arcane Nector', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 5, 50, false, 1, 10, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Healing Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 45, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Swiftness Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Agility Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Strength Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Sorcery Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Mana Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Antidote Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Warming Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Cooling Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Night-Eye Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Thickskin Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Clear-Mind Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Wake-Up Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 30, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Lesser Clotting Potion', 'potion'::public.item_type, 'Uncommon'::public.item_rarity, array['Any']::text[], 1, 3, 36, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Callor', 'misc'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 35, false, 1, 50, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-pet'), 'Horse', 'pet'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 3, 35, true, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-pet'), 'War Horse', 'pet'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 35, true, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Quartz', 'ore'::public.item_type, 'Rare'::public.item_rarity, array['Any', 'Goblins']::text[], 1, 5, 40, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Heavy Duffle', 'storage'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 5, 35, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-shield'), 'Steel Shield', 'shield'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 3, 5, 30, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Mythril Pickaxe', 'tool'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 35, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Mythril Sword', 'weapon'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 35, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Mythril Dagger', 'weapon'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 35, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Mythril Axe', 'tool'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 35, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Mythril Battleaxe', 'weapon'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 30, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Mythril Mace', 'weapon'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 2, 4, 30, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Wake-Up Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 18, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Clotting Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Clear-Mind Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Thickskin Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Night-Eye Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Cooling Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Warming Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Antidote Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Mana Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Sorcery Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Strength Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Agility Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Swiftness Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 22, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greater Healing Potion', 'potion'::public.item_type, 'Rare'::public.item_rarity, array['Any']::text[], 1, 5, 28, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Vaylium Battleaxe', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 15, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Vaylium Mace', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 15, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Vaylium Pickaxe', 'tool'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Vaylium Sword', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Vaylium Dagger', 'weapon'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Vaylium Axe', 'tool'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Fire Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Frost Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Lightning Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Earth Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Wind Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Energy Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Healing Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Enhancment Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 20, true, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Utility Scroll', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 3, 5, 25, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Mystery Tome', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 20, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'World Map Fragment', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 20, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'World History', 'quest'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 20, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Emerald', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Goblins', 'Caves']::text[], 2, 5, 30, false, 1, 4, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Ruby', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Goblins', 'Caves']::text[], 3, 5, 20, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Ember Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 15, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Frost Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 15, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Lightning Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 15, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Earth Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 15, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Wind Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 15, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Mountian Rune', 'ore'::public.item_type, 'Epic'::public.item_rarity, array['Any']::text[], 1, 5, 11, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Sword', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Dagger', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Dragonscale Pickaxe', 'tool'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-tool'), 'Dragonscale Axe', 'tool'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Mythril Ore', 'ore'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 2, 4, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Vaylium Ore', 'ore'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Young Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Ember Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Volcano', 'Caves']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Frost Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Mountains', 'Snow']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Storm Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Caves']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Mountian Dragons Scales', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Mountains', 'Caves']::text[], 4, 5, 5, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-currency'), 'Cal', 'misc'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 5, 5, 5, false, 1, 50, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Bow', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Fire Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Frost Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Lightning Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Earth Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Wind Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Energy Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Healing Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Enhancement Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-quest'), 'Utility Spell Upgrade', 'quest'::public.item_type, 'Legendary'::public.item_rarity, array['Elven']::text[], 3, 5, 9, true, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Sapphire', 'ore'::public.item_type, 'Legendary'::public.item_rarity, array['Goblins', 'Caves']::text[], 4, 5, 10, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Legendary Weapon', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 1, 5, 10, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Battleaxe', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Dragonscale Mace', 'weapon'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 4, 5, 5, false, 1, 2, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Healing Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 4, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Swiftness Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Agility Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Strength Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Sorcery Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Mana Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Antidote Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Warming Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Cooling Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Night-Eye Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Thinkskin Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Clear-Mind Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Wake-Up Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 2, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-potion'), 'Greatest Clotting Potion', 'potion'::public.item_type, 'Legendary'::public.item_rarity, array['Any']::text[], 3, 5, 3, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-storage'), 'Bag of Holding', 'storage'::public.item_type, 'Mythical'::public.item_rarity, array['Any']::text[], 3, 5, 2, false, 1, 1, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-ore'), 'Void Rune', 'ore'::public.item_type, 'Mythical'::public.item_rarity, array['Any']::text[], 1, 5, 2, false, 1, 5, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Elder Dragons Scales', 'misc'::public.item_type, 'Mythical'::public.item_rarity, array['Elven']::text[], 5, 5, 2, true, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-misc'), 'Void Dragon Scales', 'misc'::public.item_type, 'Mythical'::public.item_rarity, array['Voidlands']::text[], 5, 5, 2, false, 1, 3, '', true),
-    ((select id from public.loot_pools where pool_key = 'catalog-weapon'), 'Father''s Belt', 'weapon'::public.item_type, 'Mythical'::public.item_rarity, array['Any']::text[], 1, 5, 2, false, 1, 1, '', true);
-
-    insert into public.app_migrations (id) values ('seed_loot_drops_xlsm_20260721');
-  end if;
-end $$;
-
 create or replace function public.catalog_storage_capacity(p_item_name text)
 returns int
 language sql
@@ -4974,6 +4954,8 @@ declare
   v_currency_unit public.currency_units%rowtype;
   v_currency_key text;
   v_slot int;
+  v_inventory_quantity int;
+  v_storage_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
   v_quantity int := greatest(1, coalesce(p_quantity, 1));
@@ -5022,6 +5004,46 @@ begin
     );
   end if;
 
+  v_inventory_quantity := v_quantity;
+
+  if v_loot.item_type = 'storage'::public.item_type
+    and not public.character_storage_container_exists(v_character.id, v_loot.item_name)
+  then
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      spell_imbue
+    )
+    values (
+      v_character.id,
+      null,
+      public.next_storage_container_slot(v_character.id),
+      v_loot.item_name,
+      v_loot.item_type,
+      v_loot.rarity,
+      1,
+      true,
+      public.catalog_storage_capacity(v_loot.item_name),
+      '{}'::jsonb,
+      null
+    )
+    returning * into v_storage_item;
+
+    v_inventory_quantity := v_inventory_quantity - 1;
+  end if;
+
+  if v_inventory_quantity <= 0 then
+    return public.inventory_item_record_to_json(v_storage_item);
+  end if;
+
   select * into v_target
   from public.inventory_items i
   where i.character_id = v_character.id
@@ -5037,7 +5059,7 @@ begin
 
   if v_target.id is not null then
     update public.inventory_items
-    set quantity = quantity + v_quantity
+    set quantity = quantity + v_inventory_quantity
     where id = v_target.id
     returning * into v_item;
   else
@@ -5064,9 +5086,9 @@ begin
       v_loot.item_name,
       v_loot.item_type,
       v_loot.rarity,
-      v_quantity,
-      v_loot.item_type = 'storage'::public.item_type,
-      case when v_loot.item_type = 'storage'::public.item_type then public.catalog_storage_capacity(v_loot.item_name) else 0 end,
+      v_inventory_quantity,
+      false,
+      0,
       '{}'::jsonb,
       null
     )
@@ -5090,3 +5112,4 @@ grant execute on function public.import_loot_items(text, jsonb) to anon, authent
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, int) to anon, authenticated;
+

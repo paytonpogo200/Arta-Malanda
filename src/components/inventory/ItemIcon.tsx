@@ -1,19 +1,19 @@
-import { Apple, Box, Coins, FlaskConical, Leaf, PackageOpen, PawPrint, Pickaxe, ScrollText, Shield, Shirt, Sparkles, Sword, Wrench } from 'lucide-react';
+import { Box, BrickWall, Coins, FlaskConical, Leaf, PackageOpen, PawPrint, ScrollText, Shield, Shirt, Sparkles, SwatchBook, Sword, Wheat, Wrench } from 'lucide-react';
 import type { ItemType } from '@/lib/types';
 
 export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number }) {
   const Icon = {
     weapon: Sword,
-    armor: Shield,
+    armor: Shirt,
     shield: Shield,
     pet: PawPrint,
     accessory: Sparkles,
     storage: PackageOpen,
-    ore: Pickaxe,
+    ore: BrickWall,
     potion: FlaskConical,
-    food: Apple,
+    food: Wheat,
     plant: Leaf,
-    fabric: Shirt,
+    fabric: SwatchBook,
     tool: Wrench,
     quest: ScrollText,
     currency: Coins,
