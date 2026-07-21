@@ -937,8 +937,8 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can import the bestiary.'; end if;
 
-  delete from public.bestiary_entities;
-  delete from public.bestiary_categories;
+  delete from public.bestiary_entities where true;
+  delete from public.bestiary_categories where true;
 
   for v_category in select value from jsonb_array_elements(coalesce(p_categories, '[]'::jsonb))
   loop
