@@ -956,6 +956,17 @@ set
   passives = excluded.passives,
   token_color = excluded.token_color;
 
+update public.characters c
+set
+  class_template_id = t.id,
+  class_name = t.name,
+  magic_resist = case when c.magic_resist = 0 then t.base_magic_resist else c.magic_resist end,
+  attributes = case when not (c.attributes ? 'wisdom_cunning') then t.attributes else c.attributes end,
+  class_passives = case when not (c.attributes ? 'wisdom_cunning') then t.passives else c.class_passives end,
+  updated_at = now()
+from public.class_templates t
+where c.class_key = t.class_key;
+
 create or replace function public.class_template_record_to_json(p_template public.class_templates)
 returns jsonb
 language sql
