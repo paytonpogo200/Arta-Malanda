@@ -18,6 +18,7 @@ export function characterFromClass(template: ClassTemplate, name: string, ownerU
     currentHp: template.baseHp,
     maxMana: template.baseMana,
     currentMana: template.baseMana,
+    magicResist: template.baseMagicResist,
     inventorySlots: template.inventorySlots,
     spellSlots: template.spellSlots,
     attributes: template.attributes,

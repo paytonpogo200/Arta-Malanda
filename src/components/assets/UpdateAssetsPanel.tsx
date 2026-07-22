@@ -249,11 +249,12 @@ export function UpdateAssetsPanel() {
                   <TextField value={String(draft.armor ?? '')} onChange={(event) => updateDraft('armor', event.target.value)} placeholder="Armor" />
                 </div>
                 <TextAreaField rows={3} value={String(draft.identity ?? '')} onChange={(event) => updateDraft('identity', event.target.value)} placeholder="Identity" />
-                <div className="grid gap-2 sm:grid-cols-4">
-                  <NumberInput value={Number(draft.baseHp ?? 0)} onValueChange={(value) => updateDraft('baseHp', value)} />
-                  <NumberInput value={Number(draft.baseMana ?? 0)} onValueChange={(value) => updateDraft('baseMana', value)} />
-                  <NumberInput value={Number(draft.inventorySlots ?? 0)} onValueChange={(value) => updateDraft('inventorySlots', value)} />
-                  <NumberInput value={Number(draft.spellSlots ?? 0)} onValueChange={(value) => updateDraft('spellSlots', value)} />
+                <div className="grid gap-2 sm:grid-cols-5">
+                  <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Health</span><NumberInput value={Number(draft.baseHp ?? 0)} onValueChange={(value) => updateDraft('baseHp', value)} /></label>
+                  <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Mana</span><NumberInput value={Number(draft.baseMana ?? 0)} onValueChange={(value) => updateDraft('baseMana', value)} /></label>
+                  <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Magic Resist</span><NumberInput value={Number(draft.baseMagicResist ?? 0)} onValueChange={(value) => updateDraft('baseMagicResist', value)} /></label>
+                  <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory</span><NumberInput value={Number(draft.inventorySlots ?? 0)} onValueChange={(value) => updateDraft('inventorySlots', value)} /></label>
+                  <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Spells</span><NumberInput value={Number(draft.spellSlots ?? 0)} onValueChange={(value) => updateDraft('spellSlots', value)} /></label>
                 </div>
                 <TextField type="color" value={String(draft.tokenColor ?? '#9caf79')} onChange={(event) => updateDraft('tokenColor', event.target.value)} />
                 <div className="grid gap-2 sm:grid-cols-3">

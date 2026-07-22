@@ -1,4 +1,4 @@
-import type { CurrencyUnit, InventoryItem, ItemRarity, ItemType, LoadoutSlot, WalletBalance } from '@/lib/types';
+import type { CurrencyUnit, InventoryItem, ItemRarity, ItemType, LoadoutModifiers, LoadoutSlot, WalletBalance } from '@/lib/types';
 
 export type CharacterInventoryPayload = {
   items: InventoryItem[];
@@ -45,6 +45,15 @@ function normalizeCurrencyUnit(value: unknown): CurrencyUnit {
   };
 }
 
+function normalizeModifiers(value: unknown): LoadoutModifiers {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, raw]) => [key, numberFrom(raw, NaN)] as const)
+      .filter((entry): entry is readonly [string, number] => Number.isFinite(entry[1]))
+  ) as LoadoutModifiers;
+}
+
 export function normalizeInventoryItem(value: unknown): InventoryItem {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
@@ -59,7 +68,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     loadoutSlot: normalizeLoadoutSlot(source.loadoutSlot),
     isStorage: Boolean(source.isStorage),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
-    modifiers: source.modifiers && typeof source.modifiers === 'object' && !Array.isArray(source.modifiers) ? source.modifiers : {},
+    modifiers: normalizeModifiers(source.modifiers),
     spellImbue: source.spellImbue ? String(source.spellImbue) : undefined
   };
 }

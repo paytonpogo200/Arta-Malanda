@@ -21,17 +21,17 @@ export type ItemType =
 
 export const ATTRIBUTE_KEYS = [
   'strength',
-  'agility',
-  'vitality',
-  'intelligence',
-  'recovery',
-  'charisma',
   'accuracy',
-  'range',
+  'intelligence',
+  'vitality',
+  'recovery',
   'mana_regen',
+  'charisma',
+  'wisdom_cunning',
   'perception',
   'alchemy',
-  'stealth'
+  'stealth',
+  'agility'
 ] as const;
 
 export type AttributeKey = (typeof ATTRIBUTE_KEYS)[number];
@@ -39,33 +39,36 @@ export type CharacterAttributes = Record<AttributeKey, number>;
 
 export const DEFAULT_ATTRIBUTES: CharacterAttributes = {
   strength: 0,
-  agility: 0,
-  vitality: 0,
-  intelligence: 0,
-  recovery: 0,
-  charisma: 0,
   accuracy: 0,
-  range: 0,
+  intelligence: 0,
+  vitality: 0,
+  recovery: 0,
   mana_regen: 0,
+  charisma: 0,
+  wisdom_cunning: 0,
   perception: 0,
   alchemy: 0,
-  stealth: 0
+  stealth: 0,
+  agility: 0
 };
 
 export const ATTRIBUTE_LABELS: Record<AttributeKey, string> = {
   strength: 'Strength',
-  agility: 'Agility',
-  vitality: 'Vitality',
-  intelligence: 'Intelligence',
-  recovery: 'Recovery',
-  charisma: 'Charisma',
   accuracy: 'Accuracy',
-  range: 'Range',
+  intelligence: 'Intelligence',
+  vitality: 'Vitality',
+  recovery: 'Recovery',
   mana_regen: 'Mana Regen',
+  charisma: 'Charisma',
+  wisdom_cunning: 'Wisdom/Cunning',
   perception: 'Perception',
   alchemy: 'Alchemy',
-  stealth: 'Stealth'
+  stealth: 'Stealth',
+  agility: 'Agility'
 };
+
+export type LoadoutModifierKey = AttributeKey | 'armor' | 'shield' | 'defense' | 'defence' | 'magic_resist' | 'magicResist' | 'magicResistance';
+export type LoadoutModifiers = Partial<Record<LoadoutModifierKey, number>>;
 
 export type Profile = {
   id: string;
@@ -84,6 +87,7 @@ export type ClassTemplate = {
   spellSlots: number;
   baseHp: number;
   baseMana: number;
+  baseMagicResist: number;
   attributes: CharacterAttributes;
   passives: string[];
   tokenColor: string;
@@ -101,6 +105,7 @@ export type Character = {
   currentHp: number;
   maxMana: number;
   currentMana: number;
+  magicResist: number;
   inventorySlots: number;
   spellSlots: number;
   attributes: CharacterAttributes;
@@ -133,7 +138,7 @@ export type InventoryItem = {
   loadoutSlot: LoadoutSlot | null;
   isStorage: boolean;
   storageCapacity: number;
-  modifiers: Partial<CharacterAttributes>;
+  modifiers: LoadoutModifiers;
   spellImbue?: string;
 };
 

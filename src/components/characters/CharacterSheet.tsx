@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Heart, Loader2, MapPin, Save, Sparkles, UserRound } from 'lucide-react';
+import { Heart, Loader2, MapPin, Save, Shield, Sparkles, UserRound, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { HousePanel } from '@/components/houses/HousePanel';
@@ -11,7 +11,7 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type Profile } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type LoadoutModifiers, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
 type CharacterSheetProps = {
@@ -36,9 +36,21 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
+function modifierNumber(modifiers: LoadoutModifiers, key: keyof LoadoutModifiers) {
+  const value = Number(modifiers[key] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function loadoutModifierTotal(items: InventoryItem[], keys: Array<keyof LoadoutModifiers>) {
+  return items
+    .filter((item) => item.loadoutSlot)
+    .reduce((total, item) => total + keys.reduce((sum, key) => sum + modifierNumber(item.modifiers, key), 0), 0);
+}
+
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -48,6 +60,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   useEffect(() => {
     setDraft(character);
+    setInventoryItems([]);
     setEditing(false);
     setError('');
   }, [character]);
@@ -57,6 +70,12 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
     label: ATTRIBUTE_LABELS[key],
     value: character.attributes[key] ?? 0
   })), [character.attributes]);
+
+  const sheetStats = useMemo(() => {
+    const defense = (character.attributes.vitality ?? 0) + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence', 'vitality']);
+    const magicResist = character.magicResist + loadoutModifierTotal(inventoryItems, ['magic_resist', 'magicResist', 'magicResistance']);
+    return { defense, magicResist };
+  }, [character.attributes.vitality, character.magicResist, inventoryItems]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -75,6 +94,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           currentHp: draft.currentHp,
           maxMana: draft.maxMana,
           currentMana: draft.currentMana,
+          magicResist: draft.magicResist,
           inventorySlots: draft.inventorySlots,
           spellSlots: draft.spellSlots,
           attributes: draft.attributes,
@@ -117,6 +137,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
       currentHp: template.baseHp,
       maxMana: template.baseMana,
       currentMana: template.baseMana,
+      magicResist: template.baseMagicResist,
       inventorySlots: template.inventorySlots,
       spellSlots: template.spellSlots,
       attributes: template.attributes,
@@ -196,11 +217,12 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             {!LOCATION_PRESETS.includes(draft.locationName) && (
               <TextField value={draft.locationName} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })} placeholder="Custom location" />
             )}
-            <div className="grid gap-2 sm:grid-cols-4">
+            <div className="grid gap-2 sm:grid-cols-5">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Current HP</span><NumberInput value={draft.currentHp} min={0} onValueChange={(currentHp) => setDraft({ ...draft, currentHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Max HP</span><NumberInput value={draft.maxHp} min={0} onValueChange={(maxHp) => setDraft({ ...draft, maxHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]">Current Mana</span><NumberInput value={draft.currentMana} min={0} onValueChange={(currentMana) => setDraft({ ...draft, currentMana })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]">Max Mana</span><NumberInput value={draft.maxMana} min={0} onValueChange={(maxMana) => setDraft({ ...draft, maxMana })} /></label>
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--teal)]">Magic Resist</span><NumberInput value={draft.magicResist} min={0} onValueChange={(magicResist) => setDraft({ ...draft, magicResist })} /></label>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory slots</span><NumberInput value={draft.inventorySlots} min={0} onValueChange={(inventorySlots) => setDraft({ ...draft, inventorySlots })} /></label>
@@ -221,7 +243,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             <TextAreaField rows={3} value={draft.personalPassives} onChange={(event) => setDraft({ ...draft, personalPassives: event.target.value })} placeholder="Personal passives" />
           </form>
         ) : (
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--red)]"><Heart size={14} /> Health</div>
               <p className="mt-2 text-2xl font-black">{character.currentHp}<span className="text-sm text-[var(--muted)]"> / {character.maxHp}</span></p>
@@ -229,6 +251,14 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--blue)]"><Sparkles size={14} /> Mana</div>
               <p className="mt-2 text-2xl font-black">{character.currentMana}<span className="text-sm text-[var(--muted)]"> / {character.maxMana}</span></p>
+            </SoftCard>
+            <SoftCard>
+              <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--brass)]"><Shield size={14} /> Defense</div>
+              <p className="mt-2 text-2xl font-black">{signed(sheetStats.defense)}</p>
+            </SoftCard>
+            <SoftCard>
+              <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--teal)]"><WandSparkles size={14} /> Magic Resist</div>
+              <p className="mt-2 text-2xl font-black">{sheetStats.magicResist}</p>
             </SoftCard>
           </div>
         )}
@@ -249,7 +279,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           </Card>
 
           <SpellsPanel character={character} canManage={isDm || owned} canGrant={isDm} onManaChanged={(currentMana) => onSaved({ ...character, currentMana })} />
-          <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} />
+          <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} onItemsChanged={setInventoryItems} />
           <HousePanel ownerUserId={character.ownerUserId} caretakerCharacterId={character.id} canManage={isDm || owned} canAdd={isDm} />
         </div>
 
@@ -294,6 +324,16 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             <div className="grid gap-3">
               <ResourceBar label="Health" tone="hp" current={character.currentHp} max={character.maxHp} />
               <ResourceBar label="Mana" tone="mana" current={character.currentMana} max={character.maxMana} />
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Defense</p>
+                  <p className="mt-1 text-lg font-black text-[var(--paper)]">{signed(sheetStats.defense)}</p>
+                </div>
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Magic Resist</p>
+                  <p className="mt-1 text-lg font-black text-[var(--paper)]">{sheetStats.magicResist}</p>
+                </div>
+              </div>
             </div>
           </Card>
         </div>

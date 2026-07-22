@@ -79,6 +79,7 @@ create table if not exists public.class_templates (
   identity text not null default '',
   base_hp int not null default 100 check (base_hp >= 0),
   base_mana int not null default 0 check (base_mana >= 0),
+  base_magic_resist int not null default 0 check (base_magic_resist >= 0),
   inventory_slots int not null default 12 check (inventory_slots between 0 and 120),
   spell_slots int not null default 0 check (spell_slots >= 0),
   attributes jsonb not null default '{}'::jsonb check (jsonb_typeof(attributes) = 'object'),
@@ -100,6 +101,7 @@ create table if not exists public.characters (
   current_hp int not null default 100 check (current_hp >= 0),
   max_mana int not null default 0 check (max_mana >= 0),
   current_mana int not null default 0 check (current_mana >= 0),
+  magic_resist int not null default 0 check (magic_resist >= 0),
   inventory_slots int not null default 12 check (inventory_slots between 0 and 120),
   spell_slots int not null default 0 check (spell_slots >= 0),
   attributes jsonb not null default '{}'::jsonb check (jsonb_typeof(attributes) = 'object'),
@@ -422,6 +424,12 @@ grant execute on function public.logout_campaign_session(text) to anon, authenti
 alter table public.characters
   add column if not exists class_key text;
 
+alter table public.class_templates
+  add column if not exists base_magic_resist int not null default 0 check (base_magic_resist >= 0);
+
+alter table public.characters
+  add column if not exists magic_resist int not null default 0 check (magic_resist >= 0);
+
 update public.characters
 set class_key = lower(regexp_replace(class_name, '[^a-zA-Z0-9]+', '-', 'g'))
 where class_key is null;
@@ -486,6 +494,7 @@ as $$
     'currentHp', p_character.current_hp,
     'maxMana', p_character.max_mana,
     'currentMana', p_character.current_mana,
+    'magicResist', p_character.magic_resist,
     'inventorySlots', p_character.inventory_slots,
     'spellSlots', p_character.spell_slots,
     'attributes', p_character.attributes,
@@ -909,6 +918,7 @@ insert into public.class_templates (
   identity,
   base_hp,
   base_mana,
+  base_magic_resist,
   inventory_slots,
   spell_slots,
   attributes,
@@ -916,21 +926,21 @@ insert into public.class_templates (
   token_color
 )
 values
-  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', 'Intelligent and resourceful seekers of knowledge, renowned for their command of potions and alchemical craft.', 110, 50, 16, 2, '{"strength":-1,"agility":0,"vitality":-1,"intelligence":1,"recovery":1,"charisma":0,"accuracy":0,"range":0,"mana_regen":0,"perception":0,"alchemy":5,"stealth":0}'::jsonb, '["Once per combat, use or make a potion or alchemical item without spending the main action or movement.","Has unlimited flasks and Arcane Nectar while maintaining a house or residence."]'::jsonb, '#4d8f83'),
-  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', 'Durable battlefield mages whose restorative support can hold a party together even on the front line.', 130, 90, 15, 5, '{"strength":-3,"agility":-1,"vitality":1,"intelligence":0,"recovery":2,"charisma":0,"accuracy":-1,"range":0,"mana_regen":2,"perception":0,"alchemy":2,"stealth":-2}'::jsonb, '["Can heal an ally for 5 HP in place of movement."]'::jsonb, '#5579a8'),
-  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', 'Naturally talented learners who trade some magical utility for freedom, adaptability, and staying power.', 100, 75, 16, 5, '{"strength":0,"agility":1,"vitality":-1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":0,"range":0,"mana_regen":1,"perception":0,"alchemy":1,"stealth":0}'::jsonb, '["While paired with a Mage: +1 Intelligence.","While paired with a Knight: +1 Strength.","While paired with a Ranger: +1 Accuracy. These bonuses can stack."]'::jsonb, '#8a6da1'),
-  ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', 'Relentless front-line warriors who sacrifice speed and subtlety for overwhelming defensive presence.', 165, 50, 10, 1, '{"strength":2,"agility":-3,"vitality":3,"intelligence":-3,"recovery":0,"charisma":-1,"accuracy":0,"range":-2,"mana_regen":0,"perception":-1,"alchemy":1,"stealth":-2}'::jsonb, '["Distribution redirects 50% of a target’s incoming damage to the Armor-clad.","Pays only material costs for armor labor.","Cannot receive additional defensive bonuses from shields."]'::jsonb, '#9a6e52'),
-  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', 'Rare animal handlers whose companions become a force of their own across the battlefield.', 90, 50, 20, 1, '{"strength":-3,"agility":1,"vitality":0,"intelligence":0,"recovery":1,"charisma":3,"accuracy":1,"range":0,"mana_regen":0,"perception":2,"alchemy":0,"stealth":0}'::jsonb, '["Tame is a free spell and uses d6 + Charisma + buffs against a creature’s Wild score.","May bring up to 20 Wild score worth of beasts per mission."]'::jsonb, '#77875a'),
-  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', 'Practical craftspeople whose command of tools, weapons, armor, and runes makes them invaluable anywhere.', 125, 50, 18, 3, '{"strength":2,"agility":-1,"vitality":1,"intelligence":0,"recovery":0,"charisma":2,"accuracy":0,"range":-2,"mana_regen":0,"perception":0,"alchemy":1,"stealth":-1}'::jsonb, '["Pays only material costs for smithing labor.","Once per combat, grant a chosen melee weapon +1 Strength until combat or the scene ends."]'::jsonb, '#b28b45'),
-  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', 'Well-rounded combat experts with political presence, battlefield leadership, and a talent for mounted fighting.', 125, 25, 14, 2, '{"strength":1,"agility":0,"vitality":1,"intelligence":-1,"recovery":0,"charisma":2,"accuracy":1,"range":-1,"mana_regen":-2,"perception":0,"alchemy":-1,"stealth":0}'::jsonb, '["+1 Strength while mounted on a horse.","When hit, a parry roll of 18–20 prevents all damage; 15–17 prevents half."]'::jsonb, '#a05e5a'),
-  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', 'Versatile magical heavy-hitters with an answer for nearly every problem—provided they survive long enough to cast it.', 70, 100, 10, 10, '{"strength":-3,"agility":0,"vitality":-3,"intelligence":3,"recovery":0,"charisma":1,"accuracy":0,"range":1,"mana_regen":1,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Regain 10 Mana whenever an enemy is killed with a spell."]'::jsonb, '#567a7f'),
-  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', 'Nimble practitioners of botany and natural medicine who reject magic in favor of hard-won remedies.', 85, 0, 20, 0, '{"strength":-1,"agility":3,"vitality":0,"intelligence":-5,"recovery":3,"charisma":-3,"accuracy":1,"range":0,"mana_regen":0,"perception":3,"alchemy":4,"stealth":1}'::jsonb, '["Heal an ally for 2d6 + Recovery + Alchemy and remove one debuff or negative effect.","Immune to poison and illness."]'::jsonb, '#6b8f68'),
-  ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', 'Notorious for a large frame and small brains, built to soak punishment and become the group’s blunt-force answer.', 150, 40, 10, 1, '{"strength":3,"agility":-1,"vitality":1,"intelligence":-3,"recovery":2,"charisma":-2,"accuracy":-2,"range":-2,"mana_regen":0,"perception":-1,"alchemy":-2,"stealth":-2}'::jsonb, '["When The Muscle kills an enemy, gain 1d6 for ensuing damage rolls. Resets after each combat or scene ends. Max of 5d6."]'::jsonb, '#9f6540'),
-  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', 'Back-line attackers and scouts who combine punishing range with reconnaissance and specialized ammunition.', 90, 50, 15, 1, '{"strength":-2,"agility":1,"vitality":-2,"intelligence":1,"recovery":0,"charisma":0,"accuracy":2,"range":3,"mana_regen":0,"perception":2,"alchemy":0,"stealth":1}'::jsonb, '["Can tame birds.","Three times per combat, fire three arrows in one draw.","May buy and craft elemental or effect-tipped arrows."]'::jsonb, '#7c8a49'),
-  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', 'Cunning duelists who thrive on surprise, isolation, and catching enemies at their most vulnerable.', 90, 50, 16, 3, '{"strength":-1,"agility":2,"vitality":-1,"intelligence":0,"recovery":0,"charisma":-3,"accuracy":0,"range":0,"mana_regen":0,"perception":3,"alchemy":1,"stealth":3}'::jsonb, '["Backstab deals double damage from behind, from stealth, or against a pinned or defenseless target.","May use Agility instead of Strength for attacks that trigger Backstab."]'::jsonb, '#6b617e'),
-  ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', 'Selfless support casters whose mastery of recovery turns a single act of healing into aid for the whole party.', 70, 100, 12, 5, '{"strength":-2,"agility":2,"vitality":-2,"intelligence":-5,"recovery":3,"charisma":2,"accuracy":-2,"range":0,"mana_regen":2,"perception":0,"alchemy":0,"stealth":0}'::jsonb, '["Healing and enhancement spells use Recovery instead of Intelligence for magic rolls.","Heals also restore half the amount, rounded up, to another ally or the original target."]'::jsonb, '#7581a0'),
-  ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', 'Rune-armed warriors who bind magic into weapons and armor, turning every piece of gear into a spell vessel.', 125, 100, 10, 0, '{"strength":1,"agility":0,"vitality":1,"intelligence":1,"recovery":0,"charisma":0,"accuracy":1,"range":0,"mana_regen":0,"perception":0,"alchemy":-1,"stealth":-2}'::jsonb, '["Begins with three random low-level runes.","Each spell-infused weapon on hand can cast its spell twice per combat."]'::jsonb, '#926d9f'),
-  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', 'Jack-of-all-trades survivalists with broad usefulness, cunning instincts, and flexible party support.', 110, 75, 20, 3, '{"strength":0,"agility":0,"vitality":0,"intelligence":0,"recovery":0,"charisma":-2,"accuracy":0,"range":0,"mana_regen":0,"perception":2,"alchemy":1,"stealth":0}'::jsonb, '["Once per combat or exploration scene, reroll a failed Perception, Alchemy, Survival, or Utility check.","Gains a +2 modifier of choice in a single category where the party has no bonuses."]'::jsonb, '#79895f')
+  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intellegent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and overexhaderations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nectar (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
+  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are increadibly durible mages, known for their legendary support in combat and on the battlefield. They are extremely formitable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 11, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
+  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as oposed to utility. Their resourcefulness is often a great contrabution to many sucessful expeditions.$am$, 100, 75, 8, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
+  ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', $am$Armor-clad warriors are amazing front liners. They are incredibly hard to take down and provide an amazing presence on the battlefield. What they lack in quickness, they make up for in annoying defensive utility. They are often seen as scary or mad due to their nature on the battlefield, or at least thats what they say. Hasn't been one in ages.$am$, 165, 50, 9, 10, 1, '{"strength":2,"accuracy":0,"intelligence":-3,"vitality":3,"recovery":0,"mana_regen":0,"charisma":-1,"wisdom_cunning":-2,"perception":-1,"alchemy":1,"stealth":-3,"agility":-3}'::jsonb, jsonb_build_array($am$Has the ability _Distribution_, which will direct 50% of a target's damage to yourself$am$, 'Does not pay armor labor, only materials. Armor-clad cannot receive extra defensive bonuses from shields'), '#9a6e52'),
+  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', $am$Beastmasters are incredibly rare, but invaluable as an asset. Many have never been much on the battlefield themselves, but their way with the animals and beasts of the land is marvelling. They say a couple hundred years ago, an elvish beastmaster once tamed a dragon, and one must wonder if it was the childs story we all were told, or if there is even a smidgent of truth hidden within.$am$, 90, 50, 8, 20, 1, '{"strength":-3,"accuracy":1,"intelligence":0,"vitality":0,"recovery":1,"mana_regen":0,"charisma":3,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":0,"agility":1}'::jsonb, jsonb_build_array($am$Has the Spell "Tame" (doesn't take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal's wild score. If the resulting number is positive, the animal/beast is tamed, but health isn't restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.$am$, 'All Attacks from a Beast master will only ever bring an animal or beast to 1hp, never killing it', 'Will always crit against animals and beasts', 'Can bring 20 wild score worth of beasts per mission. Each beast operates independently of the beastmaster with its own initiative and turns.'), '#77875a'),
+  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', $am$Blacksmiths are highly valued assets in the realm, in all kindoms. Their utility and knack for anything with their hands is to be much admired. There are many kinds of blacksmiths, but the great runesmith Argon "The Hammer" Tyborgarian has been showing the realm just how versitile runes and magic can be in tools and armor, forming a new study within the craft as we speak.$am$, 125, 50, 8, 18, 3, '{"strength":2,"accuracy":0,"intelligence":0,"vitality":1,"recovery":0,"mana_regen":0,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":-1,"agility":-1}'::jsonb, jsonb_build_array($am$Doesn't need to pay for smithing labor, only materials$am$, 'Has the ability to create weapons away from a forge with a properly made fire', 'Once per combat, enhance a melee weapon of choice with +1 strength. Ends after combat/scene'), '#b28b45'),
+  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', $am$Knights are talented swords men and combat experts, and pair well with horses. Well liked knights have been known to have been shown favor even when purchacing one and have a larger political sway. They are your classic all around attack type with a nice amount of sustainability.$am$, 125, 25, 8, 14, 2, '{"strength":1,"accuracy":1,"intelligence":-1,"vitality":1,"recovery":0,"mana_regen":-2,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('+1 Strength while on a Horse.', 'Every hit received, roll for a parry, 18-20 will grant a 100% reduction of damage. 15-17 will grant a 50% (rounding up) reduction', 'Rally the troops: Once per combat, choose a target for the entire party to all attack at once; as long as this attack hits, all others will as well.'), '#a05e5a'),
+  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', $am$Mages are the hot shots of Calostrynn, their pride and joy. They pack a punch, much like the rangers, but what the rangers have in range and recon, the mages more than make up for in versitility. With enough knowledge, there is nearly a spell for almost all occasions.$am$, 70, 100, 10, 10, 10, '{"strength":-3,"accuracy":0,"intelligence":3,"vitality":-3,"recovery":0,"mana_regen":1,"charisma":1,"wisdom_cunning":2,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Regain 10 Mana for every enemy killed with a spell'), '#567a7f'),
+  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', $am$Mendrunners are a unique lot. They specialize in botany and natural remedies, resenting magic and its simple life style. They are increadibly nimble and many have once been or sometimes become rogues. Little is known about them though due to their lack of number.$am$, 85, 0, 7, 20, 0, '{"strength":-1,"accuracy":1,"intelligence":-5,"vitality":0,"recovery":3,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":4,"stealth":1,"agility":3}'::jsonb, jsonb_build_array('Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.', 'Is immune to poison and Illness'), '#6b8f68'),
+  ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', $am$The Muscle is notorious for their large frame and small brains. They specialize on sustain and being...well, the muscle of a group. When paired with a sage or apothecary, these hulkish freaks of nature are unstoppable.$am$, 150, 40, 7, 10, 1, '{"strength":3,"accuracy":-2,"intelligence":-3,"vitality":1,"recovery":2,"mana_regen":0,"charisma":-2,"wisdom_cunning":-3,"perception":-1,"alchemy":-2,"stealth":-2,"agility":-2}'::jsonb, jsonb_build_array('When The Muscle kills an enemy, gain 1 d6 for ensuing damage rolls. Resets after each combat/scene ends. Max of 5 d6'), '#9f6540'),
+  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', $am$Ranged class is known for being a backline attack type. They can pack a punch and provide great support form range, and can even act as very nice recon, but are very vulnerable alone in most situations. A master archer especially has been the sole reason for many concussions to wars, a much under appreciated craft, given their grand role in previous wars.$am$, 90, 50, 10, 15, 1, '{"strength":-2,"accuracy":2,"intelligence":1,"vitality":-2,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":1,"agility":1}'::jsonb, jsonb_build_array('Can tame birds', '3 times per combat, shoot 3 arrows in one draw. Must roll for accuracy for each arrow.', 'Allowed to buy and craft element or effect-tipped arrows'), '#7c8a49'),
+  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', $am$Rogues are shifty and cunning. They might not be stong in groups but are amazing duelests and specialize in catching enemies off guard. Their reputation preceeds them, and not always in the best of ways, but they are always more than nice outside and within the castle walls.$am$, 90, 50, 7, 16, 3, '{"strength":-1,"accuracy":0,"intelligence":0,"vitality":-1,"recovery":0,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":1,"stealth":3,"agility":2}'::jsonb, jsonb_build_array('Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.', 'May use Agility instead of Strength for any attack that procs *Backstab*'), '#6b617e'),
+  ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', $am$Sages are loved and appreciated by all. In a world of war and selfish interest, they walk a path of selflessness, aiding others in their prosperity and support on the battlefield. Those who have mastered their craft are known to have boundless mana and spell casting.$am$, 70, 100, 12, 12, 5, '{"strength":-2,"accuracy":-2,"intelligence":-5,"vitality":-2,"recovery":3,"mana_regen":2,"charisma":2,"wisdom_cunning":4,"perception":0,"alchemy":0,"stealth":0,"agility":2}'::jsonb, jsonb_build_array('Healing and enhancement spells use _Recovery_ instead of Intelligence when using magic rolls', 'Heals also heal an additional ally for half (rounding up) of the heals amount. Can be used on the same target'), '#7581a0'),
+  ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', $am$Talismanists are experts at using weapons and armor forced with runes, and almost exclusively use weapons that hold spells or magical properties within them. This new class of warriors only recently came about, given the studies and smithsmanship from Argon "The Hammer" Tyborgarian.$am$, 125, 100, 10, 10, 0, '{"strength":1,"accuracy":1,"intelligence":1,"vitality":1,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":-2,"agility":0}'::jsonb, jsonb_build_array('Inherits 3 random low-level runes.', 'Requires only 3 runes to force spells into weapons as opposed to 5, with each rune beyond that increasing the chance of a stronger spell.', 'Each spell-infused weapon on hand can cast its spell twice per combat'), '#926d9f'),
+  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', $am$Wardens are your classic Jack-of-all trades mast of none. They bring great all around helpfulness and can be plug and play in most settings. Wardens are known for their survival skills and cunning, but are shunned for a lack of a profitable or secure occupation.$am$, 110, 75, 9, 20, 3, '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":-2,"wisdom_cunning":3,"perception":2,"alchemy":1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.', 'Gains a +2 modifier of choice in a single category where the party has no bonuses'), '#79895f')
 on conflict (class_key) do update
 set
   name = excluded.name,
@@ -939,6 +949,7 @@ set
   identity = excluded.identity,
   base_hp = excluded.base_hp,
   base_mana = excluded.base_mana,
+  base_magic_resist = excluded.base_magic_resist,
   inventory_slots = excluded.inventory_slots,
   spell_slots = excluded.spell_slots,
   attributes = excluded.attributes,
@@ -962,6 +973,7 @@ as $$
     'spellSlots', p_template.spell_slots,
     'baseHp', p_template.base_hp,
     'baseMana', p_template.base_mana,
+    'baseMagicResist', p_template.base_magic_resist,
     'attributes', p_template.attributes,
     'passives', p_template.passives,
     'tokenColor', p_template.token_color
@@ -1077,6 +1089,7 @@ begin
     current_hp,
     max_mana,
     current_mana,
+    magic_resist,
     inventory_slots,
     spell_slots,
     attributes,
@@ -1097,6 +1110,7 @@ begin
     v_template.base_hp,
     v_template.base_mana,
     v_template.base_mana,
+    v_template.base_magic_resist,
     v_template.inventory_slots,
     v_template.spell_slots,
     v_template.attributes,
@@ -1191,6 +1205,7 @@ begin
     current_hp = case when v_patch ? 'currentHp' then greatest(0, (v_patch->>'currentHp')::int) else current_hp end,
     max_mana = case when v_patch ? 'maxMana' then greatest(0, (v_patch->>'maxMana')::int) else max_mana end,
     current_mana = case when v_patch ? 'currentMana' then greatest(0, (v_patch->>'currentMana')::int) else current_mana end,
+    magic_resist = case when v_patch ? 'magicResist' then greatest(0, (v_patch->>'magicResist')::int) when v_template.id is not null then v_template.base_magic_resist else magic_resist end,
     inventory_slots = case when v_patch ? 'inventorySlots' then greatest(0, least((v_patch->>'inventorySlots')::int, 120)) else inventory_slots end,
     spell_slots = case when v_patch ? 'spellSlots' then greatest(0, (v_patch->>'spellSlots')::int) else spell_slots end,
     attributes = case when v_patch ? 'attributes' and jsonb_typeof(v_patch->'attributes') = 'object' then v_patch->'attributes' else attributes end,
@@ -4617,6 +4632,7 @@ begin
     identity = case when v_patch ? 'identity' then coalesce(v_patch->>'identity', '') else identity end,
     base_hp = case when v_patch ? 'baseHp' then greatest(0, (v_patch->>'baseHp')::int) else base_hp end,
     base_mana = case when v_patch ? 'baseMana' then greatest(0, (v_patch->>'baseMana')::int) else base_mana end,
+    base_magic_resist = case when v_patch ? 'baseMagicResist' then greatest(0, (v_patch->>'baseMagicResist')::int) else base_magic_resist end,
     inventory_slots = case when v_patch ? 'inventorySlots' then least(120, greatest(0, (v_patch->>'inventorySlots')::int)) else inventory_slots end,
     spell_slots = case when v_patch ? 'spellSlots' then greatest(0, (v_patch->>'spellSlots')::int) else spell_slots end,
     attributes = case when v_patch ? 'attributes' and jsonb_typeof(v_patch->'attributes') = 'object' then v_patch->'attributes' else attributes end,
@@ -4634,6 +4650,7 @@ begin
         current_hp = least(current_hp, v_template.base_hp),
         max_mana = v_template.base_mana,
         current_mana = least(current_mana, v_template.base_mana),
+        magic_resist = v_template.base_magic_resist,
         inventory_slots = v_template.inventory_slots,
         spell_slots = v_template.spell_slots,
         attributes = v_template.attributes,

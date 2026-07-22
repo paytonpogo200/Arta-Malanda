@@ -68,11 +68,13 @@ function inferStorageCapacity(itemName: string) {
 export function InventoryPanel({
   character,
   canManage,
-  canAdd
+  canAdd,
+  onItemsChanged
 }: {
   character: Character;
   canManage: boolean;
   canAdd: boolean;
+  onItemsChanged?: (items: InventoryItem[]) => void;
 }) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [wallet, setWallet] = useState<WalletBalance[]>([]);
@@ -98,6 +100,7 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Inventory could not be loaded.');
       const normalized = normalizeCharacterInventoryPayload(payload);
       setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
       setWallet(normalized.wallet);
       setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
     } catch (loadError) {
@@ -105,7 +108,7 @@ export function InventoryPanel({
     } finally {
       setLoading(false);
     }
-  }, [character.id]);
+  }, [character.id, onItemsChanged]);
 
   useEffect(() => {
     void loadInventory();
@@ -191,6 +194,7 @@ export function InventoryPanel({
   async function patchItemState(itemId: string, patch: Record<string, unknown>, optimisticItems: InventoryItem[]) {
     const previousItems = items;
     setItems(optimisticItems);
+    onItemsChanged?.(optimisticItems);
     setError('');
     try {
       const response = await fetch(`/api/inventory/items/${itemId}`, {
@@ -202,16 +206,23 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
       const updated = payload.item ? normalizeInventoryItem(payload.item) : null;
       if (!updated) {
-        setItems((current) => current.filter((item) => item.id !== itemId));
+        setItems((current) => {
+          const next = current.filter((item) => item.id !== itemId);
+          onItemsChanged?.(next);
+          return next;
+        });
         return;
       }
       setItems((current) => {
         const withoutMoved = current.filter((item) => item.id !== itemId);
         const replaced = withoutMoved.map((item) => item.id === updated.id ? updated : item);
-        return replaced.some((item) => item.id === updated.id) ? replaced : [...withoutMoved, updated];
+        const next = replaced.some((item) => item.id === updated.id) ? replaced : [...withoutMoved, updated];
+        onItemsChanged?.(next);
+        return next;
       });
     } catch (actionError) {
       setItems(previousItems);
+      onItemsChanged?.(previousItems);
       setError(actionError instanceof Error ? actionError.message : 'Inventory action failed.');
     }
   }

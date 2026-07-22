@@ -195,8 +195,10 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
               {selectedClass && (
                 <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">
                   <div className="grid grid-cols-2 gap-2">
-                    <span><b className="text-[var(--paper)]">HP</b> {selectedClass.baseHp}</span>
+                    <span><b className="text-[var(--paper)]">Health</b> {selectedClass.baseHp}</span>
                     <span><b className="text-[var(--paper)]">Mana</b> {selectedClass.baseMana}</span>
+                    <span><b className="text-[var(--paper)]">Defense</b> {selectedClass.attributes.vitality}</span>
+                    <span><b className="text-[var(--paper)]">Magic Resist</b> {selectedClass.baseMagicResist}</span>
                     <span><b className="text-[var(--paper)]">Inventory</b> {selectedClass.inventorySlots}</span>
                     <span><b className="text-[var(--paper)]">Spells</b> {selectedClass.spellSlots}</span>
                   </div>

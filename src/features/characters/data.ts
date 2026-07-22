@@ -48,6 +48,7 @@ export function normalizeClassTemplate(value: unknown): ClassTemplate {
     spellSlots: numberFrom(source.spellSlots, 0),
     baseHp: numberFrom(source.baseHp, 100),
     baseMana: numberFrom(source.baseMana, 0),
+    baseMagicResist: numberFrom(source.baseMagicResist, 0),
     attributes: normalizeAttributes(source.attributes),
     passives: normalizeTextList(source.passives),
     tokenColor: String(source.tokenColor ?? '#9caf79')
@@ -69,6 +70,7 @@ export function normalizeCharacter(value: unknown): Character {
     currentHp: numberFrom(source.currentHp, 100),
     maxMana: numberFrom(source.maxMana, 0),
     currentMana: numberFrom(source.currentMana, 0),
+    magicResist: numberFrom(source.magicResist, 0),
     inventorySlots: numberFrom(source.inventorySlots, 12),
     spellSlots: numberFrom(source.spellSlots, 0),
     attributes: normalizeAttributes(source.attributes),
@@ -117,6 +119,7 @@ export function characterFromClassTemplate(template: ClassTemplate, ownerUserId:
     currentHp: template.baseHp,
     maxMana: template.baseMana,
     currentMana: template.baseMana,
+    magicResist: template.baseMagicResist,
     inventorySlots: template.inventorySlots,
     spellSlots: template.spellSlots,
     attributes: template.attributes,
