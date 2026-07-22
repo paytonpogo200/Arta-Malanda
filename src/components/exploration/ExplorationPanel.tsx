@@ -7,7 +7,17 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { DEFAULT_LOOT_GENERATOR_SETTINGS, getLootMultiplier, getLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload, type ExplorationPayload, type LootRollPayload } from '@/features/exploration/data';
+import {
+  DEFAULT_LOOT_GENERATOR_SETTINGS,
+  MULTIPLIER_RARITIES,
+  getLootRaritySummary,
+  getLootRollCount,
+  normalizeExplorationPayload,
+  normalizeLootRollPayload,
+  type ExplorationPayload,
+  type LootRarityMath,
+  type LootRollPayload
+} from '@/features/exploration/data';
 import { rarityClass } from '@/lib/utils/rarity';
 
 const EMPTY: ExplorationPayload = {
@@ -22,6 +32,25 @@ type AwardDraft = {
   quantity: number;
 };
 
+function formatMultiplier(value: number) {
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`;
+}
+
+function formatChance(value: number) {
+  if (value > 0 && value < 0.01) return '<0.01%';
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function findRarity(rarities: LootRarityMath[], rarity: LootRarityMath['rarity']) {
+  return rarities.find((entry) => entry.rarity === rarity) ?? {
+    rarity,
+    multiplier: 1,
+    itemCount: 0,
+    weight: 0,
+    chance: 0
+  };
+}
+
 export function ExplorationPanel() {
   const [payload, setPayload] = useState<ExplorationPayload>(EMPTY);
   const [biome, setBiome] = useState(DEFAULT_LOOT_GENERATOR_SETTINGS.biomes[0]);
@@ -35,7 +64,10 @@ export function ExplorationPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const multiplier = useMemo(() => getLootMultiplier(payload.settings, poolSize, roomType, luckPotion), [payload.settings, poolSize, roomType, luckPotion]);
+  const raritySummary = useMemo(
+    () => getLootRaritySummary(payload.items, payload.settings, biome, difficulty, poolSize, roomType, luckPotion),
+    [payload.items, payload.settings, biome, difficulty, poolSize, roomType, luckPotion]
+  );
   const rollCount = useMemo(() => getLootRollCount(payload.settings, poolSize, roomType), [payload.settings, poolSize, roomType]);
   const defaultCharacterId = payload.characters[0]?.id ?? '';
 
@@ -197,13 +229,38 @@ export function ExplorationPanel() {
           </SelectField>
           <Button variant="primary" disabled={saving || !payload.items.length} onClick={generateLoot}><Dice6 className="mr-2 inline" size={15} /> Generate {rollCount}</Button>
         </div>
-        <div className="mt-3 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs font-bold text-[var(--muted)] sm:grid-cols-6">
-          <span>Rare+ multiplier: <b className="text-[var(--paper)]">{multiplier.total.toFixed(2)}×</b></span>
-          <span>Pool: <b className="text-[var(--paper)]">{multiplier.pool.toFixed(2)}×</b></span>
-          <span>Room: <b className="text-[var(--paper)]">{multiplier.room.toFixed(2)}×</b></span>
-          <span>Legendary luck: <b className="text-[var(--paper)]">{multiplier.legendaryLuck.toFixed(2)}×</b></span>
-          <span>Mythical luck: <b className="text-[var(--paper)]">{multiplier.mythicalLuck.toFixed(2)}×</b></span>
-          <span>Rolls: <b className="text-[var(--paper)]">{rollCount}</b></span>
+        <div className="mt-3 space-y-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+          <div>
+            <p className="mb-2 text-[0.65rem] font-black uppercase tracking-[0.18em] text-[var(--muted)]">Rarity multipliers</p>
+            <div className="grid gap-2 sm:grid-cols-4">
+              {MULTIPLIER_RARITIES.map((rarity) => {
+                const entry = findRarity(raritySummary.rarities, rarity);
+                return (
+                  <div key={rarity} className={`rounded-2xl border p-3 ${rarityClass(rarity)}`}>
+                    <span className="block text-[0.65rem] font-black uppercase tracking-wider text-[var(--muted)]">{rarity}</span>
+                    <b className="mt-1 block text-lg text-[var(--paper)]">{formatMultiplier(entry.multiplier)}</b>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-[0.65rem] font-black uppercase tracking-[0.18em] text-[var(--muted)]">Odds per roll</p>
+            <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+              {raritySummary.rarities.map((entry) => (
+                <div key={entry.rarity} className={`rounded-2xl border p-3 ${rarityClass(entry.rarity)}`}>
+                  <span className="block text-[0.65rem] font-black uppercase tracking-wider text-[var(--muted)]">{entry.rarity}</span>
+                  <b className="mt-1 block text-lg text-[var(--paper)]">{formatChance(entry.chance)}</b>
+                  <span className="mt-1 block text-[0.65rem] font-bold text-[var(--muted)]">{entry.itemCount} item{entry.itemCount === 1 ? '' : 's'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/10 p-2 text-xs font-bold text-[var(--muted)] sm:grid-cols-3">
+            <span>Rolls: <b className="text-[var(--paper)]">{rollCount}</b></span>
+            <span>Eligible items: <b className="text-[var(--paper)]">{raritySummary.eligibleCount}</b></span>
+            <span>Total weight: <b className="text-[var(--paper)]">{raritySummary.totalWeight.toFixed(2)}</b></span>
+          </div>
         </div>
       </Card>
 

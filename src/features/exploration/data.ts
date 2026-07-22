@@ -23,7 +23,28 @@ export type LootRollPayload = {
   };
 };
 
-const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
+export const LOOT_RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
+export const MULTIPLIER_RARITIES: ItemRarity[] = ['Rare', 'Epic', 'Legendary', 'Mythical'];
+
+export type WeightedLootItem = {
+  item: LootItem;
+  adjustedWeight: number;
+};
+
+export type LootRarityMath = {
+  rarity: ItemRarity;
+  multiplier: number;
+  itemCount: number;
+  weight: number;
+  chance: number;
+};
+
+export type LootRaritySummary = {
+  rarities: LootRarityMath[];
+  eligibleCount: number;
+  totalWeight: number;
+  weightedItems: WeightedLootItem[];
+};
 
 export const DEFAULT_LOOT_GENERATOR_SETTINGS: LootGeneratorSettings = {
   biomes: ['Any', 'Caves', 'Goblins', 'Elven', 'Volcano', 'Mountains', 'Snow', 'Voidlands'],
@@ -71,7 +92,7 @@ function normalizeItemType(value: unknown): ItemType {
 }
 
 function normalizeRarity(value: unknown): ItemRarity {
-  return RARITIES.includes(value as ItemRarity) ? value as ItemRarity : 'Common';
+  return LOOT_RARITIES.includes(value as ItemRarity) ? value as ItemRarity : 'Common';
 }
 
 function stringList(value: unknown, fallback: string[]) {
@@ -209,6 +230,68 @@ export function getLootMultiplier(settings: LootGeneratorSettings, poolSize: str
   const room = settings.roomMultipliers[roomType] ?? 1;
   const luck = settings.luckPotionMultipliers[luckPotion] ?? settings.luckPotionMultipliers.None ?? { legendary: 1, mythical: 1 };
   return { pool, room, total: pool * room, legendaryLuck: luck.legendary, mythicalLuck: luck.mythical };
+}
+
+function token(value: string) {
+  return value.replace(/\s+/g, '').toLowerCase();
+}
+
+export function lootBiomeMatches(item: LootItem, biome: string) {
+  if (biome === 'Any') return true;
+  const selected = token(biome);
+  const tokens = item.biomes.map(token);
+  return tokens.includes('any') || tokens.includes(selected);
+}
+
+export function isLootItemEligible(item: LootItem, biome: string, difficulty: number, poolSize: string) {
+  return item.name
+    && lootBiomeMatches(item, biome)
+    && item.minDifficulty <= difficulty
+    && item.maxDifficulty >= difficulty
+    && (!item.towerBaseOnly || poolSize === 'Tower Floor' || poolSize === 'Base');
+}
+
+export function getLootRarityMultiplier(settings: LootGeneratorSettings, rarity: ItemRarity, poolSize: string, roomType: string, luckPotion = 'None') {
+  const multiplier = getLootMultiplier(settings, poolSize, roomType, luckPotion);
+  const boosted = settings.rareBoostRarities.includes(rarity) ? multiplier.total : 1;
+  const legendaryLuck = rarity === 'Legendary' ? multiplier.legendaryLuck : 1;
+  const mythicalLuck = rarity === 'Mythical' ? multiplier.mythicalLuck : 1;
+  return boosted * legendaryLuck * mythicalLuck;
+}
+
+export function getWeightedLootItems(items: LootItem[], settings: LootGeneratorSettings, biome: string, difficulty: number, poolSize: string, roomType: string, luckPotion = 'None'): WeightedLootItem[] {
+  return items
+    .filter((item) => isLootItemEligible(item, biome, difficulty, poolSize))
+    .map((item) => ({
+      item,
+      adjustedWeight: item.weight * getLootRarityMultiplier(settings, item.rarity, poolSize, roomType, luckPotion)
+    }))
+    .filter((entry) => entry.adjustedWeight > 0);
+}
+
+export function getLootRaritySummary(items: LootItem[], settings: LootGeneratorSettings, biome: string, difficulty: number, poolSize: string, roomType: string, luckPotion = 'None'): LootRaritySummary {
+  const weightedItems = getWeightedLootItems(items, settings, biome, difficulty, poolSize, roomType, luckPotion);
+  const totalWeight = weightedItems.reduce((sum, entry) => sum + entry.adjustedWeight, 0);
+  const rarityWeights = Object.fromEntries(LOOT_RARITIES.map((rarity) => [rarity, 0])) as Record<ItemRarity, number>;
+  const rarityCounts = Object.fromEntries(LOOT_RARITIES.map((rarity) => [rarity, 0])) as Record<ItemRarity, number>;
+
+  for (const entry of weightedItems) {
+    rarityWeights[entry.item.rarity] += entry.adjustedWeight;
+    rarityCounts[entry.item.rarity] += 1;
+  }
+
+  return {
+    rarities: LOOT_RARITIES.map((rarity) => ({
+      rarity,
+      multiplier: getLootRarityMultiplier(settings, rarity, poolSize, roomType, luckPotion),
+      itemCount: rarityCounts[rarity],
+      weight: rarityWeights[rarity],
+      chance: totalWeight > 0 ? (rarityWeights[rarity] / totalWeight) * 100 : 0
+    })),
+    eligibleCount: weightedItems.length,
+    totalWeight,
+    weightedItems
+  };
 }
 
 export function getLootRollCount(settings: LootGeneratorSettings, poolSize: string, roomType: string) {

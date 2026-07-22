@@ -1,27 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { getLootMultiplier, getLootRollCount, normalizeExplorationPayload, normalizeLootRollPayload } from '@/features/exploration/data';
+import { getLootMultiplier, getLootRollCount, getWeightedLootItems, normalizeExplorationPayload, normalizeLootRollPayload } from '@/features/exploration/data';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
-import type { LootItem } from '@/lib/types';
-
-function token(value: string) {
-  return value.replace(/\s+/g, '').toLowerCase();
-}
-
-function biomeMatches(item: LootItem, biome: string) {
-  if (biome === 'Any') return true;
-  const selected = token(biome);
-  const tokens = item.biomes.map(token);
-  return tokens.includes('any') || tokens.includes(selected);
-}
-
-function isEligible(item: LootItem, biome: string, difficulty: number, poolSize: string) {
-  return item.name
-    && biomeMatches(item, biome)
-    && item.minDifficulty <= difficulty
-    && item.maxDifficulty >= difficulty
-    && (!item.towerBaseOnly || poolSize === 'Tower Floor' || poolSize === 'Base');
-}
 
 function randomQuantity(min: number, max: number) {
   return min + Math.floor(Math.random() * (max - min + 1));
@@ -48,17 +28,7 @@ export async function POST(request: NextRequest) {
     const payload = normalizeExplorationPayload(data);
     const multiplier = getLootMultiplier(payload.settings, poolSize, roomType, luckPotion);
     const rolls = getLootRollCount(payload.settings, poolSize, roomType);
-    const boosted = new Set(payload.settings.rareBoostRarities);
-    const eligible = payload.items
-      .filter((item) => isEligible(item, biome, difficulty, poolSize))
-      .map((item) => ({
-        item,
-        adjustedWeight: item.weight
-          * (boosted.has(item.rarity) ? multiplier.total : 1)
-          * (item.rarity === 'Legendary' ? multiplier.legendaryLuck : 1)
-          * (item.rarity === 'Mythical' ? multiplier.mythicalLuck : 1)
-      }))
-      .filter((entry) => entry.adjustedWeight > 0);
+    const eligible = getWeightedLootItems(payload.items, payload.settings, biome, difficulty, poolSize, roomType, luckPotion);
 
     const totalWeight = eligible.reduce((sum, entry) => sum + entry.adjustedWeight, 0);
     if (totalWeight <= 0) {
