@@ -49,7 +49,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       p_enchantment: body.enchantment || null,
       p_material: body.material || null,
       p_enhancement_count: Math.max(0, Math.min(3, Number(body.enhancementCount ?? 0))),
-      p_is_two_handed: Boolean(body.isTwoHanded)
+      p_is_two_handed: Boolean(body.isTwoHanded),
+      p_potion_strength: body.potionStrength ? String(body.potionStrength) : null,
+      p_potion_property: body.potionProperty ? String(body.potionProperty) : null,
+      p_potion_quality: body.potionQuality ? String(body.potionQuality) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

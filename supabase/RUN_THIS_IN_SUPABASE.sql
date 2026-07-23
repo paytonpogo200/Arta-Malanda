@@ -125,6 +125,9 @@ create table if not exists public.inventory_items (
   material text,
   enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   is_two_handed boolean not null default false,
+  potion_strength text,
+  potion_property text,
+  potion_quality text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -159,7 +162,10 @@ alter table public.inventory_items
   add column if not exists enchantment text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
-  add column if not exists is_two_handed boolean not null default false;
+  add column if not exists is_two_handed boolean not null default false,
+  add column if not exists potion_strength text,
+  add column if not exists potion_property text,
+  add column if not exists potion_quality text;
 
 create table if not exists public.battles (
   id uuid primary key default gen_random_uuid(),
@@ -869,7 +875,7 @@ insert into public.class_templates (
   token_color
 )
 values
-  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intellegent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and overexhaderations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nectar (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
+  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intellegent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and overexhaderations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
   ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are increadibly durible mages, known for their legendary support in combat and on the battlefield. They are extremely formitable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 11, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
   ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as oposed to utility. Their resourcefulness is often a great contrabution to many sucessful expeditions.$am$, 100, 75, 8, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
   ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', $am$Armor-clad warriors are amazing front liners. They are incredibly hard to take down and provide an amazing presence on the battlefield. What they lack in quickness, they make up for in annoying defensive utility. They are often seen as scary or mad due to their nature on the battlefield, or at least thats what they say. Hasn't been one in ages.$am$, 165, 50, 9, 10, 1, '{"strength":2,"accuracy":0,"intelligence":-3,"vitality":3,"recovery":0,"mana_regen":0,"charisma":-1,"wisdom_cunning":-2,"perception":-1,"alchemy":1,"stealth":-3,"agility":-3}'::jsonb, jsonb_build_array($am$Has the ability _Distribution_, which will direct 50% of a target's damage to yourself$am$, 'Does not pay armor labor, only materials. Armor-clad cannot receive extra defensive bonuses from shields'), '#9a6e52'),
@@ -1007,7 +1013,10 @@ begin
     enchantment,
     material,
     enhancement_count,
-    is_two_handed
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
   )
   select
     p_character_id,
@@ -1024,7 +1033,10 @@ begin
     null,
     'Leather',
     0,
-    false
+    false,
+    null,
+    null,
+    null
   where not exists (
     select 1
     from public.inventory_items existing
@@ -1458,7 +1470,7 @@ as $$
 declare
   v_id uuid;
 begin
-  if length(trim(coalesce(p_item_name, ''))) = 0 then
+  if length(trim(coalesce(v_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
   end if;
 
@@ -1481,7 +1493,7 @@ begin
   )
   values (
     public.catalog_key_for_name(p_item_name),
-    trim(p_item_name),
+    v_item_name,
     public.normalize_item_type(p_item_type),
     coalesce(nullif(p_rarity, ''), 'Common')::public.item_rarity,
     coalesce(nullif(trim(p_category), ''), 'General'),
@@ -1625,9 +1637,226 @@ set item_type = public.normalize_item_type(item_type);
 delete from public.item_catalog
 where item_key = 'mountian-rune';
 
+-- Alchemy and potion foundation.
+
+create table if not exists public.alchemy_potion_definitions (
+  property_key text primary key,
+  potion_name text not null unique,
+  description text not null default '',
+  automated_effect text not null default '',
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.alchemy_potion_definitions enable row level security;
+revoke all on public.alchemy_potion_definitions from anon, authenticated;
+
+drop trigger if exists alchemy_potion_definitions_touch_updated_at on public.alchemy_potion_definitions;
+create trigger alchemy_potion_definitions_touch_updated_at
+before update on public.alchemy_potion_definitions
+for each row execute function public.touch_updated_at();
+
+insert into public.alchemy_potion_definitions (property_key, potion_name, description, automated_effect, display_order)
+values
+  ('Healing', 'Healing', 'Restores health when consumed.', 'health', 10),
+  ('Speed', 'Swiftness', 'Improves speed. Resolve the exact effect at the table.', '', 20),
+  ('Agility', 'Agility', 'Improves agility. Resolve the exact effect at the table.', '', 30),
+  ('Strength', 'Strength', 'Improves strength. Resolve the exact effect at the table.', '', 40),
+  ('Sorcery', 'Sorcery', 'Improves sorcery and intelligence. Resolve the exact effect at the table.', '', 50),
+  ('Mana Regen', 'Mana', 'Restores mana when consumed.', 'mana', 60),
+  ('Luck', 'Luck', 'Improves luck rolls. Resolve the exact effect at the table.', '', 70),
+  ('Antidote', 'Antidote', 'Handles poison effects. Resolve the exact effect at the table.', '', 80),
+  ('Warming', 'Warming', 'Protects against cold. Resolve the exact effect at the table.', '', 90),
+  ('Cooling', 'Cooling', 'Protects against heat. Resolve the exact effect at the table.', '', 100),
+  ('Night-Eye', 'Night-Eye', 'Improves sight in darkness. Resolve the exact effect at the table.', '', 110),
+  ('Thickskin', 'Thickskin', 'Improves protection. Resolve the exact effect at the table.', '', 120),
+  ('Clear-Mind', 'Clear-Mind', 'Improves magical resistance. Resolve the exact effect at the table.', '', 130),
+  ('Wake-Up', 'Wake-Up', 'Wakes a target. Resolve the exact effect at the table.', '', 140),
+  ('Clotting', 'Clotting', 'Handles bleeding. Resolve the exact effect at the table.', '', 150)
+on conflict (property_key) do update
+set potion_name = excluded.potion_name,
+    description = excluded.description,
+    automated_effect = excluded.automated_effect,
+    display_order = excluded.display_order;
+
+create or replace function public.normalize_item_name(p_item_name text)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when lower(trim(coalesce(p_item_name, ''))) in ('glass flask', 'glass flasks', 'empty flasks') then 'Empty Flask'
+    when lower(trim(coalesce(p_item_name, ''))) = 'mana recovery potion' then 'Mana Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'lesser mana recovery potion' then 'Lesser Mana Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'greater mana recovery potion' then 'Greater Mana Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'greatest mana recovery potion' then 'Greatest Mana Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'greatest thinkskin potion' then 'Greatest Thickskin Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'lesser scorcery potion' then 'Lesser Sorcery Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'greater scorcery potion' then 'Greater Sorcery Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'greatest scorcery potion' then 'Greatest Sorcery Potion'
+    else trim(coalesce(p_item_name, ''))
+  end
+$$;
+
+create or replace function public.potion_strength_from_name(p_item_name text)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when lower(public.normalize_item_name(p_item_name)) like 'lesser % potion%' then 'Lesser'
+    when lower(public.normalize_item_name(p_item_name)) like 'greater % potion%' then 'Greater'
+    when lower(public.normalize_item_name(p_item_name)) like 'greatest % potion%' then 'Greatest'
+    else null
+  end
+$$;
+
+create or replace function public.potion_quality_from_name(p_item_name text)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select nullif(
+    initcap(trim(substring(public.normalize_item_name(p_item_name) from '\(([^)]*)\)'))),
+    ''
+  )
+$$;
+
+create or replace function public.potion_property_from_name(p_item_name text)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select d.property_key
+  from public.alchemy_potion_definitions d
+  where lower(public.normalize_item_name(p_item_name)) like '%' || lower(d.potion_name) || ' potion%'
+  order by length(d.potion_name) desc
+  limit 1
+$$;
+
+create or replace function public.potion_rarity_for_strength(p_strength text)
+returns public.item_rarity
+language sql
+immutable
+as $$
+  select case lower(trim(coalesce(p_strength, '')))
+    when 'lesser' then 'Uncommon'::public.item_rarity
+    when 'greater' then 'Rare'::public.item_rarity
+    when 'greatest' then 'Legendary'::public.item_rarity
+    else 'Common'::public.item_rarity
+  end
+$$;
+
+create or replace function public.format_potion_item_name(
+  p_strength text,
+  p_property_key text,
+  p_quality text default null
+)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select concat_ws(
+    ' ',
+    initcap(lower(trim(coalesce(p_strength, '')))),
+    coalesce((select d.potion_name from public.alchemy_potion_definitions d where d.property_key = p_property_key), trim(coalesce(p_property_key, ''))),
+    'Potion'
+  ) || case
+    when p_property_key in ('Healing', 'Mana Regen') then ''
+    when nullif(trim(coalesce(p_quality, '')), '') is null then ''
+    else ' (' || initcap(lower(trim(p_quality))) || ')'
+  end
+$$;
+
+create or replace function public.potion_metadata_for_name(p_item_name text)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'strength', public.potion_strength_from_name(p_item_name),
+    'property', public.potion_property_from_name(p_item_name),
+    'quality', public.potion_quality_from_name(p_item_name)
+  )
+$$;
+
+create or replace function public.catalyst_bonus_for_rarity(p_rarity public.item_rarity)
+returns int
+language sql
+immutable
+as $$
+  select case p_rarity
+    when 'Common' then 1
+    when 'Uncommon' then 2
+    when 'Rare' then 3
+    when 'Epic' then 3
+    when 'Legendary' then 4
+    when 'Mythical' then 4
+    else 0
+  end
+$$;
+
+do $$
+declare
+  v_definition record;
+  v_strength record;
+begin
+  perform public.upsert_item_catalog_entry('Empty Flask', 'potion', 'Common', 'Alchemy Supplies', array['Brewing vessel']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Empty byproduct of drinking a potion.', true, 900);
+  perform public.upsert_item_catalog_entry('Arcane Nector', 'potion', 'Uncommon', 'Alchemy Supplies', array['Potion canvas']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Required canvas for every brewed potion.', true, 901);
+
+  for v_definition in select * from public.alchemy_potion_definitions order by display_order loop
+    for v_strength in
+      select * from (values
+        ('Lesser', 910),
+        ('Greater', 920),
+        ('Greatest', 930)
+      ) as strength_values(strength_name, order_offset)
+    loop
+      perform public.upsert_item_catalog_entry(
+        public.format_potion_item_name(v_strength.strength_name, v_definition.property_key, null),
+        'potion',
+        public.potion_rarity_for_strength(v_strength.strength_name)::text,
+        'Potion',
+        array[v_definition.property_key]::text[],
+        1,
+        true,
+        '{}'::jsonb,
+        '',
+        false,
+        0,
+        v_definition.description,
+        true,
+        v_strength.order_offset + v_definition.display_order
+      );
+    end loop;
+  end loop;
+end $$;
+
 update public.inventory_items
 set item_type = public.normalize_item_type(item_type),
-    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end;
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else public.normalize_item_name(item_name) end,
+    potion_strength = case when public.normalize_item_type(item_type) = 'potion' then coalesce(potion_strength, public.potion_strength_from_name(item_name)) else potion_strength end,
+    potion_property = case when public.normalize_item_type(item_type) = 'potion' then coalesce(potion_property, public.potion_property_from_name(item_name)) else potion_property end,
+    potion_quality = case
+      when public.normalize_item_type(item_type) <> 'potion' then potion_quality
+      when public.potion_property_from_name(item_name) in ('Healing', 'Mana Regen') then null
+      when lower(public.normalize_item_name(item_name)) = 'empty flask' then null
+      else coalesce(potion_quality, public.potion_quality_from_name(item_name))
+    end;
+
+update public.inventory_items
+set item_type = 'potion',
+    rarity = case when lower(item_name) = 'arcane nector' then 'Uncommon'::public.item_rarity else 'Common'::public.item_rarity end,
+    potion_strength = null,
+    potion_property = null,
+    potion_quality = null
+where lower(item_name) in ('empty flask', 'arcane nector');
 
 create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type text)
 returns boolean
@@ -1666,7 +1895,10 @@ as $$
     'enchantment', p_item.enchantment,
     'material', p_item.material,
     'enhancementCount', p_item.enhancement_count,
-    'isTwoHanded', p_item.is_two_handed
+    'isTwoHanded', p_item.is_two_handed,
+    'potionStrength', p_item.potion_strength,
+    'potionProperty', p_item.potion_property,
+    'potionQuality', p_item.potion_quality
   )
 $$;
 
@@ -1925,6 +2157,9 @@ as $$
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
     and coalesce(a.material, '') = coalesce(b.material, '')
+    and coalesce(a.potion_strength, '') = coalesce(b.potion_strength, '')
+    and coalesce(a.potion_property, '') = coalesce(b.potion_property, '')
+    and coalesce(a.potion_quality, '') = coalesce(b.potion_quality, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
     and a.modifiers = b.modifiers
@@ -1933,6 +2168,8 @@ as $$
 $$;
 
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
+drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean);
+drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text);
 
 create or replace function public.add_character_inventory_item(
   p_session_token text,
@@ -1949,7 +2186,10 @@ create or replace function public.add_character_inventory_item(
   p_enchantment text default null,
   p_material text default null,
   p_enhancement_count int default 0,
-  p_is_two_handed boolean default false
+  p_is_two_handed boolean default false,
+  p_potion_strength text default null,
+  p_potion_property text default null,
+  p_potion_quality text default null
 )
 returns jsonb
 language plpgsql
@@ -1962,6 +2202,7 @@ declare
   v_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_catalog public.item_catalog%rowtype;
+  v_item_name text := public.normalize_item_name(p_item_name);
   v_item_type text;
   v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_rarity public.item_rarity;
@@ -1972,33 +2213,35 @@ declare
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_make_storage_container boolean := false;
   v_storage_item public.inventory_items%rowtype;
+  v_potion_strength text;
+  v_potion_property text;
+  v_potion_quality text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, true);
 
-  if length(trim(coalesce(p_item_name, ''))) = 0 then
+  if length(trim(coalesce(v_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
   end if;
 
   select * into v_catalog
   from public.item_catalog
-  where item_key = public.catalog_key_for_name(p_item_name)
+  where item_key = public.catalog_key_for_name(v_item_name)
   limit 1;
 
   v_item_type := public.normalize_item_type(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc'));
-  if v_catalog.id is not null and (v_item_type = 'misc' or v_item_type = '') then
-    v_item_type := v_catalog.item_type;
-  end if;
   v_rarity := coalesce(nullif(p_rarity, ''), coalesce(v_catalog.rarity::text, 'Common'))::public.item_rarity;
   v_modifiers := case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end;
+
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers || v_modifiers;
     v_material := v_catalog.material;
     v_is_two_handed := v_catalog.is_two_handed;
     v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
   end if;
+
   if length(trim(coalesce(p_material, ''))) > 0 then
     v_material := trim(p_material);
   end if;
@@ -2006,45 +2249,40 @@ begin
   if length(trim(coalesce(p_enchantment, ''))) > 0 then
     v_enhancement_count := 0;
   end if;
-  v_quantity := public.assert_valid_item_quantity(p_item_name, v_item_type, v_quantity);
+
+  if v_item_type = 'potion' then
+    v_potion_strength := coalesce(nullif(trim(coalesce(p_potion_strength, '')), ''), public.potion_strength_from_name(v_item_name));
+    v_potion_property := coalesce(nullif(trim(coalesce(p_potion_property, '')), ''), public.potion_property_from_name(v_item_name));
+    v_potion_quality := case
+      when coalesce(nullif(trim(coalesce(p_potion_property, '')), ''), public.potion_property_from_name(v_item_name)) in ('Healing', 'Mana Regen') then null
+      when lower(v_item_name) = 'empty flask' then null
+      else coalesce(nullif(trim(coalesce(p_potion_quality, '')), ''), public.potion_quality_from_name(v_item_name))
+    end;
+
+    if v_potion_strength is not null and v_potion_property is not null then
+      v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
+      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+    end if;
+  end if;
+
+  v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
 
   v_make_storage_container := v_item_type = 'storage'::text
     and coalesce(p_is_storage, false)
     and p_parent_item_id is null
-    and not public.character_storage_container_exists(p_character_id, p_item_name);
+    and not public.character_storage_container_exists(p_character_id, v_item_name);
 
   if v_make_storage_container then
     insert into public.inventory_items (
-      character_id,
-      parent_item_id,
-      slot_index,
-      item_name,
-      item_type,
-      rarity,
-      quantity,
-      is_storage,
-      storage_capacity,
-      modifiers,
-      enchantment,
-      material,
-      enhancement_count,
-      is_two_handed
+      character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
+      is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+      is_two_handed, potion_strength, potion_property, potion_quality
     )
     values (
-      p_character_id,
-      null,
-      public.next_storage_container_slot(p_character_id),
-      trim(p_item_name),
-      v_item_type,
-      v_rarity,
-      1,
-      true,
-      greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)),
-      v_modifiers,
-      nullif(trim(coalesce(p_enchantment, '')), ''),
-      v_material,
-      v_enhancement_count,
-      v_is_two_handed
+      p_character_id, null, public.next_storage_container_slot(p_character_id), v_item_name, v_item_type, v_rarity, 1,
+      true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
+      nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
+      v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
     )
     returning * into v_storage_item;
 
@@ -2065,11 +2303,14 @@ begin
   limit 1;
 
   if v_target.id is not null then
-    if v_target.item_name = trim(p_item_name)
+    if v_target.item_name = v_item_name
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.material, '') = coalesce(v_material, '')
+      and coalesce(v_target.potion_strength, '') = coalesce(v_potion_strength, '')
+      and coalesce(v_target.potion_property, '') = coalesce(v_potion_property, '')
+      and coalesce(v_target.potion_quality, '') = coalesce(v_potion_quality, '')
       and v_target.enhancement_count = v_enhancement_count
       and v_target.is_two_handed = v_is_two_handed
       and v_target.modifiers = v_modifiers
@@ -2086,36 +2327,14 @@ begin
   end if;
 
   insert into public.inventory_items (
-    character_id,
-    parent_item_id,
-    slot_index,
-    item_name,
-    item_type,
-    rarity,
-    quantity,
-    is_storage,
-    storage_capacity,
-    modifiers,
-    enchantment,
-    material,
-    enhancement_count,
-    is_two_handed
+    character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
+    is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality
   )
   values (
-    p_character_id,
-    p_parent_item_id,
-    p_slot_index,
-    trim(p_item_name),
-    v_item_type,
-    v_rarity,
-    v_quantity,
-    false,
-    0,
-    v_modifiers,
-    nullif(trim(coalesce(p_enchantment, '')), ''),
-    v_material,
-    v_enhancement_count,
-    v_is_two_handed
+    p_character_id, p_parent_item_id, p_slot_index, v_item_name, v_item_type, v_rarity, v_quantity,
+    false, 0, v_modifiers, nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
+    v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
   )
   returning * into v_item;
 
@@ -2152,14 +2371,14 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
   if v_profile.role = 'dm'::public.user_role then
     update public.inventory_items
     set
-      item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
+      item_name = case when v_patch ? 'name' then public.normalize_item_name(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) else item_name end,
       item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
@@ -2177,9 +2396,40 @@ begin
         when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int))
         else enhancement_count
       end,
-      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
+      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end,
+      potion_strength = case
+        when case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end <> 'potion' then null
+        when v_patch ? 'potionStrength' then nullif(trim(coalesce(v_patch->>'potionStrength', '')), '')
+        when v_patch ? 'name' then public.potion_strength_from_name(v_patch->>'name')
+        else potion_strength
+      end,
+      potion_property = case
+        when case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end <> 'potion' then null
+        when v_patch ? 'potionProperty' then nullif(trim(coalesce(v_patch->>'potionProperty', '')), '')
+        when v_patch ? 'name' then public.potion_property_from_name(v_patch->>'name')
+        else potion_property
+      end,
+      potion_quality = case
+        when case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end <> 'potion' then null
+        when coalesce(nullif(trim(coalesce(v_patch->>'potionProperty', '')), ''), potion_property, public.potion_property_from_name(coalesce(v_patch->>'name', item_name))) in ('Healing', 'Mana Regen') then null
+        when lower(public.normalize_item_name(coalesce(v_patch->>'name', item_name))) = 'empty flask' then null
+        when v_patch ? 'potionQuality' then nullif(trim(coalesce(v_patch->>'potionQuality', '')), '')
+        when v_patch ? 'name' then public.potion_quality_from_name(v_patch->>'name')
+        else potion_quality
+      end
     where id = p_item_id
     returning * into v_item;
+
+    if v_item.item_type = 'potion'
+      and v_item.potion_strength is not null
+      and v_item.potion_property is not null
+    then
+      update public.inventory_items
+      set item_name = public.format_potion_item_name(v_item.potion_strength, v_item.potion_property, v_item.potion_quality),
+          rarity = public.potion_rarity_for_strength(v_item.potion_strength)
+      where id = v_item.id
+      returning * into v_item;
+    end if;
   end if;
 
   if v_patch ? 'loadoutSlot' then
@@ -2360,7 +2610,7 @@ grant execute on function public.assert_inventory_slot_capacity(public.character
 grant execute on function public.next_storage_container_slot(uuid) to anon, authenticated;
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
-grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean) to anon, authenticated;
+grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
@@ -2377,6 +2627,7 @@ create table if not exists public.player_houses (
   city_name text not null default 'Calostrynn',
   inventory_slots int not null default 50 check (inventory_slots between 0 and 500),
   property_slots int not null default 10 check (property_slots between 0 and 200),
+  is_locked boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -2396,6 +2647,9 @@ create table if not exists public.house_inventory_items (
   material text,
   enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   is_two_handed boolean not null default false,
+  potion_strength text,
+  potion_property text,
+  potion_quality text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -2415,11 +2669,33 @@ alter table public.house_inventory_items
   add column if not exists enchantment text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
-  add column if not exists is_two_handed boolean not null default false;
+  add column if not exists is_two_handed boolean not null default false,
+  add column if not exists potion_strength text,
+  add column if not exists potion_property text,
+  add column if not exists potion_quality text;
+
+alter table public.player_houses
+  add column if not exists is_locked boolean not null default false;
 
 update public.house_inventory_items
 set item_type = public.normalize_item_type(item_type),
-    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end;
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else public.normalize_item_name(item_name) end,
+    potion_strength = case when public.normalize_item_type(item_type) = 'potion' then coalesce(potion_strength, public.potion_strength_from_name(item_name)) else potion_strength end,
+    potion_property = case when public.normalize_item_type(item_type) = 'potion' then coalesce(potion_property, public.potion_property_from_name(item_name)) else potion_property end,
+    potion_quality = case
+      when public.normalize_item_type(item_type) <> 'potion' then potion_quality
+      when public.potion_property_from_name(item_name) in ('Healing', 'Mana Regen') then null
+      when lower(public.normalize_item_name(item_name)) = 'empty flask' then null
+      else coalesce(potion_quality, public.potion_quality_from_name(item_name))
+    end;
+
+update public.house_inventory_items
+set item_type = 'potion',
+    rarity = case when lower(item_name) = 'arcane nector' then 'Uncommon'::public.item_rarity else 'Common'::public.item_rarity end,
+    potion_strength = null,
+    potion_property = null,
+    potion_quality = null
+where lower(item_name) in ('empty flask', 'arcane nector');
 
 create table if not exists public.campaign_properties (
   id uuid primary key default gen_random_uuid(),
@@ -2521,7 +2797,8 @@ as $$
     'ownerUserId', p_house.owner_user_id,
     'cityName', p_house.city_name,
     'inventorySlots', p_house.inventory_slots,
-    'propertySlots', p_house.property_slots
+    'propertySlots', p_house.property_slots,
+    'locked', p_house.is_locked
   )
 $$;
 
@@ -2546,7 +2823,10 @@ as $$
     'enchantment', p_item.enchantment,
     'material', p_item.material,
     'enhancementCount', p_item.enhancement_count,
-    'isTwoHanded', p_item.is_two_handed
+    'isTwoHanded', p_item.is_two_handed,
+    'potionStrength', p_item.potion_strength,
+    'potionProperty', p_item.potion_property,
+    'potionQuality', p_item.potion_quality
   )
 $$;
 
@@ -2578,6 +2858,9 @@ as $$
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
     and coalesce(a.material, '') = coalesce(b.material, '')
+    and coalesce(a.potion_strength, '') = coalesce(b.potion_strength, '')
+    and coalesce(a.potion_property, '') = coalesce(b.potion_property, '')
+    and coalesce(a.potion_quality, '') = coalesce(b.potion_quality, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
     and a.modifiers = b.modifiers
@@ -2676,6 +2959,10 @@ declare
   v_material text := '';
   v_is_two_handed boolean := false;
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
+  v_item_name text := public.normalize_item_name(p_item_name);
+  v_potion_strength text;
+  v_potion_property text;
+  v_potion_quality text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   v_house := public.assert_house_access(v_profile, p_owner_user_id, true);
@@ -2684,13 +2971,13 @@ begin
     raise exception 'House slot is outside the house capacity.';
   end if;
 
-  if length(trim(coalesce(p_item_name, ''))) = 0 then
+  if length(trim(coalesce(v_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
   end if;
 
   select * into v_catalog
   from public.item_catalog
-  where item_key = public.catalog_key_for_name(p_item_name)
+  where item_key = public.catalog_key_for_name(v_item_name)
   limit 1;
 
   v_item_type := public.normalize_item_type(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc'));
@@ -2698,13 +2985,27 @@ begin
     v_item_type := v_catalog.item_type;
   end if;
   v_rarity := coalesce(nullif(p_rarity, ''), coalesce(v_catalog.rarity::text, 'Common'))::public.item_rarity;
-  v_quantity := public.assert_valid_item_quantity(p_item_name, v_item_type, v_quantity);
+  v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
   v_modifiers := case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end;
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers || v_modifiers;
     v_material := v_catalog.material;
     v_is_two_handed := v_catalog.is_two_handed;
     v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
+  end if;
+
+  if v_item_type = 'potion' then
+    v_potion_strength := public.potion_strength_from_name(v_item_name);
+    v_potion_property := public.potion_property_from_name(v_item_name);
+    v_potion_quality := case
+      when v_potion_property in ('Healing', 'Mana Regen') then null
+      when lower(v_item_name) = 'empty flask' then null
+      else public.potion_quality_from_name(v_item_name)
+    end;
+    if v_potion_strength is not null and v_potion_property is not null then
+      v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
+      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+    end if;
   end if;
 
   select * into v_target
@@ -2714,11 +3015,14 @@ begin
   limit 1;
 
   if v_target.id is not null then
-    if v_target.item_name = trim(p_item_name)
+    if v_target.item_name = v_item_name
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.material, '') = coalesce(v_material, '')
+      and coalesce(v_target.potion_strength, '') = coalesce(v_potion_strength, '')
+      and coalesce(v_target.potion_property, '') = coalesce(v_potion_property, '')
+      and coalesce(v_target.potion_quality, '') = coalesce(v_potion_quality, '')
       and v_target.enhancement_count = 0
       and v_target.is_two_handed = v_is_two_handed
       and v_target.is_storage = false
@@ -2747,12 +3051,15 @@ begin
     enchantment,
     material,
     enhancement_count,
-    is_two_handed
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
   )
   values (
     p_owner_user_id,
     p_slot_index,
-    trim(p_item_name),
+    v_item_name,
     v_item_type,
     v_rarity,
     v_quantity,
@@ -2762,7 +3069,10 @@ begin
     nullif(trim(coalesce(p_enchantment, '')), ''),
     v_material,
     0,
-    v_is_two_handed
+    v_is_two_handed,
+    v_potion_strength,
+    v_potion_property,
+    v_potion_quality
   )
   returning * into v_item;
 
@@ -2941,6 +3251,9 @@ begin
     and h.rarity = v_item.rarity
     and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
     and coalesce(h.material, '') = coalesce(v_item.material, '')
+    and coalesce(h.potion_strength, '') = coalesce(v_item.potion_strength, '')
+    and coalesce(h.potion_property, '') = coalesce(v_item.potion_property, '')
+    and coalesce(h.potion_quality, '') = coalesce(v_item.potion_quality, '')
     and h.enhancement_count = v_item.enhancement_count
     and h.is_two_handed = v_item.is_two_handed
     and h.is_storage = false
@@ -2975,7 +3288,10 @@ begin
     enchantment,
     material,
     enhancement_count,
-    is_two_handed
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
   )
   values (
     v_character.owner_user_id,
@@ -2990,7 +3306,10 @@ begin
     v_item.enchantment,
     v_item.material,
     v_item.enhancement_count,
-    v_item.is_two_handed
+    v_item.is_two_handed,
+    v_item.potion_strength,
+    v_item.potion_property,
+    v_item.potion_quality
   )
   returning * into v_house_item;
 
@@ -3540,9 +3859,15 @@ where product_key = 'blacksmith-mountian-rune'
 
 update public.market_products
 set item_type = public.normalize_item_type(item_type),
-    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end,
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else public.normalize_item_name(item_name) end,
     product_key = case when product_key = 'blacksmith-mountian-rune' then 'blacksmith-mountain-rune' else product_key end,
     catalog_item_key = case when catalog_item_key = 'mountian-rune' then 'mountain-rune' else catalog_item_key end;
+
+update public.market_products
+set item_type = 'potion',
+    rarity = case when lower(item_name) = 'arcane nector' then 'Uncommon'::public.item_rarity else 'Common'::public.item_rarity end,
+    quantity_step = 1
+where lower(item_name) in ('empty flask', 'arcane nector');
 
 alter table public.cities enable row level security;
 alter table public.shop_vendors enable row level security;
@@ -3610,9 +3935,6 @@ join (
     ('calostrynn-armory', 'iron-sword', 'Iron Sword', 'A dependable blade from the city armory.', 'weapon', 'Common', 120, 8, 10),
     ('calostrynn-armory', 'round-shield', 'Round Shield', 'A sturdy shield suited for patrol or travel.', 'shield', 'Common', 90, 7, 20),
     ('calostrynn-armory', 'light-armor', 'Light Armor', 'Flexible protection that keeps a fighter moving.', 'armor', 'Common', 180, 5, 30),
-    ('calostrynn-brewery', 'minor-healing-potion', 'Minor Healing Potion', 'Restores 20 health when consumed.', 'potion', 'Common', 50, 12, 10),
-    ('calostrynn-brewery', 'minor-mana-potion', 'Minor Mana Potion', 'Restores 15 mana when consumed.', 'potion', 'Common', 60, 12, 20),
-    ('calostrynn-brewery', 'glass-flask', 'Glass Flask', 'An empty flask for brews and careful storage.', 'tool', 'Common', 6, 40, 30),
     ('calostrynn-library', 'blank-scroll', 'Blank Scroll', 'Prepared parchment for notes, maps, or magic work.', 'quest', 'Common', 15, 30, 10),
     ('calostrynn-library', 'spark-cantrip', 'Spark Cantrip', 'A beginner spell page for controlled flame.', 'quest', 'Uncommon', 150, 3, 20),
     ('calostrynn-blacksmith', 'repair-kit', 'Repair Kit', 'Basic tools for maintaining gear at camp.', 'tool', 'Common', 75, 9, 10),
@@ -3644,6 +3966,71 @@ join (values
   ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'mountain-rune', false, 120),
   ('blacksmith-void-rune', 'Void Rune', 'Cannot be used for enchantments yet.', 'rune', 'Mythical', 0, 0, 'Runes', 1, 'void-rune', false, 130)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
+on conflict (product_key) do nothing;
+
+-- Replace Brewery placeholder wares with source-backed finished potions and brewing supplies.
+with brewery_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-brewery')
+delete from public.market_products p
+using brewery_vendor v
+where p.vendor_id = v.id
+  and (
+    p.product_key in ('minor-healing-potion', 'minor-mana-potion', 'glass-flask')
+    or lower(p.item_name) in ('minor healing potion', 'minor mana potion', 'glass flask', 'glass flasks')
+  );
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, 'potion', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, seed.is_available, seed.display_order
+from public.shop_vendors v
+join (values
+  ('brewery-arcane-nector', 'Arcane Nector', 'Required canvas for every brewed potion.', 'Uncommon', 100, 80, 'Brewing Supplies', 'arcane-nector', true, 10),
+  ('brewery-empty-flask', 'Empty Flask', 'Empty byproduct of drinking a potion.', 'Common', 6, 80, 'Brewing Supplies', 'empty-flask', true, 20),
+  ('brewery-lesser-healing-potion', 'Lesser Healing Potion', 'Restores 20 health when consumed.', 'Uncommon', 80, 6, 'Finished Potions', 'lesser-healing-potion', true, 100),
+  ('brewery-greater-healing-potion', 'Greater Healing Potion', 'Restores 50 health when consumed.', 'Rare', 300, 3, 'Finished Potions', 'greater-healing-potion', true, 110),
+  ('brewery-greatest-healing-potion', 'Greatest Healing Potion', 'Fully restores health when consumed.', 'Legendary', 1200, 1, 'Finished Potions', 'greatest-healing-potion', true, 120),
+  ('brewery-lesser-swiftness-potion', 'Lesser Swiftness Potion (Fine)', 'Fine lesser swiftness potion. Resolve the effect at the table.', 'Uncommon', 80, 4, 'Finished Potions', 'lesser-swiftness-potion', true, 130),
+  ('brewery-greater-swiftness-potion', 'Greater Swiftness Potion (Fine)', 'Fine greater swiftness potion. Resolve the effect at the table.', 'Rare', 300, 2, 'Finished Potions', 'greater-swiftness-potion', true, 140),
+  ('brewery-greatest-swiftness-potion', 'Greatest Swiftness Potion (Fine)', 'Fine greatest swiftness potion. Resolve the effect at the table.', 'Legendary', 1500, 1, 'Finished Potions', 'greatest-swiftness-potion', true, 150),
+  ('brewery-lesser-agility-potion', 'Lesser Agility Potion (Fine)', 'Fine lesser agility potion. Resolve the effect at the table.', 'Uncommon', 80, 4, 'Finished Potions', 'lesser-agility-potion', true, 160),
+  ('brewery-greater-agility-potion', 'Greater Agility Potion (Fine)', 'Fine greater agility potion. Resolve the effect at the table.', 'Rare', 300, 2, 'Finished Potions', 'greater-agility-potion', true, 170),
+  ('brewery-greatest-agility-potion', 'Greatest Agility Potion (Fine)', 'Fine greatest agility potion. Resolve the effect at the table.', 'Legendary', 1600, 1, 'Finished Potions', 'greatest-agility-potion', true, 180),
+  ('brewery-lesser-strength-potion', 'Lesser Strength Potion (Fine)', 'Fine lesser strength potion. Resolve the effect at the table.', 'Uncommon', 80, 4, 'Finished Potions', 'lesser-strength-potion', true, 190),
+  ('brewery-greater-strength-potion', 'Greater Strength Potion (Fine)', 'Fine greater strength potion. Resolve the effect at the table.', 'Rare', 300, 2, 'Finished Potions', 'greater-strength-potion', true, 200),
+  ('brewery-greatest-strength-potion', 'Greatest Strength Potion (Fine)', 'Fine greatest strength potion. Resolve the effect at the table.', 'Legendary', 1500, 1, 'Finished Potions', 'greatest-strength-potion', true, 210),
+  ('brewery-lesser-sorcery-potion', 'Lesser Sorcery Potion (Fine)', 'Fine lesser sorcery potion. Resolve the effect at the table.', 'Uncommon', 100, 3, 'Finished Potions', 'lesser-sorcery-potion', true, 220),
+  ('brewery-greater-sorcery-potion', 'Greater Sorcery Potion (Fine)', 'Fine greater sorcery potion. Resolve the effect at the table.', 'Rare', 400, 2, 'Finished Potions', 'greater-sorcery-potion', true, 230),
+  ('brewery-greatest-sorcery-potion', 'Greatest Sorcery Potion (Fine)', 'Fine greatest sorcery potion. Resolve the effect at the table.', 'Legendary', 1800, 1, 'Finished Potions', 'greatest-sorcery-potion', true, 240),
+  ('brewery-lesser-mana-potion', 'Lesser Mana Potion', 'Restores 15 mana when consumed.', 'Uncommon', 200, 3, 'Finished Potions', 'lesser-mana-potion', true, 250),
+  ('brewery-greater-mana-potion', 'Greater Mana Potion', 'Restores 40 mana when consumed.', 'Rare', 600, 2, 'Finished Potions', 'greater-mana-potion', true, 260),
+  ('brewery-greatest-mana-potion', 'Greatest Mana Potion', 'Fully restores mana when consumed.', 'Legendary', 2200, 1, 'Finished Potions', 'greatest-mana-potion', true, 270),
+  ('brewery-lesser-luck-potion', 'Lesser Luck Potion (Fine)', 'Fine lesser luck potion. Resolve the effect at the table.', 'Uncommon', 10000, 1, 'Finished Potions', 'lesser-luck-potion', true, 280),
+  ('brewery-greater-luck-potion', 'Greater Luck Potion (Fine)', 'Fine greater luck potion. Resolve the effect at the table.', 'Rare', 70000, 0, 'Finished Potions', 'greater-luck-potion', false, 290),
+  ('brewery-greatest-luck-potion', 'Greatest Luck Potion (Fine)', 'Fine greatest luck potion. Resolve the effect at the table.', 'Legendary', 300000, 0, 'Finished Potions', 'greatest-luck-potion', false, 300),
+  ('brewery-lesser-antidote-potion', 'Lesser Antidote Potion (Fine)', 'Fine lesser antidote potion. Resolve the effect at the table.', 'Uncommon', 60, 6, 'Finished Potions', 'lesser-antidote-potion', true, 310),
+  ('brewery-greater-antidote-potion', 'Greater Antidote Potion (Fine)', 'Fine greater antidote potion. Resolve the effect at the table.', 'Rare', 150, 3, 'Finished Potions', 'greater-antidote-potion', true, 320),
+  ('brewery-greatest-antidote-potion', 'Greatest Antidote Potion (Fine)', 'Fine greatest antidote potion. Resolve the effect at the table.', 'Legendary', 400, 1, 'Finished Potions', 'greatest-antidote-potion', true, 330),
+  ('brewery-lesser-warming-potion', 'Lesser Warming Potion (Fine)', 'Fine lesser warming potion. Resolve the effect at the table.', 'Uncommon', 80, 4, 'Finished Potions', 'lesser-warming-potion', true, 340),
+  ('brewery-greater-warming-potion', 'Greater Warming Potion (Fine)', 'Fine greater warming potion. Resolve the effect at the table.', 'Rare', 200, 2, 'Finished Potions', 'greater-warming-potion', true, 350),
+  ('brewery-greatest-warming-potion', 'Greatest Warming Potion (Fine)', 'Fine greatest warming potion. Resolve the effect at the table.', 'Legendary', 600, 1, 'Finished Potions', 'greatest-warming-potion', true, 360),
+  ('brewery-lesser-cooling-potion', 'Lesser Cooling Potion (Fine)', 'Fine lesser cooling potion. Resolve the effect at the table.', 'Uncommon', 80, 4, 'Finished Potions', 'lesser-cooling-potion', true, 370),
+  ('brewery-greater-cooling-potion', 'Greater Cooling Potion (Fine)', 'Fine greater cooling potion. Resolve the effect at the table.', 'Rare', 200, 2, 'Finished Potions', 'greater-cooling-potion', true, 380),
+  ('brewery-greatest-cooling-potion', 'Greatest Cooling Potion (Fine)', 'Fine greatest cooling potion. Resolve the effect at the table.', 'Legendary', 600, 1, 'Finished Potions', 'greatest-cooling-potion', true, 390),
+  ('brewery-lesser-night-eye-potion', 'Lesser Night-Eye Potion (Fine)', 'Fine lesser night-eye potion. Resolve the effect at the table.', 'Uncommon', 100, 4, 'Finished Potions', 'lesser-night-eye-potion', true, 400),
+  ('brewery-greater-night-eye-potion', 'Greater Night-Eye Potion (Fine)', 'Fine greater night-eye potion. Resolve the effect at the table.', 'Rare', 300, 2, 'Finished Potions', 'greater-night-eye-potion', true, 410),
+  ('brewery-greatest-night-eye-potion', 'Greatest Night-Eye Potion (Fine)', 'Fine greatest night-eye potion. Resolve the effect at the table.', 'Legendary', 800, 1, 'Finished Potions', 'greatest-night-eye-potion', true, 420),
+  ('brewery-lesser-thickskin-potion', 'Lesser Thickskin Potion (Fine)', 'Fine lesser thickskin potion. Resolve the effect at the table.', 'Uncommon', 150, 3, 'Finished Potions', 'lesser-thickskin-potion', true, 430),
+  ('brewery-greater-thickskin-potion', 'Greater Thickskin Potion (Fine)', 'Fine greater thickskin potion. Resolve the effect at the table.', 'Rare', 400, 2, 'Finished Potions', 'greater-thickskin-potion', true, 440),
+  ('brewery-greatest-thickskin-potion', 'Greatest Thickskin Potion (Fine)', 'Fine greatest thickskin potion. Resolve the effect at the table.', 'Legendary', 1400, 1, 'Finished Potions', 'greatest-thickskin-potion', true, 450),
+  ('brewery-lesser-clear-mind-potion', 'Lesser Clear-Mind Potion (Fine)', 'Fine lesser clear-mind potion. Resolve the effect at the table.', 'Uncommon', 150, 3, 'Finished Potions', 'lesser-clear-mind-potion', true, 460),
+  ('brewery-greater-clear-mind-potion', 'Greater Clear-Mind Potion (Fine)', 'Fine greater clear-mind potion. Resolve the effect at the table.', 'Rare', 400, 2, 'Finished Potions', 'greater-clear-mind-potion', true, 470),
+  ('brewery-greatest-clear-mind-potion', 'Greatest Clear-Mind Potion (Fine)', 'Fine greatest clear-mind potion. Resolve the effect at the table.', 'Legendary', 1400, 1, 'Finished Potions', 'greatest-clear-mind-potion', true, 480),
+  ('brewery-lesser-wake-up-potion', 'Lesser Wake-Up Potion (Fine)', 'Fine lesser wake-up potion. Resolve the effect at the table.', 'Uncommon', 200, 3, 'Finished Potions', 'lesser-wake-up-potion', true, 490),
+  ('brewery-greater-wake-up-potion', 'Greater Wake-Up Potion (Fine)', 'Fine greater wake-up potion. Resolve the effect at the table.', 'Rare', 500, 2, 'Finished Potions', 'greater-wake-up-potion', true, 500),
+  ('brewery-greatest-wake-up-potion', 'Greatest Wake-Up Potion (Fine)', 'Fine greatest wake-up potion. Resolve the effect at the table.', 'Legendary', 1000, 1, 'Finished Potions', 'greatest-wake-up-potion', true, 510),
+  ('brewery-lesser-clotting-potion', 'Lesser Clotting Potion (Fine)', 'Fine lesser clotting potion. Resolve the effect at the table.', 'Uncommon', 80, 5, 'Finished Potions', 'lesser-clotting-potion', true, 520),
+  ('brewery-greater-clotting-potion', 'Greater Clotting Potion (Fine)', 'Fine greater clotting potion. Resolve the effect at the table.', 'Rare', 200, 3, 'Finished Potions', 'greater-clotting-potion', true, 530),
+  ('brewery-greatest-clotting-potion', 'Greatest Clotting Potion (Fine)', 'Fine greatest clotting potion. Resolve the effect at the table.', 'Legendary', 600, 1, 'Finished Potions', 'greatest-clotting-potion', true, 540)
+) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, is_available, display_order)
+on v.vendor_key = 'calostrynn-brewery'
 on conflict (product_key) do nothing;
 
 create or replace function public.city_record_to_json(p_city public.cities)
@@ -3810,6 +4197,10 @@ declare
   v_storage_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
+  v_item_name text;
+  v_potion_strength text;
+  v_potion_property text;
+  v_potion_quality text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -3831,12 +4222,26 @@ begin
   where item_key = coalesce(nullif(v_product.catalog_item_key, ''), public.catalog_key_for_name(v_product.item_name))
   limit 1;
 
-  v_quantity := public.assert_valid_item_quantity(v_product.item_name, v_product.item_type, v_quantity);
+  v_item_name := public.normalize_item_name(v_product.item_name);
+  v_quantity := public.assert_valid_item_quantity(v_item_name, v_product.item_type, v_quantity);
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers;
     v_material := v_catalog.material;
     v_is_two_handed := v_catalog.is_two_handed;
     v_storage_capacity := v_catalog.storage_capacity;
+  end if;
+  if v_product.item_type = 'potion' then
+    v_potion_strength := public.potion_strength_from_name(v_item_name);
+    v_potion_property := public.potion_property_from_name(v_item_name);
+    v_potion_quality := case
+      when v_potion_property in ('Healing', 'Mana Regen') then null
+      when lower(v_item_name) = 'empty flask' then null
+      else public.potion_quality_from_name(v_item_name)
+    end;
+    if v_potion_strength is not null and v_potion_property is not null then
+      v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
+      v_product.rarity := public.potion_rarity_for_strength(v_potion_strength);
+    end if;
   end if;
 
   select * into v_vendor from public.shop_vendors where id = v_product.vendor_id;
@@ -3866,7 +4271,7 @@ begin
   v_inventory_quantity := v_quantity;
 
   if v_product.item_type = 'storage'::text
-    and not public.character_storage_container_exists(v_character.id, v_product.item_name)
+    and not public.character_storage_container_exists(v_character.id, v_item_name)
   then
     insert into public.inventory_items (
       character_id,
@@ -3882,23 +4287,29 @@ begin
       enchantment,
       material,
       enhancement_count,
-      is_two_handed
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
     )
     values (
       v_character.id,
       null,
       public.next_storage_container_slot(v_character.id),
-      v_product.item_name,
+      v_item_name,
       v_product.item_type,
       v_product.rarity,
       1,
       true,
-      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_product.item_name))),
+      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_item_name))),
       v_modifiers,
       null,
       v_material,
       0,
-      v_is_two_handed
+      v_is_two_handed,
+      v_potion_strength,
+      v_potion_property,
+      v_potion_quality
     )
     returning * into v_storage_item;
 
@@ -3912,11 +4323,14 @@ begin
   where i.character_id = v_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_product.item_name
+    and i.item_name = v_item_name
     and i.item_type = v_product.item_type
     and i.rarity = v_product.rarity
     and coalesce(i.enchantment, '') = ''
     and coalesce(i.material, '') = coalesce(v_material, '')
+    and coalesce(i.potion_strength, '') = coalesce(v_potion_strength, '')
+    and coalesce(i.potion_property, '') = coalesce(v_potion_property, '')
+    and coalesce(i.potion_quality, '') = coalesce(v_potion_quality, '')
     and i.enhancement_count = 0
     and i.is_two_handed = v_is_two_handed
     and i.modifiers = v_modifiers
@@ -3949,13 +4363,16 @@ begin
       enchantment,
       material,
       enhancement_count,
-      is_two_handed
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
     )
     values (
       v_character.id,
       null,
       v_slot,
-      v_product.item_name,
+      v_item_name,
       v_product.item_type,
       v_product.rarity,
       v_inventory_quantity,
@@ -3965,7 +4382,10 @@ begin
       null,
       v_material,
       0,
-      v_is_two_handed
+      v_is_two_handed,
+      v_potion_strength,
+      v_potion_property,
+      v_potion_quality
     )
     returning * into v_item;
   end if;
@@ -4109,6 +4529,187 @@ $$;
 
 revoke execute on function public.consume_character_item_by_name(uuid, text, numeric) from anon, authenticated;
 
+create or replace function public.assert_character_can_use_vendor(
+  p_character public.characters,
+  p_vendor_key text
+)
+returns public.cities
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_vendor public.shop_vendors%rowtype;
+  v_city public.cities%rowtype;
+begin
+  select * into v_vendor
+  from public.shop_vendors
+  where vendor_key = p_vendor_key;
+
+  if v_vendor.id is null then
+    raise exception 'Crafting station not found.';
+  end if;
+
+  select * into v_city
+  from public.cities
+  where city_key = v_vendor.city_key;
+
+  if v_city.id is null then
+    raise exception 'Crafting city not found.';
+  end if;
+
+  if v_city.is_locked then
+    raise exception '% is currently locked.', v_city.name;
+  end if;
+
+  if p_character.location_name <> v_city.name then
+    raise exception '% is in %, not %.', p_character.character_name, p_character.location_name, v_city.name;
+  end if;
+
+  return v_city;
+end;
+$$;
+
+create or replace function public.crafting_house_is_accessible(
+  p_character_id uuid,
+  p_station_city_name text
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.characters c
+    join public.player_houses h on h.owner_user_id = c.owner_user_id
+    where c.id = p_character_id
+      and c.owner_user_id is not null
+      and h.is_locked = false
+      and h.city_name = c.location_name
+      and h.city_name = p_station_city_name
+  )
+$$;
+
+create or replace function public.house_item_quantity_by_name(
+  p_character_id uuid,
+  p_item_name text,
+  p_station_city_name text
+)
+returns numeric
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when public.crafting_house_is_accessible(p_character_id, p_station_city_name) then coalesce((
+      select sum(h.quantity)
+      from public.characters c
+      join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+      where c.id = p_character_id
+        and h.is_storage = false
+        and lower(h.item_name) = lower(trim(p_item_name))
+    ), 0)
+    else 0
+  end
+$$;
+
+create or replace function public.accessible_item_quantity_by_name(
+  p_character_id uuid,
+  p_item_name text,
+  p_station_city_name text
+)
+returns numeric
+language sql
+stable
+set search_path = public
+as $$
+  select public.carried_item_quantity_by_name(p_character_id, p_item_name)
+       + public.house_item_quantity_by_name(p_character_id, p_item_name, p_station_city_name)
+$$;
+
+create or replace function public.consume_house_item_by_name(
+  p_character_id uuid,
+  p_item_name text,
+  p_quantity numeric,
+  p_station_city_name text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := greatest(0.5, coalesce(p_quantity, 1));
+  v_item public.house_inventory_items%rowtype;
+  v_take numeric;
+begin
+  if v_needed <= 0 then return; end if;
+  if not public.crafting_house_is_accessible(p_character_id, p_station_city_name) then
+    raise exception 'House storage is not accessible from here.';
+  end if;
+
+  for v_item in
+    select h.*
+    from public.characters c
+    join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+    where c.id = p_character_id
+      and h.is_storage = false
+      and lower(h.item_name) = lower(trim(p_item_name))
+    order by h.slot_index, h.created_at
+  loop
+    exit when v_needed <= 0;
+    v_take := least(v_item.quantity, v_needed);
+    if v_take >= v_item.quantity then
+      delete from public.house_inventory_items where id = v_item.id;
+    else
+      update public.house_inventory_items set quantity = quantity - v_take where id = v_item.id;
+    end if;
+    v_needed := v_needed - v_take;
+  end loop;
+
+  if v_needed > 0 then
+    raise exception 'Missing house item: % x%.', p_item_name, p_quantity;
+  end if;
+end;
+$$;
+
+create or replace function public.consume_crafting_item_by_name(
+  p_character_id uuid,
+  p_item_name text,
+  p_quantity numeric,
+  p_station_city_name text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := greatest(0.5, coalesce(p_quantity, 1));
+  v_from_carried numeric;
+  v_from_house numeric;
+begin
+  if v_needed <= 0 then return; end if;
+
+  v_from_carried := least(v_needed, public.carried_item_quantity_by_name(p_character_id, p_item_name));
+  if v_from_carried > 0 then
+    perform public.consume_character_item_by_name(p_character_id, p_item_name, v_from_carried);
+    v_needed := v_needed - v_from_carried;
+  end if;
+
+  v_from_house := least(v_needed, public.house_item_quantity_by_name(p_character_id, p_item_name, p_station_city_name));
+  if v_from_house > 0 then
+    perform public.consume_house_item_by_name(p_character_id, p_item_name, v_from_house, p_station_city_name);
+    v_needed := v_needed - v_from_house;
+  end if;
+
+  if v_needed > 0 then
+    raise exception 'Missing required item: % x%.', p_item_name, p_quantity;
+  end if;
+end;
+$$;
+
 create or replace function public.forge_material_modifiers(
   p_material text,
   p_item_type text
@@ -4212,7 +4813,10 @@ begin
     enchantment,
     material,
     enhancement_count,
-    is_two_handed
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
   )
   values (
     p_character_id,
@@ -4228,16 +4832,54 @@ begin
     null,
     regexp_replace(p_product.item_name, '[[:space:]]+Scale$', '', 'i'),
     0,
-    false
+    false,
+    null,
+    null,
+    null
   );
 end;
 $$;
+
+create or replace function public.update_player_house(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_house public.player_houses%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can change house access.'; end if;
+
+  v_house := public.ensure_player_house(p_owner_user_id);
+
+  update public.player_houses
+  set is_locked = case when v_patch ? 'locked' then (v_patch->>'locked')::boolean else is_locked end
+  where owner_user_id = p_owner_user_id
+  returning * into v_house;
+
+  return public.get_player_house(p_session_token, p_owner_user_id);
+end;
+$$;
+
+drop function if exists public.consume_forge_materials(uuid, uuid, numeric, int);
+drop function if exists public.consume_forge_materials(uuid, uuid, numeric, int, text);
+drop function if exists public.consume_forge_materials(uuid, uuid, numeric, int, text, text);
 
 create or replace function public.consume_forge_materials(
   p_character_id uuid,
   p_material_product_id uuid,
   p_required_quantity numeric,
   p_inventory_slots int,
+  p_station_city_name text,
   p_expected_material_name text default null
 )
 returns int
@@ -4248,8 +4890,8 @@ as $$
 declare
   v_product public.market_products%rowtype;
   v_required numeric := greatest(0, coalesce(p_required_quantity, 0));
-  v_carried numeric;
-  v_from_carried numeric;
+  v_accessible numeric;
+  v_from_accessible numeric;
   v_missing numeric;
   v_buy_quantity numeric;
   v_leftover numeric;
@@ -4266,9 +4908,9 @@ begin
     raise exception 'That recipe needs %, not %.', p_expected_material_name, v_product.item_name;
   end if;
 
-  v_carried := public.carried_item_quantity_by_name(p_character_id, v_product.item_name);
-  v_from_carried := least(v_required, v_carried);
-  v_missing := greatest(0, v_required - v_from_carried);
+  v_accessible := public.accessible_item_quantity_by_name(p_character_id, v_product.item_name, p_station_city_name);
+  v_from_accessible := least(v_required, v_accessible);
+  v_missing := greatest(0, v_required - v_from_accessible);
   v_buy_quantity := case when v_missing > 0 then ceil(v_missing) else 0 end;
 
   if v_buy_quantity > 0 then
@@ -4280,8 +4922,8 @@ begin
     end if;
   end if;
 
-  if v_from_carried > 0 then
-    perform public.consume_character_item_by_name(p_character_id, v_product.item_name, v_from_carried);
+  if v_from_accessible > 0 then
+    perform public.consume_crafting_item_by_name(p_character_id, v_product.item_name, v_from_accessible, p_station_city_name);
   end if;
 
   if v_buy_quantity > 0 and v_product.stock_quantity is not null then
@@ -4378,11 +5020,13 @@ declare
   v_catalyst text;
   v_required_runes int;
   v_spell_name text;
+  v_city public.cities%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-blacksmith');
 
   if lower(coalesce(p_action, '')) = 'craft' then
     case lower(coalesce(p_recipe_key, ''))
@@ -4421,7 +5065,7 @@ begin
       end if;
       v_material := regexp_replace(v_material_product.item_name, '[[:space:]]+Scale$', '', 'i');
       v_rarity := v_material_product.rarity;
-      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots);
+      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_city.name);
     end if;
 
     v_wallet := public.wallet_total_coin(v_character.id);
@@ -4447,7 +5091,10 @@ begin
       enchantment,
       material,
       enhancement_count,
-      is_two_handed
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
     )
     values (
       v_character.id,
@@ -4463,7 +5110,10 @@ begin
       null,
       v_material,
       0,
-      v_two_handed
+      v_two_handed,
+      null,
+      null,
+      null
     )
     returning * into v_item;
 
@@ -4504,7 +5154,7 @@ begin
     v_wallet := public.wallet_total_coin(v_character.id);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
 
-    perform public.consume_character_item_by_name(v_character.id, v_catalyst, 20);
+    perform public.consume_crafting_item_by_name(v_character.id, v_catalyst, 20, v_city.name);
     perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
     if v_rune_product.stock_quantity is not null then
       update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
@@ -4580,11 +5230,13 @@ declare
   v_modifiers jsonb := '{}'::jsonb;
   v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
   v_catalyst text;
+  v_city public.cities%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-armory');
 
   if lower(coalesce(p_action, '')) = 'craft' then
     case lower(coalesce(p_recipe_key, ''))
@@ -4609,7 +5261,7 @@ begin
       end if;
       v_material := regexp_replace(v_material_product.item_name, '[[:space:]]+Scale$', '', 'i');
       v_rarity := v_material_product.rarity;
-      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_material_name);
+      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_city.name, v_material_name);
     end if;
 
     v_wallet := public.wallet_total_coin(v_character.id);
@@ -4692,7 +5344,7 @@ begin
     v_wallet := public.wallet_total_coin(v_character.id);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
 
-    perform public.consume_character_item_by_name(v_character.id, v_catalyst, 20);
+    perform public.consume_crafting_item_by_name(v_character.id, v_catalyst, 20, v_city.name);
     perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
     if v_rune_product.stock_quantity is not null then
       update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
@@ -4711,6 +5363,584 @@ begin
 end;
 $$;
 
+create or replace function public.crafting_selection_item(
+  p_character_id uuid,
+  p_source text,
+  p_item_id uuid,
+  p_station_city_name text
+)
+returns table (
+  item_name text,
+  item_type text,
+  rarity public.item_rarity,
+  quantity numeric,
+  properties text[]
+)
+language sql
+stable
+set search_path = public
+as $$
+  select
+    public.normalize_item_name(i.item_name),
+    i.item_type,
+    i.rarity,
+    i.quantity,
+    coalesce(c.properties, array[]::text[])
+  from public.inventory_items i
+  left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(i.item_name))
+  where lower(trim(coalesce(p_source, ''))) = 'inventory'
+    and i.id = p_item_id
+    and i.character_id = p_character_id
+    and i.loadout_slot is null
+    and i.is_storage = false
+    and (
+      i.parent_item_id is null
+      or exists (
+        select 1
+        from public.inventory_items storage
+        where storage.id = i.parent_item_id
+          and storage.character_id = p_character_id
+          and storage.is_storage = true
+      )
+    )
+  union all
+  select
+    public.normalize_item_name(h.item_name),
+    h.item_type,
+    h.rarity,
+    h.quantity,
+    coalesce(c.properties, array[]::text[])
+  from public.characters ch
+  join public.house_inventory_items h on h.owner_user_id = ch.owner_user_id
+  left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(h.item_name))
+  where lower(trim(coalesce(p_source, ''))) = 'house'
+    and public.crafting_house_is_accessible(p_character_id, p_station_city_name)
+    and ch.id = p_character_id
+    and h.id = p_item_id
+    and h.is_storage = false
+$$;
+
+create or replace function public.consume_crafting_selection(
+  p_character_id uuid,
+  p_source text,
+  p_item_id uuid,
+  p_quantity numeric,
+  p_station_city_name text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := coalesce(p_quantity, 0);
+  v_inventory_item public.inventory_items%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+begin
+  if v_needed <= 0 then
+    raise exception 'Quantity must be positive.';
+  end if;
+
+  if lower(trim(coalesce(p_source, ''))) = 'inventory' then
+    select * into v_inventory_item
+    from public.inventory_items
+    where id = p_item_id
+      and character_id = p_character_id
+      and loadout_slot is null
+      and is_storage = false;
+
+    if v_inventory_item.id is null then raise exception 'Selected inventory ingredient was not found.'; end if;
+    if v_inventory_item.quantity < v_needed then raise exception 'Not enough %.', v_inventory_item.item_name; end if;
+
+    if v_inventory_item.quantity <= v_needed then
+      delete from public.inventory_items where id = v_inventory_item.id;
+    else
+      update public.inventory_items set quantity = quantity - v_needed where id = v_inventory_item.id;
+    end if;
+    return;
+  end if;
+
+  if lower(trim(coalesce(p_source, ''))) = 'house' then
+    if not public.crafting_house_is_accessible(p_character_id, p_station_city_name) then
+      raise exception 'House storage is not accessible from here.';
+    end if;
+
+    select h.* into v_house_item
+    from public.characters c
+    join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+    where c.id = p_character_id
+      and h.id = p_item_id
+      and h.is_storage = false;
+
+    if v_house_item.id is null then raise exception 'Selected house ingredient was not found.'; end if;
+    if v_house_item.quantity < v_needed then raise exception 'Not enough % in the house.', v_house_item.item_name; end if;
+
+    if v_house_item.quantity <= v_needed then
+      delete from public.house_inventory_items where id = v_house_item.id;
+    else
+      update public.house_inventory_items set quantity = quantity - v_needed where id = v_house_item.id;
+    end if;
+    return;
+  end if;
+
+  raise exception 'Unknown ingredient source.';
+end;
+$$;
+
+create or replace function public.brewery_available_items(
+  p_character_id uuid,
+  p_station_city_name text
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  with available as (
+    select
+      0 as source_order,
+      'inventory'::text as source,
+      i.id,
+      public.normalize_item_name(i.item_name) as item_name,
+      i.item_type,
+      i.rarity,
+      i.quantity,
+      coalesce(c.properties, array[]::text[]) as properties
+    from public.inventory_items i
+    left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(i.item_name))
+    where i.character_id = p_character_id
+      and i.loadout_slot is null
+      and i.is_storage = false
+      and (
+        i.parent_item_id is null
+        or exists (
+          select 1
+          from public.inventory_items storage
+          where storage.id = i.parent_item_id
+            and storage.character_id = p_character_id
+            and storage.is_storage = true
+        )
+      )
+    union all
+    select
+      1 as source_order,
+      'house'::text as source,
+      h.id,
+      public.normalize_item_name(h.item_name) as item_name,
+      h.item_type,
+      h.rarity,
+      h.quantity,
+      coalesce(c.properties, array[]::text[]) as properties
+    from public.characters ch
+    join public.house_inventory_items h on h.owner_user_id = ch.owner_user_id
+    left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(h.item_name))
+    where ch.id = p_character_id
+      and public.crafting_house_is_accessible(p_character_id, p_station_city_name)
+      and h.is_storage = false
+  ),
+  useful as (
+    select *
+    from available a
+    where lower(a.item_name) = 'arcane nector'
+      or exists (
+        select 1
+        from unnest(a.properties) as prop(property_name)
+        where prop.property_name in ('Catalyst', 'Stabilizer')
+           or exists (select 1 from public.alchemy_potion_definitions d where d.property_key = prop.property_name)
+      )
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'source', source,
+    'id', id,
+    'name', item_name,
+    'type', item_type,
+    'rarity', rarity,
+    'quantity', quantity,
+    'properties', to_jsonb(properties),
+    'catalystBonus', case when 'Catalyst' = any(properties) then public.catalyst_bonus_for_rarity(rarity) else 0 end
+  ) order by source_order, item_name, id), '[]'::jsonb)
+  from useful
+$$;
+
+create or replace function public.get_brewery_state(
+  p_session_token text,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_city public.cities%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-brewery');
+
+  return jsonb_build_object(
+    'definitions', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'propertyKey', property_key,
+        'potionName', potion_name,
+        'description', description,
+        'automatedEffect', automated_effect,
+        'order', display_order
+      ) order by display_order), '[]'::jsonb)
+      from public.alchemy_potion_definitions
+    ),
+    'availableItems', public.brewery_available_items(v_character.id, v_city.name),
+    'houseAccess', jsonb_build_object(
+      'accessible', public.crafting_house_is_accessible(v_character.id, v_city.name),
+      'city', v_city.name
+    )
+  );
+end;
+$$;
+
+create or replace function public.brew_potion(
+  p_session_token text,
+  p_character_id uuid,
+  p_strength text,
+  p_property_key text,
+  p_property_selections jsonb,
+  p_stabilizer_selections jsonb,
+  p_catalyst_selection jsonb default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_city public.cities%rowtype;
+  v_definition public.alchemy_potion_definitions%rowtype;
+  v_strength text := initcap(lower(trim(coalesce(p_strength, ''))));
+  v_property_required numeric;
+  v_stabilizer_required numeric;
+  v_selection jsonb;
+  v_source text;
+  v_item_id uuid;
+  v_quantity numeric;
+  v_selected record;
+  v_property_total numeric := 0;
+  v_stabilizer_total numeric := 0;
+  v_catalyst_bonus int := 0;
+  v_d20 int;
+  v_alchemy int := 0;
+  v_total int;
+  v_quality text;
+  v_success boolean;
+  v_item_name text;
+  v_rarity public.item_rarity;
+  v_slot int;
+  v_existing public.inventory_items%rowtype;
+  v_created_item jsonb := null;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-brewery');
+
+  if v_strength not in ('Lesser', 'Greater', 'Greatest') then
+    raise exception 'Choose Lesser, Greater, or Greatest strength.';
+  end if;
+
+  select * into v_definition
+  from public.alchemy_potion_definitions
+  where lower(property_key) = lower(trim(coalesce(p_property_key, '')))
+     or lower(potion_name) = lower(trim(coalesce(p_property_key, '')));
+
+  if v_definition.property_key is null then
+    raise exception 'Choose a valid potion property.';
+  end if;
+
+  case v_strength
+    when 'Lesser' then v_property_required := 10; v_stabilizer_required := 3;
+    when 'Greater' then v_property_required := 25; v_stabilizer_required := 10;
+    when 'Greatest' then v_property_required := 50; v_stabilizer_required := 25;
+  end case;
+
+  for v_selection in select * from jsonb_array_elements(coalesce(p_property_selections, '[]'::jsonb)) loop
+    v_quantity := coalesce((v_selection->>'quantity')::numeric, 0);
+    if v_quantity <= 0 then continue; end if;
+    v_source := v_selection->>'source';
+    v_item_id := nullif(v_selection->>'id', '')::uuid;
+
+    select * into v_selected from public.crafting_selection_item(v_character.id, v_source, v_item_id, v_city.name) limit 1;
+    if v_selected.item_name is null then raise exception 'A selected potion ingredient is not available.'; end if;
+    if not v_definition.property_key = any(v_selected.properties) then
+      raise exception '% is not valid for a % potion.', v_selected.item_name, v_definition.potion_name;
+    end if;
+    if v_selected.quantity < v_quantity then raise exception 'Not enough %.', v_selected.item_name; end if;
+
+    v_property_total := v_property_total + v_quantity;
+    perform public.consume_crafting_selection(v_character.id, v_source, v_item_id, v_quantity, v_city.name);
+  end loop;
+
+  if v_property_total < v_property_required then
+    raise exception '% % Potion needs % matching-property ingredients.', v_strength, v_definition.potion_name, v_property_required;
+  end if;
+
+  for v_selection in select * from jsonb_array_elements(coalesce(p_stabilizer_selections, '[]'::jsonb)) loop
+    v_quantity := coalesce((v_selection->>'quantity')::numeric, 0);
+    if v_quantity <= 0 then continue; end if;
+    v_source := v_selection->>'source';
+    v_item_id := nullif(v_selection->>'id', '')::uuid;
+
+    select * into v_selected from public.crafting_selection_item(v_character.id, v_source, v_item_id, v_city.name) limit 1;
+    if v_selected.item_name is null then raise exception 'A selected stabilizer is not available.'; end if;
+    if not 'Stabilizer' = any(v_selected.properties) then
+      raise exception '% is not a stabilizer.', v_selected.item_name;
+    end if;
+    if v_selected.quantity < v_quantity then raise exception 'Not enough %.', v_selected.item_name; end if;
+
+    v_stabilizer_total := v_stabilizer_total + v_quantity;
+    perform public.consume_crafting_selection(v_character.id, v_source, v_item_id, v_quantity, v_city.name);
+  end loop;
+
+  if v_stabilizer_total < v_stabilizer_required then
+    raise exception '% % Potion needs % stabilizers.', v_strength, v_definition.potion_name, v_stabilizer_required;
+  end if;
+
+  if public.accessible_item_quantity_by_name(v_character.id, 'Arcane Nector', v_city.name) < 1 then
+    raise exception 'Every brew requires 1 Arcane Nector.';
+  end if;
+  perform public.consume_crafting_item_by_name(v_character.id, 'Arcane Nector', 1, v_city.name);
+
+  if p_catalyst_selection is not null and jsonb_typeof(p_catalyst_selection) = 'array' and jsonb_array_length(p_catalyst_selection) > 1 then
+    raise exception 'Only one catalyst can be used per brew.';
+  end if;
+
+  if p_catalyst_selection is not null
+    and jsonb_typeof(p_catalyst_selection) = 'object'
+    and nullif(p_catalyst_selection->>'id', '') is not null
+  then
+    v_source := p_catalyst_selection->>'source';
+    v_item_id := nullif(p_catalyst_selection->>'id', '')::uuid;
+
+    select * into v_selected from public.crafting_selection_item(v_character.id, v_source, v_item_id, v_city.name) limit 1;
+    if v_selected.item_name is null then raise exception 'Selected catalyst is not available.'; end if;
+    if not 'Catalyst' = any(v_selected.properties) then raise exception '% is not a catalyst.', v_selected.item_name; end if;
+    if v_selected.quantity < 1 then raise exception 'Not enough %.', v_selected.item_name; end if;
+
+    v_catalyst_bonus := public.catalyst_bonus_for_rarity(v_selected.rarity);
+    perform public.consume_crafting_selection(v_character.id, v_source, v_item_id, 1, v_city.name);
+  end if;
+
+  v_d20 := floor(random() * 20)::int + 1;
+  v_alchemy := coalesce((v_character.attributes->>'alchemy')::int, 0);
+  v_total := v_d20 + v_alchemy + v_catalyst_bonus;
+  v_success := v_d20 <> 1 and v_total > 5;
+
+  if v_success then
+    v_quality := case
+      when v_total <= 10 then 'Shoddy'
+      when v_total <= 15 then 'Basic'
+      when v_total <= 20 then 'Fine'
+      when v_total <= 24 then 'Strong'
+      else 'Enriched'
+    end;
+
+    if v_definition.property_key in ('Healing', 'Mana Regen') then
+      v_quality := null;
+    end if;
+
+    v_item_name := public.format_potion_item_name(v_strength, v_definition.property_key, v_quality);
+    v_rarity := public.potion_rarity_for_strength(v_strength);
+
+    select * into v_existing
+    from public.inventory_items
+    where character_id = v_character.id
+      and loadout_slot is null
+      and is_storage = false
+      and item_name = v_item_name
+      and item_type = 'potion'
+      and rarity = v_rarity
+      and coalesce(potion_strength, '') = v_strength
+      and coalesce(potion_property, '') = v_definition.property_key
+      and coalesce(potion_quality, '') = coalesce(v_quality, '')
+    order by parent_item_id nulls first, slot_index, created_at
+    limit 1;
+
+    if v_existing.id is null then
+      v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+      if v_slot is null then raise exception 'Inventory full for brewed potion.'; end if;
+      v_created_item := public.add_character_inventory_item(p_session_token, v_character.id, null, v_slot, v_item_name, 'potion', v_rarity::text, 1, false, 0, '{}'::jsonb, null, null, 0, false, v_strength, v_definition.property_key, v_quality);
+    else
+      v_created_item := public.add_character_inventory_item(p_session_token, v_character.id, v_existing.parent_item_id, v_existing.slot_index, v_item_name, 'potion', v_rarity::text, 1, false, 0, '{}'::jsonb, null, null, 0, false, v_strength, v_definition.property_key, v_quality);
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'result', jsonb_build_object(
+      'success', v_success,
+      'd20', v_d20,
+      'alchemyBonus', v_alchemy,
+      'catalystBonus', v_catalyst_bonus,
+      'total', v_total,
+      'quality', v_quality,
+      'item', v_created_item,
+      'message', case when v_success then 'Brew successful.' else 'The brew failed and the ingredients were consumed.' end
+    ),
+    'brewery', public.get_brewery_state(p_session_token, v_character.id),
+    'cities', public.get_discovered_cities(p_session_token)
+  );
+end;
+$$;
+
+create or replace function public.consume_inventory_potion(
+  p_session_token text,
+  p_item_id uuid,
+  p_confirm_drop_flask boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_strength text;
+  v_property text;
+  v_effect text := 'none';
+  v_amount int := 0;
+  v_current int;
+  v_new_value int;
+  v_active_combatant public.combatants%rowtype;
+  v_flask_stack public.inventory_items%rowtype;
+  v_flask_slot int;
+  v_flask_parent_id uuid := null;
+  v_parent_capacity int;
+  v_flask_dropped boolean := false;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Potion not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+
+  if v_item.item_type <> 'potion' then raise exception 'Only potions can be consumed.'; end if;
+  if lower(public.normalize_item_name(v_item.item_name)) = 'empty flask' then raise exception 'Empty Flask cannot be consumed.'; end if;
+
+  v_strength := coalesce(v_item.potion_strength, public.potion_strength_from_name(v_item.item_name));
+  v_property := coalesce(v_item.potion_property, public.potion_property_from_name(v_item.item_name));
+
+  select cb.* into v_active_combatant
+  from public.combatants cb
+  join public.battles b on b.id = cb.battle_id and b.status = 'active'
+  where cb.character_id = v_character.id
+  order by cb.created_at desc
+  limit 1;
+
+  if v_property = 'Healing' then
+    v_effect := 'health';
+    v_current := coalesce(v_active_combatant.current_hp, v_character.current_hp);
+    if v_current >= v_character.max_hp then raise exception 'Health is already full.'; end if;
+    v_amount := case v_strength when 'Lesser' then 20 when 'Greater' then 50 when 'Greatest' then v_character.max_hp else 0 end;
+    v_new_value := least(v_character.max_hp, v_current + v_amount);
+  elsif v_property = 'Mana Regen' then
+    v_effect := 'mana';
+    v_current := coalesce(v_active_combatant.current_mana, v_character.current_mana);
+    if v_current >= v_character.max_mana then raise exception 'Mana is already full.'; end if;
+    v_amount := case v_strength when 'Lesser' then 15 when 'Greater' then 40 when 'Greatest' then v_character.max_mana else 0 end;
+    v_new_value := least(v_character.max_mana, v_current + v_amount);
+  end if;
+
+  select * into v_flask_stack
+  from public.inventory_items
+  where character_id = v_character.id
+    and loadout_slot is null
+    and is_storage = false
+    and lower(public.normalize_item_name(item_name)) = 'empty flask'
+  order by parent_item_id nulls first, slot_index, created_at
+  limit 1;
+
+  if v_flask_stack.id is null then
+    if v_item.quantity <= 1 and v_item.loadout_slot is null then
+      v_flask_parent_id := v_item.parent_item_id;
+      v_flask_slot := v_item.slot_index;
+    elsif v_item.parent_item_id is not null then
+      select storage_capacity into v_parent_capacity from public.inventory_items where id = v_item.parent_item_id and is_storage = true;
+      v_flask_parent_id := v_item.parent_item_id;
+      v_flask_slot := public.find_first_free_inventory_slot(v_character.id, v_item.parent_item_id, coalesce(v_parent_capacity, 0));
+      if v_flask_slot is null then
+        v_flask_parent_id := null;
+        v_flask_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+      end if;
+    else
+      v_flask_parent_id := null;
+      v_flask_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+    end if;
+
+    if v_flask_slot is null and not coalesce(p_confirm_drop_flask, false) then
+      return jsonb_build_object(
+        'needsFlaskDropConfirmation', true,
+        'message', 'No open inventory slot for the Empty Flask. Drink it anyway and drop the flask?'
+      );
+    end if;
+  end if;
+
+  if v_item.quantity <= 1 then
+    delete from public.inventory_items where id = v_item.id;
+  else
+    update public.inventory_items set quantity = quantity - 1 where id = v_item.id;
+  end if;
+
+  if v_flask_stack.id is not null then
+    update public.inventory_items set quantity = quantity + 1 where id = v_flask_stack.id;
+  elsif v_flask_slot is not null then
+    insert into public.inventory_items (
+      character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
+      is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+      is_two_handed, potion_strength, potion_property, potion_quality
+    )
+    values (
+      v_character.id, v_flask_parent_id, v_flask_slot, 'Empty Flask', 'potion', 'Common', 1,
+      false, 0, '{}'::jsonb, null, '', 0, false, null, null, null
+    );
+  else
+    v_flask_dropped := true;
+  end if;
+
+  if v_effect = 'health' then
+    update public.characters set current_hp = v_new_value where id = v_character.id;
+    update public.combatants cb
+    set current_hp = v_new_value
+    from public.battles b
+    where b.id = cb.battle_id
+      and b.status = 'active'
+      and cb.character_id = v_character.id;
+  elsif v_effect = 'mana' then
+    update public.characters set current_mana = v_new_value where id = v_character.id;
+    update public.combatants cb
+    set current_mana = v_new_value
+    from public.battles b
+    where b.id = cb.battle_id
+      and b.status = 'active'
+      and cb.character_id = v_character.id;
+  end if;
+
+  return jsonb_build_object(
+    'needsFlaskDropConfirmation', false,
+    'flaskDropped', v_flask_dropped,
+    'effect', jsonb_build_object('type', v_effect, 'amount', v_amount, 'newValue', v_new_value),
+    'inventory', public.get_character_inventory(p_session_token, v_character.id)
+  );
+end;
+$$;
+
 grant execute on function public.city_record_to_json(public.cities) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products) to anon, authenticated;
 grant execute on function public.currency_coin_value(text) to anon, authenticated;
@@ -4722,8 +5952,21 @@ grant execute on function public.update_city_access(text, text, jsonb) to anon, 
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
 grant execute on function public.enchantment_spell_for_rune(text) to anon, authenticated;
+grant execute on function public.assert_character_can_use_vendor(public.characters, text) to anon, authenticated;
+grant execute on function public.crafting_house_is_accessible(uuid, text) to anon, authenticated;
+grant execute on function public.house_item_quantity_by_name(uuid, text, text) to anon, authenticated;
+grant execute on function public.accessible_item_quantity_by_name(uuid, text, text) to anon, authenticated;
+grant execute on function public.consume_crafting_item_by_name(uuid, text, numeric, text) to anon, authenticated;
+grant execute on function public.update_player_house(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.consume_forge_materials(uuid, uuid, numeric, int, text, text) to anon, authenticated;
 grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.crafting_selection_item(uuid, text, uuid, text) to anon, authenticated;
+grant execute on function public.consume_crafting_selection(uuid, text, uuid, numeric, text) to anon, authenticated;
+grant execute on function public.brewery_available_items(uuid, text) to anon, authenticated;
+grant execute on function public.get_brewery_state(text, uuid) to anon, authenticated;
+grant execute on function public.brew_potion(text, uuid, text, text, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function public.consume_inventory_potion(text, uuid, boolean) to anon, authenticated;
 
 update public.market_products
 set item_name = 'Mountain Rune',
@@ -5463,6 +6706,22 @@ alter table public.loot_items
 
 update public.loot_items
 set item_type = public.normalize_item_type(item_type);
+
+update public.loot_items
+set item_name = public.normalize_item_name(item_name),
+    item_type = case
+      when lower(public.normalize_item_name(item_name)) in ('empty flask', 'arcane nector') then 'potion'
+      else public.normalize_item_type(item_type)
+    end,
+    rarity = case
+      when lower(public.normalize_item_name(item_name)) = 'arcane nector' then 'Uncommon'::public.item_rarity
+      when lower(public.normalize_item_name(item_name)) = 'empty flask' then 'Common'::public.item_rarity
+      when public.potion_strength_from_name(item_name) is not null then public.potion_rarity_for_strength(public.potion_strength_from_name(item_name))
+      else rarity
+    end
+where public.normalize_item_name(item_name) <> item_name
+   or lower(public.normalize_item_name(item_name)) in ('empty flask', 'arcane nector')
+   or public.potion_strength_from_name(item_name) is not null;
 
 create index if not exists loot_items_workbook_filter_idx on public.loot_items(is_active, difficulty_min, difficulty_max, rarity);
 
@@ -6579,6 +7838,12 @@ declare
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
   v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
+  v_item_name text;
+  v_item_type text;
+  v_rarity public.item_rarity;
+  v_potion_strength text;
+  v_potion_property text;
+  v_potion_quality text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -6589,12 +7854,34 @@ begin
   select * into v_loot from public.loot_items where id = p_loot_item_id and is_active;
   if v_loot.id is null then raise exception 'Loot item not found.'; end if;
 
+  v_item_name := public.normalize_item_name(v_loot.item_name);
+  v_item_type := public.normalize_item_type(v_loot.item_type);
+  v_rarity := v_loot.rarity;
+
+  if v_item_type = 'potion' then
+    v_potion_strength := public.potion_strength_from_name(v_item_name);
+    v_potion_property := public.potion_property_from_name(v_item_name);
+    v_potion_quality := case
+      when v_potion_property in ('Healing', 'Mana Regen') then null
+      when lower(v_item_name) = 'empty flask' then null
+      else public.potion_quality_from_name(v_item_name)
+    end;
+    if v_potion_strength is not null and v_potion_property is not null then
+      v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
+      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+    elsif lower(v_item_name) = 'arcane nector' then
+      v_rarity := 'Uncommon'::public.item_rarity;
+    elsif lower(v_item_name) = 'empty flask' then
+      v_rarity := 'Common'::public.item_rarity;
+    end if;
+  end if;
+
   select * into v_catalog
   from public.item_catalog
-  where item_key = public.catalog_key_for_name(v_loot.item_name)
+  where item_key = public.catalog_key_for_name(v_item_name)
   limit 1;
 
-  v_quantity := public.assert_valid_item_quantity(v_loot.item_name, v_loot.item_type, v_quantity);
+  v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers;
     v_material := v_catalog.material;
@@ -6603,7 +7890,7 @@ begin
   end if;
 
   if public.is_currency_loot_item(v_loot) then
-    v_currency_key := case lower(v_loot.item_name)
+    v_currency_key := case lower(v_item_name)
       when 'coin' then 'coin'
       when 'callis' then 'callis'
       when 'callor' then 'callor'
@@ -6639,8 +7926,8 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_loot.item_type = 'storage'::text
-    and not public.character_storage_container_exists(v_character.id, v_loot.item_name)
+  if v_item_type = 'storage'::text
+    and not public.character_storage_container_exists(v_character.id, v_item_name)
   then
     insert into public.inventory_items (
       character_id,
@@ -6662,12 +7949,12 @@ begin
       v_character.id,
       null,
       public.next_storage_container_slot(v_character.id),
-      v_loot.item_name,
-      v_loot.item_type,
-      v_loot.rarity,
+      v_item_name,
+      v_item_type,
+      v_rarity,
       1,
       true,
-      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_loot.item_name))),
+      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_item_name))),
       v_modifiers,
       null,
       v_material,
@@ -6688,12 +7975,15 @@ begin
   where i.character_id = v_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_loot.item_name
-    and i.item_type = v_loot.item_type
-    and i.rarity = v_loot.rarity
+    and i.item_name = v_item_name
+    and i.item_type = v_item_type
+    and i.rarity = v_rarity
     and i.is_storage = false
     and coalesce(i.enchantment, '') = ''
     and coalesce(i.material, '') = coalesce(v_material, '')
+    and coalesce(i.potion_strength, '') = coalesce(v_potion_strength, '')
+    and coalesce(i.potion_property, '') = coalesce(v_potion_property, '')
+    and coalesce(i.potion_quality, '') = coalesce(v_potion_quality, '')
     and i.enhancement_count = 0
     and i.is_two_handed = v_is_two_handed
   order by i.slot_index
@@ -6722,15 +8012,18 @@ begin
       enchantment,
       material,
       enhancement_count,
-      is_two_handed
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
     )
     values (
       v_character.id,
       null,
       v_slot,
-      v_loot.item_name,
-      v_loot.item_type,
-      v_loot.rarity,
+      v_item_name,
+      v_item_type,
+      v_rarity,
       v_inventory_quantity,
       false,
       0,
@@ -6738,7 +8031,10 @@ begin
       null,
       v_material,
       0,
-      v_is_two_handed
+      v_is_two_handed,
+      v_potion_strength,
+      v_potion_property,
+      v_potion_quality
     )
     returning * into v_item;
   end if;

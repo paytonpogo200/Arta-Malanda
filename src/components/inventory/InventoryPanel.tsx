@@ -43,6 +43,9 @@ type ItemDraft = {
   enhancementCount: number;
   isTwoHanded: boolean;
   modifiers: LoadoutModifiers;
+  potionStrength: string;
+  potionProperty: string;
+  potionQuality: string;
 };
 
 const EMPTY_DRAFT: ItemDraft = {
@@ -55,8 +58,31 @@ const EMPTY_DRAFT: ItemDraft = {
   material: '',
   enhancementCount: 0,
   isTwoHanded: false,
-  modifiers: {}
+  modifiers: {},
+  potionStrength: '',
+  potionProperty: '',
+  potionQuality: ''
 };
+
+const POTION_STRENGTHS = ['Lesser', 'Greater', 'Greatest'];
+const POTION_QUALITIES = ['Shoddy', 'Basic', 'Fine', 'Strong', 'Enriched'];
+const POTION_PROPERTIES = [
+  { key: 'Healing', label: 'Healing' },
+  { key: 'Speed', label: 'Swiftness' },
+  { key: 'Agility', label: 'Agility' },
+  { key: 'Strength', label: 'Strength' },
+  { key: 'Sorcery', label: 'Sorcery' },
+  { key: 'Mana Regen', label: 'Mana' },
+  { key: 'Luck', label: 'Luck' },
+  { key: 'Antidote', label: 'Antidote' },
+  { key: 'Warming', label: 'Warming' },
+  { key: 'Cooling', label: 'Cooling' },
+  { key: 'Night-Eye', label: 'Night-Eye' },
+  { key: 'Thickskin', label: 'Thickskin' },
+  { key: 'Clear-Mind', label: 'Clear-Mind' },
+  { key: 'Wake-Up', label: 'Wake-Up' },
+  { key: 'Clotting', label: 'Clotting' }
+];
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
@@ -76,6 +102,9 @@ function stackableItems(a: InventoryItem, b: InventoryItem) {
     && (a.material ?? '') === (b.material ?? '')
     && a.enhancementCount === b.enhancementCount
     && a.isTwoHanded === b.isTwoHanded
+    && (a.potionStrength ?? '') === (b.potionStrength ?? '')
+    && (a.potionProperty ?? '') === (b.potionProperty ?? '')
+    && (a.potionQuality ?? '') === (b.potionQuality ?? '')
     && modifierSignature(a) === modifierSignature(b)
     && a.loadoutSlot === null
     && b.loadoutSlot === null;
@@ -96,6 +125,33 @@ function itemSupportsLoadoutDetails(type: ItemType) {
   return type === 'weapon' || type === 'armor' || type === 'shield' || type === 'accessory' || type === 'pet';
 }
 
+function normalizedItemName(name: string) {
+  const clean = name.trim().toLowerCase();
+  if (clean === 'glass flask' || clean === 'glass flasks' || clean === 'empty flasks') return 'empty flask';
+  if (clean === 'mana recovery potion') return 'mana potion';
+  return clean;
+}
+
+function isEmptyFlask(item: Pick<InventoryItem, 'name'> | Pick<ItemDraft, 'name'>) {
+  return normalizedItemName(item.name) === 'empty flask';
+}
+
+function isArcaneNector(item: Pick<InventoryItem, 'name'> | Pick<ItemDraft, 'name'>) {
+  return normalizedItemName(item.name) === 'arcane nector';
+}
+
+function isPotionConsumable(item: InventoryItem) {
+  return item.type === 'potion' && !isEmptyFlask(item);
+}
+
+function potionQualityCanApply(item: Pick<ItemDraft, 'name' | 'type' | 'potionProperty'>) {
+  if (item.type !== 'potion' || isEmptyFlask(item) || isArcaneNector(item)) return false;
+  const property = item.potionProperty || '';
+  if (property === 'Healing' || property === 'Mana Regen') return false;
+  const name = normalizedItemName(item.name);
+  return !name.includes('healing potion') && !name.includes('mana potion');
+}
+
 function draftFromItem(item: InventoryItem): ItemDraft {
   return {
     name: item.name,
@@ -107,7 +163,10 @@ function draftFromItem(item: InventoryItem): ItemDraft {
     material: item.material ?? '',
     enhancementCount: item.enhancementCount,
     isTwoHanded: item.isTwoHanded,
-    modifiers: cleanModifiers(item.modifiers)
+    modifiers: cleanModifiers(item.modifiers),
+    potionStrength: item.potionStrength ?? '',
+    potionProperty: item.potionProperty ?? '',
+    potionQuality: item.potionQuality ?? ''
   };
 }
 
@@ -115,12 +174,14 @@ export function InventoryPanel({
   character,
   canManage,
   canAdd,
-  onItemsChanged
+  onItemsChanged,
+  onResourceChanged
 }: {
   character: Character;
   canManage: boolean;
   canAdd: boolean;
   onItemsChanged?: (items: InventoryItem[]) => void;
+  onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
 }) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [wallet, setWallet] = useState<WalletBalance[]>([]);
@@ -242,7 +303,10 @@ export function InventoryPanel({
       material: item.material,
       enhancementCount: 0,
       isTwoHanded: item.isTwoHanded,
-      modifiers: cleanModifiers(item.defaultModifiers)
+      modifiers: cleanModifiers(item.defaultModifiers),
+      potionStrength: '',
+      potionProperty: '',
+      potionQuality: ''
     });
   }
 
@@ -334,7 +398,10 @@ export function InventoryPanel({
         material: draft.material.trim(),
         enhancementCount: draft.enhancementCount,
         isTwoHanded: draft.isTwoHanded,
-        modifiers: cleanModifiers(draft.modifiers)
+        modifiers: cleanModifiers(draft.modifiers),
+        potionStrength: draft.potionStrength,
+        potionProperty: draft.potionProperty,
+        potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
       })
     });
   }
@@ -356,7 +423,10 @@ export function InventoryPanel({
         material: draft.material.trim(),
         enhancementCount: draft.enhancementCount,
         isTwoHanded: draft.isTwoHanded,
-        modifiers: cleanModifiers(draft.modifiers)
+        modifiers: cleanModifiers(draft.modifiers),
+        potionStrength: draft.potionStrength,
+        potionProperty: draft.potionProperty,
+        potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
       })
     });
   }
@@ -396,6 +466,41 @@ export function InventoryPanel({
   async function sendToHouse(item: InventoryItem) {
     if (!canManage || !character.ownerUserId) return;
     await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
+  }
+
+  async function consumePotion(item: InventoryItem, confirmDropFlask = false) {
+    if (!canManage || !isPotionConsumable(item)) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/inventory/items/${item.id}/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmDropFlask })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Potion could not be consumed.');
+      if (payload.needsFlaskDropConfirmation) {
+        setSaving(false);
+        const confirmed = window.confirm(payload.message ?? 'No open inventory slot for the Empty Flask. Drink it anyway and drop the flask?');
+        if (confirmed) await consumePotion(item, true);
+        return;
+      }
+      const normalized = normalizeCharacterInventoryPayload(payload.inventory ?? {});
+      setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+      const effect = payload.effect && typeof payload.effect === 'object' ? payload.effect as Record<string, unknown> : null;
+      const newValue = Number(effect?.newValue);
+      if (effect?.type === 'health' && Number.isFinite(newValue)) onResourceChanged?.({ currentHp: newValue });
+      if (effect?.type === 'mana' && Number.isFinite(newValue)) onResourceChanged?.({ currentMana: newValue });
+      setModal(null);
+    } catch (consumeError) {
+      setError(consumeError instanceof Error ? consumeError.message : 'Potion could not be consumed.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveWallet() {
@@ -441,6 +546,32 @@ export function InventoryPanel({
           <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
         </div>
         {draft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
+
+        {draft.type === 'potion' && !isEmptyFlask(draft) && !isArcaneNector(draft) && (
+          <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+            <p className="eyebrow text-[#56e2c2]">Potion details</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <SelectField value={draft.potionStrength} onChange={(event) => setDraft({ ...draft, potionStrength: event.target.value })}>
+                <option value="">Infer strength</option>
+                {POTION_STRENGTHS.map((strength) => <option key={strength} value={strength}>{strength}</option>)}
+              </SelectField>
+              <SelectField value={draft.potionProperty} onChange={(event) => setDraft({ ...draft, potionProperty: event.target.value, potionQuality: event.target.value === 'Healing' || event.target.value === 'Mana Regen' ? '' : draft.potionQuality })}>
+                <option value="">Infer property</option>
+                {POTION_PROPERTIES.map((property) => <option key={property.key} value={property.key}>{property.label}</option>)}
+              </SelectField>
+              {potionQualityCanApply(draft) ? (
+                <SelectField value={draft.potionQuality} onChange={(event) => setDraft({ ...draft, potionQuality: event.target.value })}>
+                  <option value="">No quality</option>
+                  {POTION_QUALITIES.map((quality) => <option key={quality} value={quality}>{quality}</option>)}
+                </SelectField>
+              ) : (
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 px-3 py-3 text-sm font-black text-[var(--muted)]">
+                  No quality
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {showLoadoutDetails && (
           <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
@@ -664,6 +795,7 @@ export function InventoryPanel({
                     </div>
                   )}
                   {modal.item.loadoutSlot && <Button variant="secondary" onClick={() => equipItem(modal.item!.id, null)}>Unequip to first open slot</Button>}
+                  {isPotionConsumable(modal.item) && <Button variant="teal" onClick={() => consumePotion(modal.item!)} disabled={saving}>Consume</Button>}
                   {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />

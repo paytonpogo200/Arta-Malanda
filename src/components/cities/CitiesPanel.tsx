@@ -9,7 +9,8 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
-import { ITEM_TYPES, normalizeCharacterInventoryPayload, quantityStepForItem } from '@/features/inventory/data';
+import { normalizeHousePayload } from '@/features/houses/data';
+import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
 import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
 
@@ -55,6 +56,45 @@ type CraftModalState =
   | { mode: 'enhance'; service: ForgeService }
   | { mode: 'enchant'; service: 'blacksmith' };
 
+type BreweryDefinition = {
+  propertyKey: string;
+  potionName: string;
+  description: string;
+  automatedEffect: string;
+  order: number;
+};
+
+type BreweryAvailableItem = {
+  source: 'inventory' | 'house';
+  id: string;
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  quantity: number;
+  properties: string[];
+  catalystBonus: number;
+};
+
+type BreweryState = {
+  definitions: BreweryDefinition[];
+  availableItems: BreweryAvailableItem[];
+  houseAccess: {
+    accessible: boolean;
+    city: string;
+  };
+};
+
+type BrewResult = {
+  success: boolean;
+  d20: number;
+  alchemyBonus: number;
+  catalystBonus: number;
+  total: number;
+  quality: string | null;
+  message: string;
+  item?: InventoryItem | null;
+};
+
 const BLACKSMITH_RECIPES: CraftRecipe[] = [
   { key: 'dagger', section: 'Light Weapons', name: 'Dagger', type: 'weapon', laborCoin: 50, materialQuantity: 0.5 },
   { key: 'throwing-knives', section: 'Light Weapons', name: 'Throwing Knives', type: 'weapon', laborCoin: 100, materialQuantity: 0.5 },
@@ -91,6 +131,13 @@ const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Myth
 const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const RUNE_SECTION_ALIASES = new Set(['runes', 'rune']);
+const BREWERY_STRENGTHS = ['Lesser', 'Greater', 'Greatest'] as const;
+
+function numberFromUnknown(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function isMythrilItem(item: InventoryItem) {
   return `${item.material ?? ''} ${item.name}`.toLowerCase().includes('mythril');
 }
@@ -128,6 +175,68 @@ function vendorToDraft(vendor: ShopVendor): VendorDraft {
   };
 }
 
+function normalizeBreweryDefinition(value: unknown): BreweryDefinition | null {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const propertyKey = String(source.propertyKey ?? '');
+  if (!propertyKey) return null;
+  return {
+    propertyKey,
+    potionName: String(source.potionName ?? propertyKey),
+    description: String(source.description ?? ''),
+    automatedEffect: String(source.automatedEffect ?? ''),
+    order: numberFromUnknown(source.order, 0)
+  };
+}
+
+function normalizeBreweryAvailableItem(value: unknown): BreweryAvailableItem | null {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const id = String(source.id ?? '');
+  const sourceName = source.source === 'house' ? 'house' : 'inventory';
+  if (!id) return null;
+  return {
+    source: sourceName,
+    id,
+    name: String(source.name ?? 'Unknown ingredient'),
+    type: ITEM_TYPES.includes(source.type as ItemType) ? source.type as ItemType : 'misc',
+    rarity: rarityOptions.includes(source.rarity as ItemRarity) ? source.rarity as ItemRarity : 'Common',
+    quantity: Math.max(0, numberFromUnknown(source.quantity, 0)),
+    properties: Array.isArray(source.properties) ? source.properties.map(String) : [],
+    catalystBonus: Math.max(0, numberFromUnknown(source.catalystBonus, 0))
+  };
+}
+
+function normalizeBreweryState(value: unknown): BreweryState {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const houseAccess = source.houseAccess && typeof source.houseAccess === 'object' ? source.houseAccess as Record<string, unknown> : {};
+  return {
+    definitions: Array.isArray(source.definitions)
+      ? source.definitions.map(normalizeBreweryDefinition).filter((entry): entry is BreweryDefinition => Boolean(entry)).sort((a, b) => a.order - b.order)
+      : [],
+    availableItems: Array.isArray(source.availableItems)
+      ? source.availableItems.map(normalizeBreweryAvailableItem).filter((entry): entry is BreweryAvailableItem => Boolean(entry))
+      : [],
+    houseAccess: {
+      accessible: Boolean(houseAccess.accessible),
+      city: String(houseAccess.city ?? 'Calostrynn')
+    }
+  };
+}
+
+function normalizeBrewResult(value: unknown): BrewResult | null {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  if (!('success' in source)) return null;
+  return {
+    success: Boolean(source.success),
+    d20: numberFromUnknown(source.d20, 0),
+    alchemyBonus: numberFromUnknown(source.alchemyBonus, 0),
+    catalystBonus: numberFromUnknown(source.catalystBonus, 0),
+    total: numberFromUnknown(source.total, 0),
+    quality: source.quality ? String(source.quality) : null,
+    message: String(source.message ?? ''),
+    item: source.item ? normalizeInventoryItem(source.item) : null
+  };
+}
+
 function productCountText(vendor: ShopVendor) {
   const visible = vendor.products.filter((product) => product.available).length;
   const total = vendor.products.length;
@@ -143,6 +252,11 @@ function isBlacksmithVendor(vendor: ShopVendor) {
 function isArmoryVendor(vendor: ShopVendor) {
   const searchable = `${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
   return searchable.includes('armory');
+}
+
+function isBreweryVendor(vendor: ShopVendor) {
+  const searchable = `${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
+  return searchable.includes('brewery');
 }
 
 function productSection(product: MarketProduct) {
@@ -247,7 +361,7 @@ function recipeLaborCost(service: ForgeService, shopper: Character | null, recip
   return recipe.laborCoin;
 }
 
-function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], materialProductId: string, inventory: InventoryItem[]) {
+function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], materialProductId: string, inventory: InventoryItem[], houseItems: InventoryItem[] = []) {
   if (recipe.materialQuantity <= 0) {
     return { product: null, required: 0, carried: 0, missing: 0, buyQuantity: 0, leftover: 0, materialCost: 0, canCover: true, reason: '' };
   }
@@ -260,7 +374,7 @@ function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], mate
     return { product: null, required: recipe.materialQuantity, carried: 0, missing: recipe.materialQuantity, buyQuantity: 0, leftover: 0, materialCost: 0, canCover: false, reason: 'Choose a material scale.' };
   }
 
-  const carried = Math.min(recipe.materialQuantity, carriedQuantity(inventory, product.name));
+  const carried = Math.min(recipe.materialQuantity, carriedQuantity([...inventory, ...houseItems], product.name));
   const missing = Math.max(0, recipe.materialQuantity - carried);
   const buyQuantity = missing > 0 ? Math.ceil(missing) : 0;
   const leftover = Math.max(0, buyQuantity - missing);
@@ -278,6 +392,38 @@ function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], mate
     canCover: canBuyMissing,
     reason
   };
+}
+
+function breweryRequirements(strength: string) {
+  if (strength === 'Greater') return { property: 25, stabilizer: 10 };
+  if (strength === 'Greatest') return { property: 50, stabilizer: 25 };
+  return { property: 10, stabilizer: 3 };
+}
+
+function breweryItemKey(item: BreweryAvailableItem) {
+  return `${item.source}:${item.id}`;
+}
+
+function sourceLabel(source: BreweryAvailableItem['source']) {
+  return source === 'house' ? 'House' : 'Inventory';
+}
+
+function selectedTotal(selections: Record<string, number>) {
+  return Object.values(selections).reduce((total, quantity) => total + Math.max(0, quantity || 0), 0);
+}
+
+function selectionsToPayload(selections: Record<string, number>) {
+  return Object.entries(selections)
+    .map(([key, quantity]) => {
+      const [source, id] = key.split(':');
+      return { source, id, quantity: Math.max(0, quantity || 0) };
+    })
+    .filter((entry) => entry.id && entry.quantity > 0);
+}
+
+function selectionFromKey(key: string) {
+  const [source, id] = key.split(':');
+  return source && id ? { source, id } : null;
 }
 
 function eligibleBlacksmithEnhancementTargets(items: InventoryItem[]) {
@@ -319,6 +465,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [quantity, setQuantity] = useState(1);
   const [craftModal, setCraftModal] = useState<CraftModalState | null>(null);
   const [craftInventory, setCraftInventory] = useState<InventoryItem[]>([]);
+  const [craftHouseItems, setCraftHouseItems] = useState<InventoryItem[]>([]);
   const [craftWallet, setCraftWallet] = useState<WalletBalance[]>([]);
   const [craftMaterialProductId, setCraftMaterialProductId] = useState('');
   const [craftRuneProductId, setCraftRuneProductId] = useState('');
@@ -342,7 +489,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
     const walletCoin = walletTotalCoin(craftWallet);
     if (craftModal.mode === 'craft') {
-      const plan = buildMaterialPlan(craftModal.recipe, forgeMaterials, craftMaterialProductId, craftInventory);
+      const plan = buildMaterialPlan(craftModal.recipe, forgeMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
       const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
       return plan.canCover && walletCoin >= totalCost;
     }
@@ -357,7 +504,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
     const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
     return walletCoin >= laborCost + rune.priceCoin * requiredRunes;
-  }, [canShop, craftInventory, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeMaterials, forgeRunes, selectedShopper, selectedVendor]);
+  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeMaterials, forgeRunes, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === calostrynn?.key)
@@ -387,21 +534,30 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!craftModal || !selectedShopper) {
       setCraftInventory([]);
+      setCraftHouseItems([]);
       setCraftWallet([]);
       return;
     }
     let active = true;
-    fetch(`/api/characters/${selectedShopper.id}/inventory`, { cache: 'no-store' })
-      .then((response) => response.json())
-      .then((body) => {
+    Promise.all([
+      fetch(`/api/characters/${selectedShopper.id}/inventory`, { cache: 'no-store' }).then((response) => response.json()),
+      selectedShopper.ownerUserId
+        ? fetch(`/api/houses/${selectedShopper.ownerUserId}`, { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
+        : Promise.resolve(null)
+    ])
+      .then(([body, houseBody]) => {
         if (!active) return;
         const normalized = normalizeCharacterInventoryPayload(body);
         setCraftInventory(normalized.items);
         setCraftWallet(normalized.wallet);
+        const house = normalizeHousePayload(houseBody);
+        const houseAccessible = Boolean(house.house && !house.house.locked && house.house.cityName === selectedShopper.locationName);
+        setCraftHouseItems(houseAccessible ? house.items : []);
       })
       .catch(() => {
         if (active) {
           setCraftInventory([]);
+          setCraftHouseItems([]);
           setCraftWallet([]);
         }
       });
@@ -677,6 +833,22 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCraft={openCraftModal}
         />
+      ) : isBreweryVendor(selectedVendor) ? (
+        <BreweryPage
+          vendor={selectedVendor}
+          shopper={selectedShopper}
+          isDm={isDm}
+          saving={saving}
+          canShop={canShop}
+          onSelectProduct={(product) => {
+            setSelectedProduct(product);
+            setQuantity(product.quantityStep || quantityStepForItem(product));
+          }}
+          onEditProduct={openProductEdit}
+          onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
+          onCitiesChanged={setPayload}
+          setError={setError}
+        />
       ) : (
         <ShopPage
           vendor={selectedVendor}
@@ -727,6 +899,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 recipe={craftModal.recipe}
                 materials={forgeMaterials}
                 inventory={craftInventory}
+                houseItems={craftHouseItems}
                 wallet={craftWallet}
                 materialProductId={craftMaterialProductId}
                 setMaterialProductId={setCraftMaterialProductId}
@@ -1019,6 +1192,259 @@ function ArmoryPage(props: {
   );
 }
 
+function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct, onCitiesChanged, setError }: {
+  vendor: ShopVendor;
+  shopper: Character | null;
+  isDm: boolean;
+  saving: boolean;
+  canShop: boolean;
+  onSelectProduct: (product: MarketProduct) => void;
+  onEditProduct: (product: MarketProduct) => void;
+  onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
+  onCitiesChanged: (payload: CitiesPayload) => void;
+  setError: (message: string) => void;
+}) {
+  const [brewery, setBrewery] = useState<BreweryState>({ definitions: [], availableItems: [], houseAccess: { accessible: false, city: 'Calostrynn' } });
+  const [breweryLoading, setBreweryLoading] = useState(false);
+  const [brewSaving, setBrewSaving] = useState(false);
+  const [strength, setStrength] = useState<typeof BREWERY_STRENGTHS[number]>('Lesser');
+  const [propertyKey, setPropertyKey] = useState('');
+  const [propertySelections, setPropertySelections] = useState<Record<string, number>>({});
+  const [stabilizerSelections, setStabilizerSelections] = useState<Record<string, number>>({});
+  const [catalystKey, setCatalystKey] = useState('');
+  const [result, setResult] = useState<BrewResult | null>(null);
+
+  const productGroups = groupProducts(vendor.products);
+
+  useEffect(() => {
+    if (!shopper || !canShop) {
+      setBrewery({ definitions: [], availableItems: [], houseAccess: { accessible: false, city: 'Calostrynn' } });
+      return;
+    }
+
+    let active = true;
+    setBreweryLoading(true);
+    fetch(`/api/cities/brewery?characterId=${shopper.id}`, { cache: 'no-store' })
+      .then((response) => response.json().then((body) => ({ response, body })).catch(() => ({ response, body: {} })))
+      .then(({ response, body }) => {
+        if (!active) return;
+        if (!response.ok) throw new Error(body.error ?? 'Brewery could not be loaded.');
+        const normalized = normalizeBreweryState(body);
+        setBrewery(normalized);
+        setPropertyKey((current) => current || normalized.definitions[0]?.propertyKey || '');
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError instanceof Error ? loadError.message : 'Brewery could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setBreweryLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canShop, setError, shopper]);
+
+  useEffect(() => {
+    setPropertySelections({});
+    setStabilizerSelections({});
+    setCatalystKey('');
+    setResult(null);
+  }, [shopper?.id, strength, propertyKey]);
+
+  const selectedDefinition = brewery.definitions.find((definition) => definition.propertyKey === propertyKey) ?? brewery.definitions[0] ?? null;
+  const requirements = breweryRequirements(strength);
+  const propertyItems = brewery.availableItems.filter((item) => selectedDefinition && item.properties.includes(selectedDefinition.propertyKey));
+  const stabilizerItems = brewery.availableItems.filter((item) => item.properties.includes('Stabilizer'));
+  const catalystItems = brewery.availableItems.filter((item) => item.properties.includes('Catalyst'));
+  const arcaneNectorCount = brewery.availableItems
+    .filter((item) => item.name.toLowerCase() === 'arcane nector')
+    .reduce((total, item) => total + item.quantity, 0);
+  const propertyTotal = selectedTotal(propertySelections);
+  const stabilizerTotal = selectedTotal(stabilizerSelections);
+  const canBrew = canShop
+    && Boolean(shopper && selectedDefinition)
+    && arcaneNectorCount >= 1
+    && propertyTotal >= requirements.property
+    && stabilizerTotal >= requirements.stabilizer
+    && !brewSaving;
+
+  async function runBrew() {
+    if (!shopper || !selectedDefinition) return;
+    setBrewSaving(true);
+    setError('');
+    try {
+      const catalystSelection = catalystKey ? selectionFromKey(catalystKey) : null;
+      const response = await fetch('/api/cities/brewery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          characterId: shopper.id,
+          strength,
+          propertyKey: selectedDefinition.propertyKey,
+          propertySelections: selectionsToPayload(propertySelections),
+          stabilizerSelections: selectionsToPayload(stabilizerSelections),
+          catalystSelection
+        })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? 'Brew failed.');
+      setResult(normalizeBrewResult(body.result));
+      setBrewery(normalizeBreweryState(body.brewery));
+      onCitiesChanged(normalizeCitiesPayload(body.cities));
+      setPropertySelections({});
+      setStabilizerSelections({});
+      setCatalystKey('');
+    } catch (brewError) {
+      setError(brewError instanceof Error ? brewError.message : 'Brew failed.');
+    } finally {
+      setBrewSaving(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <div className="flex items-center gap-3">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[#56e2c2]/45 bg-[#56e2c2]/15 text-[#56e2c2]">
+            <ItemIcon type="potion" size={24} />
+          </span>
+          <div>
+            <p className="eyebrow">Brewing Services</p>
+            <h3 className="text-2xl font-black">Calostrynn Brewery</h3>
+          </div>
+        </div>
+      </Card>
+
+      {productGroups.map(([section, products]) => (
+        <Card key={section}>
+          <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
+          <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+        </Card>
+      ))}
+
+      <Card>
+        <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Brew Potion</h3></div>
+        {!shopper ? (
+          <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4 text-sm font-bold text-[var(--muted)]">Choose a brewing character first.</div>
+        ) : breweryLoading ? (
+          <div className="grid h-28 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><RefreshCw className="animate-spin" size={18} /></div>
+        ) : (
+          <div className="grid gap-4">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Strength</span>
+                <SelectField value={strength} onChange={(event) => setStrength(event.target.value as typeof BREWERY_STRENGTHS[number])}>
+                  {BREWERY_STRENGTHS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </SelectField>
+              </label>
+              <label className="sm:col-span-2">
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Potion</span>
+                <SelectField value={propertyKey} onChange={(event) => setPropertyKey(event.target.value)}>
+                  {brewery.definitions.map((definition) => <option key={definition.propertyKey} value={definition.propertyKey}>{definition.potionName} Potion</option>)}
+                </SelectField>
+              </label>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-4">
+              <SoftCard><p className="eyebrow">Ingredients</p><p className="font-black">{propertyTotal}/{requirements.property}</p></SoftCard>
+              <SoftCard><p className="eyebrow">Stabilizers</p><p className="font-black">{stabilizerTotal}/{requirements.stabilizer}</p></SoftCard>
+              <SoftCard><p className="eyebrow">Arcane Nector</p><p className={`font-black ${arcaneNectorCount >= 1 ? 'text-[var(--teal)]' : 'text-[var(--red)]'}`}>{arcaneNectorCount}/1</p></SoftCard>
+              <SoftCard><p className="eyebrow">House</p><p className="font-black">{brewery.houseAccess.accessible ? 'Accessible' : 'Unavailable'}</p></SoftCard>
+            </div>
+
+            <BreweryIngredientPicker
+              title={`${selectedDefinition?.potionName ?? 'Potion'} ingredients`}
+              items={propertyItems}
+              selections={propertySelections}
+              onChange={setPropertySelections}
+            />
+            <BreweryIngredientPicker
+              title="Stabilizers"
+              items={stabilizerItems}
+              selections={stabilizerSelections}
+              onChange={setStabilizerSelections}
+            />
+
+            <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Catalyst</span>
+                <SelectField value={catalystKey} onChange={(event) => setCatalystKey(event.target.value)}>
+                  <option value="">No catalyst</option>
+                  {catalystItems.map((item) => (
+                    <option key={breweryItemKey(item)} value={breweryItemKey(item)}>
+                      {item.name} · +{item.catalystBonus} · {item.rarity} · {sourceLabel(item.source)} x{item.quantity}
+                    </option>
+                  ))}
+                </SelectField>
+              </label>
+            </div>
+
+            {result && (
+              <div className={`rounded-2xl border p-4 ${result.success ? 'border-[var(--teal)]/40 bg-[var(--teal)]/10' : 'border-[var(--red)]/40 bg-[var(--red)]/10'}`}>
+                <p className="font-black">{result.success ? 'Brew successful' : 'Brew failed'}</p>
+                <p className="mt-1 text-sm text-[var(--muted)]">d20 {result.d20} + Alchemy {result.alchemyBonus} + Catalyst {result.catalystBonus} = {result.total}</p>
+                {result.item && <p className="mt-2 text-sm font-black text-[var(--brass)]">Created {result.item.name}</p>}
+                {result.quality && <p className="mt-1 text-xs font-black uppercase text-[var(--teal)]">Quality: {result.quality}</p>}
+              </div>
+            )}
+
+            <Button variant="primary" disabled={!canBrew} onClick={runBrew}>
+              <Sparkles className="mr-2 inline" size={15} /> Brew potion
+            </Button>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function BreweryIngredientPicker({ title, items, selections, onChange }: {
+  title: string;
+  items: BreweryAvailableItem[];
+  selections: Record<string, number>;
+  onChange: (next: Record<string, number>) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="eyebrow">{title}</p>
+        <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{items.length} options</span>
+      </div>
+      {items.length ? (
+        <div className="thin-scrollbar grid max-h-72 gap-2 overflow-y-auto pr-1">
+          {items.map((item) => {
+            const key = breweryItemKey(item);
+            return (
+              <div key={key} className={`grid gap-2 rounded-2xl border p-3 sm:grid-cols-[1fr_7rem] ${rarityClass(item.rarity)}`}>
+                <div className="flex min-w-0 items-start gap-2">
+                  <span className="mt-1 text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
+                  <div className="min-w-0">
+                    <p className="font-black leading-5">{item.name}</p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">{sourceLabel(item.source)} · {item.rarity} · available {item.quantity}</p>
+                    <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">{item.properties.join(' · ')}</p>
+                  </div>
+                </div>
+                <NumberInput
+                  min={0}
+                  max={item.quantity}
+                  step={1}
+                  value={selections[key] ?? 0}
+                  onValueChange={(quantity) => onChange({ ...selections, [key]: Math.min(item.quantity, Math.max(0, quantity)) })}
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">
+          No valid ingredients available.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct }: {
   products: MarketProduct[];
   isDm: boolean;
@@ -1072,17 +1498,18 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   );
 }
 
-function CraftRecipeForm({ service, shopper, recipe, materials, inventory, wallet, materialProductId, setMaterialProductId }: {
+function CraftRecipeForm({ service, shopper, recipe, materials, inventory, houseItems, wallet, materialProductId, setMaterialProductId }: {
   service: ForgeService;
   shopper: Character | null;
   recipe: CraftRecipe;
   materials: MarketProduct[];
   inventory: InventoryItem[];
+  houseItems: InventoryItem[];
   wallet: WalletBalance[];
   materialProductId: string;
   setMaterialProductId: (value: string) => void;
 }) {
-  const plan = buildMaterialPlan(recipe, materials, materialProductId, inventory);
+  const plan = buildMaterialPlan(recipe, materials, materialProductId, inventory, houseItems);
   const laborCost = recipeLaborCost(service, shopper, recipe);
   const totalCost = plan.materialCost + laborCost;
   const walletCoin = walletTotalCoin(wallet);
@@ -1112,7 +1539,7 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, walle
       {recipe.materialQuantity > 0 && (
         <div className="grid gap-2 sm:grid-cols-4">
           <SoftCard><p className="eyebrow">Required</p><p className="font-black">{plan.required}</p></SoftCard>
-          <SoftCard><p className="eyebrow">Carried</p><p className="font-black">{plan.carried}</p></SoftCard>
+          <SoftCard><p className="eyebrow">Available</p><p className="font-black">{plan.carried}</p></SoftCard>
           <SoftCard><p className="eyebrow">Shop buys</p><p className="font-black">{plan.buyQuantity}</p></SoftCard>
           <SoftCard><p className="eyebrow">Leftover</p><p className="font-black">{plan.leftover}</p></SoftCard>
         </div>

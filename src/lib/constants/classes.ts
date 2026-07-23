@@ -20,7 +20,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     attributes: stats({ strength: -1, accuracy: 0, intelligence: 1, vitality: -1, recovery: 1, mana_regen: 0, charisma: 0, wisdom_cunning: 3, perception: 0, alchemy: 5, stealth: 0, agility: 0 }),
     passives: [
       'Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement',
-      'Has unlimited flasks and Arcane Nectar (Base ingredient in potions) as long as they have a house or residence'
+      'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'
     ],
     tokenColor: '#4d8f83'
   },

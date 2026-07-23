@@ -35,7 +35,8 @@ export function normalizeHouse(value: unknown): House | null {
     ownerUserId,
     cityName: String(source.cityName ?? 'Calostrynn'),
     inventorySlots: Math.max(0, numberFrom(source.inventorySlots, 50)),
-    propertySlots: Math.max(0, numberFrom(source.propertySlots, 10))
+    propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
+    locked: Boolean(source.locked)
   };
 }
 

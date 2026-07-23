@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Home, Loader2, PawPrint, Plus, RefreshCw } from 'lucide-react';
+import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Unlock } from 'lucide-react';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -61,6 +61,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
   const [inventorySlots, setInventorySlots] = useState(50);
   const [propertySlots, setPropertySlots] = useState(10);
+  const [houseLocked, setHouseLocked] = useState(false);
   const [loading, setLoading] = useState(Boolean(ownerUserId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +88,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       setProperties(normalized.properties);
       setInventorySlots(normalized.house?.inventorySlots ?? 50);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
+      setHouseLocked(Boolean(normalized.house?.locked));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'House could not be loaded.');
     } finally {
@@ -148,6 +150,15 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     } finally {
       setSaving(false);
     }
+  }
+
+  async function toggleHouseLock() {
+    if (!ownerUserId || !canAdd) return;
+    await requestHouseChange(`/api/houses/${ownerUserId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locked: !houseLocked })
+    });
   }
 
   async function addItem(event: FormEvent) {
@@ -232,9 +243,15 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
         <div>
           <p className="eyebrow">Calostrynn</p>
           <h3 className="mt-1 flex items-center gap-2 text-xl font-black"><Home size={19} className="text-[var(--brass)]" /> House</h3>
+          {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="p-3" onClick={loadHouse} aria-label="Refresh house"><RefreshCw size={16} /></Button>
+          {canAdd && (
+            <Button variant={houseLocked ? 'danger' : 'teal'} className="p-3" onClick={toggleHouseLock} aria-label={houseLocked ? 'Unlock house' : 'Lock house'}>
+              {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
+            </Button>
+          )}
           {canAdd && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
         </div>
       </div>

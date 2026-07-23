@@ -288,7 +288,13 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           </Card>
 
           <SpellsPanel character={character} canManage={isDm || owned} canGrant={isDm} onManaChanged={(currentMana) => onSaved({ ...character, currentMana })} />
-          <InventoryPanel character={character} canManage={isDm || owned} canAdd={isDm} onItemsChanged={setInventoryItems} />
+          <InventoryPanel
+            character={character}
+            canManage={isDm || owned}
+            canAdd={isDm}
+            onItemsChanged={setInventoryItems}
+            onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
+          />
           <HousePanel ownerUserId={character.ownerUserId} caretakerCharacterId={character.id} canManage={isDm || owned} canAdd={isDm} />
         </div>
 

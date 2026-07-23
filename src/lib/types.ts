@@ -180,6 +180,9 @@ export type InventoryItem = {
   material?: string;
   enhancementCount: number;
   isTwoHanded: boolean;
+  potionStrength?: string;
+  potionProperty?: string;
+  potionQuality?: string;
 };
 
 export type CurrencyUnit = {
@@ -204,6 +207,7 @@ export type House = {
   cityName: string;
   inventorySlots: number;
   propertySlots: number;
+  locked: boolean;
 };
 
 export type CampaignProperty = {
