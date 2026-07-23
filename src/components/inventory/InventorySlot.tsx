@@ -24,6 +24,12 @@ export const InventorySlot = memo(function InventorySlot({
   onOpen: () => void;
   onDropItem: (itemId: string) => void;
 }) {
+  const nameClass = item && item.name.length > 28
+    ? 'line-clamp-5 text-[9px] leading-[0.72rem]'
+    : item && item.name.length > 18
+      ? 'line-clamp-4 text-[10px] leading-[0.8rem]'
+      : 'line-clamp-3 text-[11px] leading-[0.9rem]';
+
   return (
     <button
       type="button"
@@ -58,7 +64,7 @@ export const InventorySlot = memo(function InventorySlot({
       {item ? (
         <>
           <span className="inventory-slot-icon mt-2 text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
-          <span className="inventory-item-name line-clamp-3 w-full rounded-xl bg-black/24 px-1.5 py-1 text-[11px] font-black leading-[0.9rem] shadow-inner">{item.name}</span>
+          <span className={`inventory-item-name w-full rounded-xl bg-black/24 px-1.5 py-1 font-black shadow-inner ${nameClass}`}>{item.name}</span>
           <span className="min-h-[1.25rem]">
             {item.quantity > 1 && <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-black">x{item.quantity}</span>}
           </span>

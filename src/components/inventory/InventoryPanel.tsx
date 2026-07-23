@@ -137,6 +137,8 @@ export function InventoryPanel({
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
+  const [enhanceOpen, setEnhanceOpen] = useState(false);
+  const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -225,6 +227,8 @@ export function InventoryPanel({
     setDropQuantity(item?.quantity ?? 1);
     setCatalogSearch('');
     setAddMode(item ? 'custom' : 'catalog');
+    setEnhanceOpen(false);
+    setEnhanceStat('strength');
   }
 
   function chooseCatalogItem(item: ItemCatalogEntry) {
@@ -242,11 +246,6 @@ export function InventoryPanel({
     });
   }
 
-  function updateDraftModifier(key: LoadoutModifierKey, value: number) {
-    const next = cleanModifiers({ ...draft.modifiers, [key]: value });
-    setDraft({ ...draft, modifiers: next });
-  }
-
   function updateDraftEnchantment(enchantment: string) {
     setDraft({
       ...draft,
@@ -255,13 +254,16 @@ export function InventoryPanel({
     });
   }
 
-  function updateDraftEnhancementCount(enhancementCount: number) {
-    const nextCount = Math.min(3, Math.max(0, Math.round(enhancementCount)));
+  function confirmDraftEnhancement() {
+    if (!canManuallyEnhance(draft) || draft.enhancementCount >= 3) return;
+    const currentValue = Number(draft.modifiers[enhanceStat] ?? 0);
     setDraft({
       ...draft,
-      enhancementCount: nextCount,
-      enchantment: nextCount > 0 ? '' : draft.enchantment
+      modifiers: cleanModifiers({ ...draft.modifiers, [enhanceStat]: currentValue + 1 }),
+      enhancementCount: Math.min(3, draft.enhancementCount + 1),
+      enchantment: ''
     });
+    setEnhanceOpen(false);
   }
 
   async function requestInventoryChange(url: string, init: RequestInit) {
@@ -459,7 +461,7 @@ export function InventoryPanel({
           <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/35 bg-[#56e2c2]/10 p-3">
             <div>
               <p className="eyebrow text-[#56e2c2]">Enchantment</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons can carry one spell. Adding one clears manual enhancement count.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons can carry one spell. Confirming an enhancement removes it.</p>
             </div>
             <SelectField value={draft.enchantment} disabled={draft.enhancementCount > 0} onChange={(event) => updateDraftEnchantment(event.target.value)}>
               <option value="">No enchantment</option>
@@ -474,24 +476,47 @@ export function InventoryPanel({
           <div className="grid gap-2 rounded-2xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3">
             <div>
               <p className="eyebrow">Manual enhancement</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons, shields, and armor can be marked enhanced. Adding enhancements clears enchantment.</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{draft.enhancementCount}/3 enhancements used. Each confirm adds +1 to the chosen stat.</p>
             </div>
-            <NumberInput aria-label="Enhancement count" min={0} max={3} value={draft.enhancementCount} onValueChange={updateDraftEnhancementCount} />
+            {modifierList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {modifierList.map((modifier) => (
+                  <span key={modifier.key} className={`rounded-full bg-black/35 px-2 py-1 text-[10px] font-black uppercase ${modifierToneClass(modifier.value)}`}>
+                    {modifierText(modifier.value)} {modifier.label}
+                  </span>
+                ))}
+              </div>
+            )}
+            {draft.enhancementCount >= 3 ? (
+              <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black text-[var(--muted)]">Enhancement limit reached.</p>
+            ) : enhanceOpen ? (
+              <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                <SelectField value={enhanceStat} onChange={(event) => setEnhanceStat(event.target.value as LoadoutModifierKey)}>
+                  {EDITABLE_MODIFIER_FIELDS.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
+                </SelectField>
+                {draft.enchantment && <p className="text-xs font-black text-[var(--red)]">Confirming removes {draft.enchantment} from this item.</p>}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button type="button" variant="secondary" onClick={() => setEnhanceOpen(false)}>Cancel</Button>
+                  <Button type="button" variant="teal" onClick={confirmDraftEnhancement}>Confirm +1</Button>
+                </div>
+              </div>
+            ) : (
+              <Button type="button" variant="teal" onClick={() => setEnhanceOpen(true)}>Enhance</Button>
+            )}
           </div>
         )}
 
-        {showLoadoutDetails && (
-          <details open={enhanceable || modifierList.length > 0} className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-            <summary className="cursor-pointer text-sm font-black uppercase tracking-wider text-[var(--brass)]">Loadout modifiers</summary>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {EDITABLE_MODIFIER_FIELDS.map((field) => (
-                <label key={field.key}>
-                  <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{field.label}</span>
-                  <NumberInput value={Number(draft.modifiers[field.key] ?? 0)} onValueChange={(value) => updateDraftModifier(field.key, value)} />
-                </label>
+        {!enhanceable && modifierList.length > 0 && (
+          <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+            <p className="eyebrow">Loadout modifiers</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {modifierList.map((modifier) => (
+                <span key={modifier.key} className={`rounded-full bg-black/35 px-2 py-1 text-[10px] font-black uppercase ${modifierToneClass(modifier.value)}`}>
+                  {modifierText(modifier.value)} {modifier.label}
+                </span>
               ))}
             </div>
-          </details>
+          </div>
         )}
       </>
     );
@@ -649,7 +674,7 @@ export function InventoryPanel({
               {canAdd && (
                 <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
                   {renderItemDraftControls()}
-                  <Button variant="primary" disabled={!draft.name.trim() || saving}>Save item</Button>
+                  <Button variant="primary" className="sticky bottom-0 z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)]" disabled={!draft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
             </div>
@@ -703,7 +728,7 @@ export function InventoryPanel({
               )}
 
               {renderItemDraftControls()}
-              <Button variant="primary" disabled={!draft.name.trim() || saving}>Add item</Button>
+              <Button variant="primary" className="sticky bottom-0 z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)]" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}
         </Modal>

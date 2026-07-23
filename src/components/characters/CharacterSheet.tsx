@@ -11,6 +11,7 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
+import { armorDefenseBase } from '@/features/characters/stats';
 import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type AttributeKey, type Character, type ClassTemplate, type InventoryItem, type LoadoutModifiers, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
@@ -51,14 +52,6 @@ function activeAttributeValue(character: Character, items: InventoryItem[], key:
   return (character.attributes[key] ?? 0) + loadoutModifierTotal(items, [key]);
 }
 
-function armorDefenseBase(armor?: string) {
-  const normalized = (armor ?? '').toLowerCase();
-  if (normalized.includes('heavy')) return 13;
-  if (normalized.includes('medium')) return 10;
-  if (normalized.includes('light')) return 7;
-  return 0;
-}
-
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
@@ -85,7 +78,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   const sheetStats = useMemo(() => {
     const vitality = activeAttributeValue(character, inventoryItems, 'vitality');
-    const defense = armorDefenseBase(classTemplate?.armor) + vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
+    const hasActiveArmor = inventoryItems.some((item) => item.loadoutSlot === 'armor' && item.type === 'armor');
+    const defense = (hasActiveArmor ? armorDefenseBase(classTemplate?.armor) : 0) + vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
     const magicResist = character.magicResist + loadoutModifierTotal(inventoryItems, ['magic_resist', 'magicResist', 'magicResistance']);
     const maxHp = Math.max(0, character.maxHp + loadoutModifierTotal(inventoryItems, ['health', 'hp', 'maxHp', 'max_hp']));
     const maxMana = Math.max(0, character.maxMana + loadoutModifierTotal(inventoryItems, ['mana', 'maxMana', 'max_mana']));

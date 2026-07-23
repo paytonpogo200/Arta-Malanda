@@ -981,6 +981,59 @@ $$;
 
 drop function if exists public.create_campaign_character(text, text, uuid, text, text, int, int, int, int, int, int, int, jsonb, jsonb, text, text);
 
+create or replace function public.ensure_character_starter_armor(p_character_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if p_character_id is null then
+    return;
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    item_name,
+    item_type,
+    rarity,
+    quantity,
+    slot_index,
+    loadout_slot,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
+  )
+  select
+    p_character_id,
+    null,
+    'Leather Armor',
+    'armor',
+    'Common'::public.item_rarity,
+    1,
+    0,
+    'armor',
+    false,
+    0,
+    '{"vitality": -1}'::jsonb,
+    null,
+    'Leather',
+    0,
+    false
+  where not exists (
+    select 1
+    from public.inventory_items existing
+    where existing.character_id = p_character_id
+      and existing.loadout_slot = 'armor'
+  );
+end;
+$$;
+
 create or replace function public.create_campaign_character(
   p_session_token text,
   p_name text,
@@ -1075,7 +1128,23 @@ begin
   )
   returning * into v_character;
 
+  perform public.ensure_character_starter_armor(v_character.id);
+
   return public.character_record_to_json(v_character);
+end;
+$$;
+
+do $$
+declare
+  v_character_id uuid;
+begin
+  for v_character_id in
+    select id
+    from public.characters
+    where kind = 'player'::public.character_kind
+  loop
+    perform public.ensure_character_starter_armor(v_character_id);
+  end loop;
 end;
 $$;
 
@@ -1458,6 +1527,7 @@ $$;
 -- Seed/refresh global item catalog from source assets.
 do $$
 begin
+  perform public.upsert_item_catalog_entry('Leather Armor', 'armor', 'Common', 'Armor', array['Starter armor', '-1 Vitality']::text[], 1, true, '{"vitality": -1}'::jsonb, 'Leather', false, 0, 'Starter armor. -1 Vitality while active.', true, 5);
   perform public.upsert_item_catalog_entry('Acer Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 10);
   perform public.upsert_item_catalog_entry('Aethercap', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 20);
   perform public.upsert_item_catalog_entry('Agilis', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Agility']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Agility property when used as an ingredient', true, 30);
@@ -1854,6 +1924,8 @@ as $$
     and a.is_storage = false
     and b.is_storage = false
 $$;
+
+drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
 
 create or replace function public.add_character_inventory_item(
   p_session_token text,
@@ -6201,6 +6273,7 @@ $$;
 -- Consolidated final grants
 grant execute on function public.get_character_ledger(text) to anon, authenticated;
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, text) to anon, authenticated;
+grant execute on function public.ensure_character_starter_armor(uuid) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;

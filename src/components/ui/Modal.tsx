@@ -10,14 +10,16 @@ export function Modal({ title, children, onClose }: { title?: string; children: 
 
   return createPortal(
     <div className="modal-backdrop" role="dialog" aria-modal="true">
-      <section className="surface w-[min(94vw,42rem)] rounded-2xl p-4">
-        <div className="mb-4 flex items-start justify-between gap-3">
+      <section className="modal-panel surface flex max-h-[calc(100dvh-2rem)] w-[min(94vw,42rem)] flex-col overflow-hidden rounded-2xl p-4">
+        <div className="mb-4 flex shrink-0 items-start justify-between gap-3">
           {title ? <h3 className="text-2xl font-black">{title}</h3> : <span />}
           <Button variant="ghost" className="p-2" onClick={onClose} aria-label="Close">
             <X size={18} />
           </Button>
         </div>
-        {children}
+        <div className="modal-body thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
+          {children}
+        </div>
       </section>
     </div>,
     document.body

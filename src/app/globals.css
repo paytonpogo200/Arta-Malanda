@@ -212,6 +212,15 @@ h3,
   overflow-y: auto;
 }
 
+.modal-panel {
+  overflow: hidden !important;
+}
+
+.modal-body {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .rarity-card,
 .inventory-slot {
   position: relative;

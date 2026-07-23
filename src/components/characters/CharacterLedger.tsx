@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeLedgerPayload, type CampaignProfile } from '@/features/characters/data';
+import { armorDefenseBase } from '@/features/characters/stats';
 import { CLASS_TEMPLATES } from '@/lib/constants/classes';
 import type { Character, ClassTemplate, Profile } from '@/lib/types';
 
@@ -197,7 +198,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                   <div className="grid grid-cols-2 gap-2">
                     <span><b className="text-[var(--paper)]">Health</b> {selectedClass.baseHp}</span>
                     <span><b className="text-[var(--paper)]">Mana</b> {selectedClass.baseMana}</span>
-                    <span><b className="text-[var(--paper)]">Defense</b> {selectedClass.attributes.vitality}</span>
+                    <span><b className="text-[var(--paper)]">Defense</b> {armorDefenseBase(selectedClass.armor) + selectedClass.attributes.vitality - 1}</span>
                     <span><b className="text-[var(--paper)]">Magic Resist</b> {selectedClass.baseMagicResist}</span>
                     <span><b className="text-[var(--paper)]">Inventory</b> {selectedClass.inventorySlots}</span>
                     <span><b className="text-[var(--paper)]">Spells</b> {selectedClass.spellSlots}</span>
