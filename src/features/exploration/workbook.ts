@@ -38,13 +38,12 @@ function rarity(value: unknown): ItemRarity {
 
 export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): ItemType {
   const explicitType = text(typeValue).toLowerCase();
-  if (ITEM_TYPES.includes(explicitType as ItemType)) return explicitType as ItemType;
-
   const name = text(itemNameValue).toLowerCase();
   const combined = `${explicitType} ${name}`;
 
   if (combined.includes('coin') || combined.includes('currency') || combined.includes('callis') || combined.includes('callor')) return 'currency';
   if (combined.includes('rune')) return 'rune';
+  if (ITEM_TYPES.includes(explicitType as ItemType)) return explicitType as ItemType;
   if (combined.includes('catalyst') || combined.includes('fang') || combined.includes('feather') || combined.includes('venom') || combined.includes('slime') || combined.includes('gland') || combined.includes('residue')) return 'catalyst';
   if (combined.includes('scale') || combined.includes('material')) return 'material';
   if (combined.includes('shield')) return 'shield';
@@ -140,7 +139,7 @@ export function parseLootWorkbook(buffer: Buffer) {
   const adjustedWeightFormula = text(helper?.K2?.f);
 
   const rows = lootRows.slice(1).map((row) => {
-    const name = text(row[0]);
+    const name = text(row[0]).replace(/\bMountian Rune\b/gi, 'Mountain Rune');
     if (!name) return null;
     const type = categoryToItemType(row[1], name);
     const pool = `${typeLabel(type)} Catalog`;

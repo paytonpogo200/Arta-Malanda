@@ -11,7 +11,7 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, quantityStepForItem } from '@/features/inventory/data';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
-import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor } from '@/lib/types';
+import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
 
 const EMPTY_PAYLOAD: CitiesPayload = { characters: [], cities: [], vendors: [] };
 
@@ -43,14 +43,17 @@ type CraftRecipe = {
   type: ItemType;
   laborCoin: number;
   materialQuantity: number;
+  materialName?: string;
   twoHanded?: boolean;
   note?: string;
 };
 
+type ForgeService = 'blacksmith' | 'armory';
+
 type CraftModalState =
-  | { mode: 'craft'; recipe: CraftRecipe }
-  | { mode: 'enhance' }
-  | { mode: 'enchant' };
+  | { mode: 'craft'; service: ForgeService; recipe: CraftRecipe }
+  | { mode: 'enhance'; service: ForgeService }
+  | { mode: 'enchant'; service: 'blacksmith' };
 
 const BLACKSMITH_RECIPES: CraftRecipe[] = [
   { key: 'dagger', section: 'Light Weapons', name: 'Dagger', type: 'weapon', laborCoin: 50, materialQuantity: 0.5 },
@@ -76,6 +79,16 @@ const BLACKSMITH_RECIPES: CraftRecipe[] = [
 ];
 
 const BLACKSMITH_SERVICE_SECTIONS = ['Material Scales', 'Light Weapons', 'Medium Weapons', 'Heavy Weapons', 'Magecraft Commissions', 'Shield Creation', 'Mythril Services', 'Runes'];
+const ARMORY_RECIPES: CraftRecipe[] = [
+  { key: 'leather-armor', section: 'Armor Creation', name: 'Leather Armor', type: 'armor', laborCoin: 0, materialQuantity: 0, note: '-1 Vitality' },
+  { key: 'iron-armor', section: 'Armor Creation', name: 'Iron Armor', type: 'armor', laborCoin: 500, materialQuantity: 3, materialName: 'Iron Scale', note: '-1 Agility' },
+  { key: 'steel-armor', section: 'Armor Creation', name: 'Steel Armor', type: 'armor', laborCoin: 2500, materialQuantity: 3, materialName: 'Steel Scale', note: '+1 Vitality' },
+  { key: 'mythril-armor', section: 'Armor Creation', name: 'Mythril Armor', type: 'armor', laborCoin: 5000, materialQuantity: 3, materialName: 'Mythril Scale', note: 'Enhanceable' },
+  { key: 'vaylium-armor', section: 'Armor Creation', name: 'Vaylium Armor', type: 'armor', laborCoin: 7500, materialQuantity: 3, materialName: 'Vaylium Scale', note: '+3 Intelligence, +1 Magic Resist' },
+  { key: 'dragonscale-armor', section: 'Armor Creation', name: 'Dragonscale Armor', type: 'armor', laborCoin: 10000, materialQuantity: 3, materialName: 'Dragonscale Scale', note: '+2 Vitality, +5 Magic Resist' }
+];
+const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Mythril Scale', 'Vaylium Scale', 'Dragonscale Scale'];
+const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const RUNE_SECTION_ALIASES = new Set(['runes', 'rune']);
 function isMythrilItem(item: InventoryItem) {
@@ -127,6 +140,11 @@ function isBlacksmithVendor(vendor: ShopVendor) {
   return searchable.includes('blacksmith');
 }
 
+function isArmoryVendor(vendor: ShopVendor) {
+  const searchable = `${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
+  return searchable.includes('armory');
+}
+
 function productSection(product: MarketProduct) {
   return product.section || product.type || 'Wares';
 }
@@ -156,6 +174,34 @@ function runeProducts(vendor: ShopVendor) {
   return vendor.products.filter((product) => RUNE_SECTION_ALIASES.has(productSection(product).toLowerCase()) || product.type === 'rune');
 }
 
+function uniqueProductsByName(products: MarketProduct[]) {
+  const byName = new Map<string, MarketProduct>();
+  for (const product of products) {
+    const key = product.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, product);
+  }
+  return Array.from(byName.values());
+}
+
+function sharedForgeMaterialProducts(vendors: ShopVendor[]) {
+  const blacksmith = vendors.find(isBlacksmithVendor);
+  const source = blacksmith ? materialProducts(blacksmith) : vendors.flatMap(materialProducts);
+  return uniqueProductsByName(source)
+    .filter((product) => FORGE_MATERIAL_ORDER.some((name) => name.toLowerCase() === product.name.toLowerCase()))
+    .sort((a, b) => FORGE_MATERIAL_ORDER.findIndex((name) => name.toLowerCase() === a.name.toLowerCase()) - FORGE_MATERIAL_ORDER.findIndex((name) => name.toLowerCase() === b.name.toLowerCase()));
+}
+
+function sharedForgeRuneProducts(vendors: ShopVendor[]) {
+  const blacksmith = vendors.find(isBlacksmithVendor);
+  const source = blacksmith ? runeProducts(blacksmith) : vendors.flatMap(runeProducts);
+  return uniqueProductsByName(source).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function materialProductByName(products: MarketProduct[], materialName?: string) {
+  if (!materialName) return null;
+  return products.find((product) => product.name.toLowerCase() === materialName.toLowerCase()) ?? null;
+}
+
 function hasUsableStock(product: MarketProduct, quantity = 1) {
   return product.available
     && product.priceCoin > 0
@@ -174,11 +220,80 @@ function isBlacksmithClass(character: Character | null) {
   return character.classKey.toLowerCase() === 'blacksmith' || character.className.toLowerCase() === 'blacksmith';
 }
 
-function eligibleEnhancementTargets(items: InventoryItem[]) {
+function isArmorCladClass(character: Character | null) {
+  if (!character) return false;
+  return character.classKey.toLowerCase() === 'armor-clad' || character.className.toLowerCase() === 'armor-clad';
+}
+
+function isTalismanistClass(character: Character | null) {
+  if (!character) return false;
+  return character.classKey.toLowerCase() === 'talismanist' || character.className.toLowerCase() === 'talismanist';
+}
+
+function walletTotalCoin(wallet: WalletBalance[]) {
+  const values: Record<string, number> = { coin: 1, callis: 10, callor: 100, cal: 10000 };
+  return wallet.reduce((total, entry) => total + entry.amount * (values[entry.unit.key.toLowerCase()] ?? 0), 0);
+}
+
+function carriedQuantity(items: InventoryItem[], itemName: string) {
+  return items
+    .filter((item) => !item.loadoutSlot && !item.isStorage && item.name.toLowerCase() === itemName.toLowerCase())
+    .reduce((total, item) => total + item.quantity, 0);
+}
+
+function recipeLaborCost(service: ForgeService, shopper: Character | null, recipe: CraftRecipe) {
+  if (service === 'blacksmith' && isBlacksmithClass(shopper)) return 0;
+  if (service === 'armory' && isArmorCladClass(shopper)) return 0;
+  return recipe.laborCoin;
+}
+
+function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], materialProductId: string, inventory: InventoryItem[]) {
+  if (recipe.materialQuantity <= 0) {
+    return { product: null, required: 0, carried: 0, missing: 0, buyQuantity: 0, leftover: 0, materialCost: 0, canCover: true, reason: '' };
+  }
+
+  const product = recipe.materialName
+    ? materialProductByName(materials, recipe.materialName)
+    : materials.find((entry) => entry.id === materialProductId) ?? null;
+
+  if (!product) {
+    return { product: null, required: recipe.materialQuantity, carried: 0, missing: recipe.materialQuantity, buyQuantity: 0, leftover: 0, materialCost: 0, canCover: false, reason: 'Choose a material scale.' };
+  }
+
+  const carried = Math.min(recipe.materialQuantity, carriedQuantity(inventory, product.name));
+  const missing = Math.max(0, recipe.materialQuantity - carried);
+  const buyQuantity = missing > 0 ? Math.ceil(missing) : 0;
+  const leftover = Math.max(0, buyQuantity - missing);
+  const canBuyMissing = missing <= 0 || hasUsableStock(product, buyQuantity);
+  const reason = canBuyMissing ? '' : unavailableReason(product) || 'Not enough shop material.';
+
+  return {
+    product,
+    required: recipe.materialQuantity,
+    carried,
+    missing,
+    buyQuantity,
+    leftover,
+    materialCost: product.priceCoin * buyQuantity,
+    canCover: canBuyMissing,
+    reason
+  };
+}
+
+function eligibleBlacksmithEnhancementTargets(items: InventoryItem[]) {
   return items.filter((item) => {
     return !item.enchantment
       && item.enhancementCount < 3
-      && ['weapon', 'shield', 'armor'].includes(item.type)
+      && ['weapon', 'shield'].includes(item.type)
+      && isMythrilItem(item);
+  });
+}
+
+function eligibleArmoryEnhancementTargets(items: InventoryItem[]) {
+  return items.filter((item) => {
+    return !item.enchantment
+      && item.enhancementCount < 3
+      && item.type === 'armor'
       && isMythrilItem(item);
   });
 }
@@ -204,6 +319,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [quantity, setQuantity] = useState(1);
   const [craftModal, setCraftModal] = useState<CraftModalState | null>(null);
   const [craftInventory, setCraftInventory] = useState<InventoryItem[]>([]);
+  const [craftWallet, setCraftWallet] = useState<WalletBalance[]>([]);
   const [craftMaterialProductId, setCraftMaterialProductId] = useState('');
   const [craftRuneProductId, setCraftRuneProductId] = useState('');
   const [craftTargetItemId, setCraftTargetItemId] = useState('');
@@ -220,20 +336,28 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const cityLocked = Boolean(calostrynn?.locked);
   const shopperInCity = selectedShopper?.locationName === (calostrynn?.name ?? 'Calostrynn');
   const canShop = Boolean(selectedShopper && calostrynn && !cityLocked && shopperInCity);
-  const canConfirmBlacksmith = useMemo(() => {
+  const forgeMaterials = useMemo(() => sharedForgeMaterialProducts(payload.vendors), [payload.vendors]);
+  const forgeRunes = useMemo(() => sharedForgeRuneProducts(payload.vendors), [payload.vendors]);
+  const canConfirmForge = useMemo(() => {
     if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
+    const walletCoin = walletTotalCoin(craftWallet);
     if (craftModal.mode === 'craft') {
-      if (craftModal.recipe.materialQuantity <= 0) return true;
-      const material = materialProducts(selectedVendor).find((product) => product.id === craftMaterialProductId);
-      return Boolean(material && hasUsableStock(material, craftModal.recipe.materialQuantity));
+      const plan = buildMaterialPlan(craftModal.recipe, forgeMaterials, craftMaterialProductId, craftInventory);
+      const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
+      return plan.canCover && walletCoin >= totalCost;
     }
 
-    const rune = runeProducts(selectedVendor).find((product) => product.id === craftRuneProductId);
-    if (!rune || !hasUsableStock(rune)) return false;
-    if (!craftTargetItemId) return false;
+    const requiredRunes = craftModal.mode === 'enchant' && isTalismanistClass(selectedShopper) ? 3 : craftModal.mode === 'enchant' ? 5 : 1;
+    const rune = forgeRunes.find((product) => product.id === craftRuneProductId);
+    if (!rune || !hasUsableStock(rune, requiredRunes)) return false;
+    const targets = craftModal.mode === 'enhance'
+      ? craftModal.service === 'armory' ? eligibleArmoryEnhancementTargets(craftInventory) : eligibleBlacksmithEnhancementTargets(craftInventory)
+      : eligibleEnchantmentTargets(craftInventory);
+    if (!craftTargetItemId || !targets.some((item) => item.id === craftTargetItemId)) return false;
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
-    return true;
-  }, [canShop, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, selectedShopper, selectedVendor]);
+    const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
+    return walletCoin >= laborCost + rune.priceCoin * requiredRunes;
+  }, [canShop, craftInventory, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeMaterials, forgeRunes, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === calostrynn?.key)
@@ -263,6 +387,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (!craftModal || !selectedShopper) {
       setCraftInventory([]);
+      setCraftWallet([]);
       return;
     }
     let active = true;
@@ -270,10 +395,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       .then((response) => response.json())
       .then((body) => {
         if (!active) return;
-        setCraftInventory(normalizeCharacterInventoryPayload(body).items);
+        const normalized = normalizeCharacterInventoryPayload(body);
+        setCraftInventory(normalized.items);
+        setCraftWallet(normalized.wallet);
       })
       .catch(() => {
-        if (active) setCraftInventory([]);
+        if (active) {
+          setCraftInventory([]);
+          setCraftWallet([]);
+        }
       });
     return () => {
       active = false;
@@ -386,7 +516,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     }
   }
 
-  async function runBlacksmithAction() {
+  async function runForgeAction() {
     if (!selectedShopper || !craftModal) return;
     setSaving(true);
     setError('');
@@ -405,18 +535,21 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             runeProductId: craftRuneProductId || null,
             modifierKey: craftModifier
           };
-      await replaceFromResponse(await fetch('/api/cities/blacksmith/craft', {
+      const endpoint = craftModal.mode !== 'enchant' && craftModal.service === 'armory'
+        ? '/api/cities/armory/craft'
+        : '/api/cities/blacksmith/craft';
+      await replaceFromResponse(await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
-      }), 'Blacksmith work failed.');
+      }), craftModal.service === 'armory' ? 'Armory work failed.' : 'Blacksmith work failed.');
       setCraftModal(null);
       setCraftMaterialProductId('');
       setCraftRuneProductId('');
       setCraftTargetItemId('');
       setCraftModifier('strength');
     } catch (craftError) {
-      setError(craftError instanceof Error ? craftError.message : 'Blacksmith work failed.');
+      setError(craftError instanceof Error ? craftError.message : 'Forge work failed.');
     } finally {
       setSaving(false);
     }
@@ -454,8 +587,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   function openCraftModal(next: CraftModalState) {
     setCraftModal(next);
-    setCraftMaterialProductId(selectedVendor ? materialProducts(selectedVendor).find((product) => hasUsableStock(product))?.id ?? '' : '');
-    setCraftRuneProductId(selectedVendor ? runeProducts(selectedVendor).find((product) => hasUsableStock(product))?.id ?? '' : '');
+    setCraftMaterialProductId(next.mode === 'craft'
+      ? (next.recipe.materialName ? materialProductByName(forgeMaterials, next.recipe.materialName)?.id : forgeMaterials[0]?.id) ?? ''
+      : '');
+    setCraftRuneProductId(forgeRunes.find((product) => hasUsableStock(product))?.id ?? '');
     setCraftTargetItemId('');
     setCraftModifier('strength');
   }
@@ -527,6 +662,21 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCraft={openCraftModal}
         />
+      ) : isArmoryVendor(selectedVendor) ? (
+        <ArmoryPage
+          vendor={selectedVendor}
+          sharedMaterials={forgeMaterials}
+          isDm={isDm}
+          saving={saving}
+          canShop={canShop}
+          onSelectProduct={(product) => {
+            setSelectedProduct(product);
+            setQuantity(product.quantityStep || quantityStepForItem(product));
+          }}
+          onEditProduct={openProductEdit}
+          onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
+          onCraft={openCraftModal}
+        />
       ) : (
         <ShopPage
           vendor={selectedVendor}
@@ -567,16 +717,28 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {craftModal && selectedVendor && (
-        <Modal title={craftModal.mode === 'craft' ? craftModal.recipe.name : craftModal.mode === 'enhance' ? 'Enhance Mythril Item' : 'Enchant Mythril Weapon'} onClose={() => setCraftModal(null)}>
+        <Modal title={craftModal.mode === 'craft' ? craftModal.recipe.name : craftModal.mode === 'enhance' ? (craftModal.service === 'armory' ? 'Enhance Mythril Armor' : 'Enhance Mythril Gear') : 'Enchant Mythril Weapon'} onClose={() => setCraftModal(null)}>
           <div className="grid gap-4">
             {!selectedShopper && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose a character first.</div>}
             {craftModal.mode === 'craft' ? (
-              <CraftRecipeForm vendor={selectedVendor} shopper={selectedShopper} recipe={craftModal.recipe} materialProductId={craftMaterialProductId} setMaterialProductId={setCraftMaterialProductId} />
+              <CraftRecipeForm
+                service={craftModal.service}
+                shopper={selectedShopper}
+                recipe={craftModal.recipe}
+                materials={forgeMaterials}
+                inventory={craftInventory}
+                wallet={craftWallet}
+                materialProductId={craftMaterialProductId}
+                setMaterialProductId={setCraftMaterialProductId}
+              />
             ) : (
               <MythrilServiceForm
-                vendor={selectedVendor}
+                service={craftModal.service}
                 mode={craftModal.mode}
+                shopper={selectedShopper}
                 inventory={craftInventory}
+                runes={forgeRunes}
+                wallet={craftWallet}
                 targetItemId={craftTargetItemId}
                 setTargetItemId={setCraftTargetItemId}
                 runeProductId={craftRuneProductId}
@@ -585,7 +747,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 setModifier={setCraftModifier}
               />
             )}
-            <Button variant="primary" disabled={saving || !canConfirmBlacksmith} onClick={runBlacksmithAction}>
+            <Button variant="primary" disabled={saving || !canConfirmForge} onClick={runForgeAction}>
               {craftModal.mode === 'craft' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
               Confirm work
             </Button>
@@ -763,7 +925,7 @@ function BlacksmithPage(props: {
               <button
                 key={recipe.key}
                 type="button"
-                onClick={() => onCraft({ mode: 'craft', recipe })}
+                onClick={() => onCraft({ mode: 'craft', service: 'blacksmith', recipe })}
                 className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
               >
                 <span className="flex items-start gap-2">
@@ -783,9 +945,75 @@ function BlacksmithPage(props: {
       <Card>
         <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Mythril Services</h3></div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Button variant="teal" onClick={() => onCraft({ mode: 'enhance' })}><Sparkles className="mr-2 inline" size={15} /> Enhance Mythril Item</Button>
-          <Button variant="primary" onClick={() => onCraft({ mode: 'enchant' })}><WandSparkles className="mr-2 inline" size={15} /> Enchant Mythril Weapon</Button>
+          <Button variant="teal" onClick={() => onCraft({ mode: 'enhance', service: 'blacksmith' })}><Sparkles className="mr-2 inline" size={15} /> Enhance Mythril Weapon/Shield</Button>
+          <Button variant="primary" onClick={() => onCraft({ mode: 'enchant', service: 'blacksmith' })}><WandSparkles className="mr-2 inline" size={15} /> Enchant Mythril Weapon</Button>
         </div>
+      </Card>
+    </div>
+  );
+}
+
+function ArmoryPage(props: {
+  vendor: ShopVendor;
+  sharedMaterials: MarketProduct[];
+  isDm: boolean;
+  saving: boolean;
+  canShop: boolean;
+  onSelectProduct: (product: MarketProduct) => void;
+  onEditProduct: (product: MarketProduct) => void;
+  onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
+  onCraft: (state: CraftModalState) => void;
+}) {
+  const { sharedMaterials, onCraft } = props;
+  const recipeSections = Array.from(new Set(ARMORY_RECIPES.map((recipe) => recipe.section)));
+
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <div className="flex items-center gap-3">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[var(--brass)]/45 bg-[var(--brass)]/15 text-[var(--brass)]">
+            <ItemIcon type="armor" size={24} />
+          </span>
+          <div>
+            <p className="eyebrow">Armor Services</p>
+            <h3 className="text-2xl font-black">Calostrynn Armory</h3>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{ARMORY_SERVICE_SECTIONS[0]}</h3></div>
+        <ProductGrid {...props} products={sharedMaterials} />
+      </Card>
+
+      {recipeSections.map((section) => (
+        <Card key={section}>
+          <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => (
+              <button
+                key={recipe.key}
+                type="button"
+                onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe })}
+                className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
+              >
+                <span className="flex items-start gap-2">
+                  <ItemIcon type="armor" />
+                  <span>
+                    <span className="block font-black">{recipe.name}</span>
+                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} Â· ` : ''}{formatCoinValue(recipe.laborCoin)} labor</span>
+                    {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ))}
+
+      <Card>
+        <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{ARMORY_SERVICE_SECTIONS[2]}</h3></div>
+        <Button variant="teal" onClick={() => onCraft({ mode: 'enhance', service: 'armory' })}><Sparkles className="mr-2 inline" size={15} /> Enhance Mythril Armor</Button>
       </Card>
     </div>
   );
@@ -844,25 +1072,35 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   );
 }
 
-function CraftRecipeForm({ vendor, shopper, recipe, materialProductId, setMaterialProductId }: {
-  vendor: ShopVendor;
+function CraftRecipeForm({ service, shopper, recipe, materials, inventory, wallet, materialProductId, setMaterialProductId }: {
+  service: ForgeService;
   shopper: Character | null;
   recipe: CraftRecipe;
+  materials: MarketProduct[];
+  inventory: InventoryItem[];
+  wallet: WalletBalance[];
   materialProductId: string;
   setMaterialProductId: (value: string) => void;
 }) {
-  const materials = materialProducts(vendor).filter((product) => hasUsableStock(product, recipe.materialQuantity || 1));
-  const selectedMaterial = materials.find((product) => product.id === materialProductId) ?? null;
-  const materialCost = recipe.materialQuantity && selectedMaterial ? selectedMaterial.priceCoin * recipe.materialQuantity : 0;
-  const laborCost = isBlacksmithClass(shopper) ? 0 : recipe.laborCoin;
-  const totalCost = materialCost + laborCost;
+  const plan = buildMaterialPlan(recipe, materials, materialProductId, inventory);
+  const laborCost = recipeLaborCost(service, shopper, recipe);
+  const totalCost = plan.materialCost + laborCost;
+  const walletCoin = walletTotalCoin(wallet);
+  const discountLabel = service === 'armory' ? 'Armor-clad discount' : 'Blacksmith discount';
   return (
     <div className="grid gap-3">
       <SoftCard>
         <p className="text-sm font-black">{recipe.name}</p>
         <p className="mt-1 text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} material scale required.` : 'No material scale required.'}</p>
       </SoftCard>
-      {recipe.materialQuantity > 0 && (
+      {recipe.materialQuantity > 0 && recipe.materialName && (
+        <SoftCard>
+          <p className="eyebrow">Material</p>
+          <p className="font-black">{recipe.materialName}</p>
+          {!plan.product && <p className="mt-1 text-xs font-bold text-[var(--red)]">Shared material row missing from shop assets.</p>}
+        </SoftCard>
+      )}
+      {recipe.materialQuantity > 0 && !recipe.materialName && (
         <label>
           <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Material</span>
           <SelectField value={materialProductId} onChange={(event) => setMaterialProductId(event.target.value)}>
@@ -871,23 +1109,36 @@ function CraftRecipeForm({ vendor, shopper, recipe, materialProductId, setMateri
           </SelectField>
         </label>
       )}
+      {recipe.materialQuantity > 0 && (
+        <div className="grid gap-2 sm:grid-cols-4">
+          <SoftCard><p className="eyebrow">Required</p><p className="font-black">{plan.required}</p></SoftCard>
+          <SoftCard><p className="eyebrow">Carried</p><p className="font-black">{plan.carried}</p></SoftCard>
+          <SoftCard><p className="eyebrow">Shop buys</p><p className="font-black">{plan.buyQuantity}</p></SoftCard>
+          <SoftCard><p className="eyebrow">Leftover</p><p className="font-black">{plan.leftover}</p></SoftCard>
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-3">
-        <SoftCard><p className="eyebrow">Materials</p><p className="font-black">{formatCoinValue(materialCost)}</p></SoftCard>
+        <SoftCard><p className="eyebrow">Materials</p><p className="font-black">{formatCoinValue(plan.materialCost)}</p></SoftCard>
         <SoftCard>
           <p className="eyebrow">Labor</p>
           <p className="font-black">{formatCoinValue(laborCost)}</p>
-          {laborCost === 0 && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--teal)]">Blacksmith discount</span>}
+          {recipe.laborCoin > 0 && laborCost === 0 && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--teal)]">{discountLabel}</span>}
         </SoftCard>
         <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCoinValue(totalCost)}</p></SoftCard>
       </div>
+      {recipe.materialQuantity > 0 && !plan.canCover && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{plan.reason}</div>}
+      {walletCoin < totalCost && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Not enough currency.</div>}
     </div>
   );
 }
 
-function MythrilServiceForm({ vendor, mode, inventory, targetItemId, setTargetItemId, runeProductId, setRuneProductId, modifier, setModifier }: {
-  vendor: ShopVendor;
+function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, targetItemId, setTargetItemId, runeProductId, setRuneProductId, modifier, setModifier }: {
+  service: ForgeService;
   mode: 'enhance' | 'enchant';
+  shopper: Character | null;
   inventory: InventoryItem[];
+  runes: MarketProduct[];
+  wallet: WalletBalance[];
   targetItemId: string;
   setTargetItemId: (value: string) => void;
   runeProductId: string;
@@ -895,8 +1146,14 @@ function MythrilServiceForm({ vendor, mode, inventory, targetItemId, setTargetIt
   modifier: string;
   setModifier: (value: string) => void;
 }) {
-  const runes = runeProducts(vendor).filter((product) => hasUsableStock(product));
-  const targets = mode === 'enhance' ? eligibleEnhancementTargets(inventory) : eligibleEnchantmentTargets(inventory);
+  const requiredRunes = mode === 'enchant' && isTalismanistClass(shopper) ? 3 : mode === 'enchant' ? 5 : 1;
+  const usableRunes = runes.filter((product) => hasUsableStock(product, requiredRunes));
+  const targets = mode === 'enhance'
+    ? service === 'armory' ? eligibleArmoryEnhancementTargets(inventory) : eligibleBlacksmithEnhancementTargets(inventory)
+    : eligibleEnchantmentTargets(inventory);
+  const rune = runes.find((product) => product.id === runeProductId) ?? null;
+  const laborCost = mode === 'enhance' && service === 'armory' && isArmorCladClass(shopper) ? 0 : 1000;
+  const totalCost = laborCost + (rune?.priceCoin ?? 0) * requiredRunes;
   return (
     <div className="grid gap-3">
       <label>
@@ -910,7 +1167,7 @@ function MythrilServiceForm({ vendor, mode, inventory, targetItemId, setTargetIt
         <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Rune</span>
         <SelectField value={runeProductId} onChange={(event) => setRuneProductId(event.target.value)}>
           <option value="">Choose rune</option>
-          {runes.map((product) => <option key={product.id} value={product.id}>{product.name} · {formatCoinValue(product.priceCoin)} · stock {product.stockQuantity ?? '∞'}</option>)}
+          {usableRunes.map((product) => <option key={product.id} value={product.id}>{product.name} · {formatCoinValue(product.priceCoin)} · stock {product.stockQuantity ?? '∞'}</option>)}
         </SelectField>
       </label>
       {mode === 'enhance' && (
@@ -923,9 +1180,11 @@ function MythrilServiceForm({ vendor, mode, inventory, targetItemId, setTargetIt
       )}
       <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">
         {mode === 'enhance'
-          ? 'Costs 10 Callor, 1 rune, and 20 matching ingredients. Max 3 enhancements per item.'
-          : 'Costs 10 Callor and matching runes. Only unenhanced Mythril weapons can be enchanted.'}
+          ? `Costs ${formatCoinValue(laborCost)}, 1 rune, and 20 matching ingredients. Max 3 enhancements per item.`
+          : `Costs 10 Callor and ${requiredRunes} matching runes. Only unenhanced Mythril weapons can be enchanted.`}
       </div>
+      {rune && <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCoinValue(totalCost)}</p></SoftCard>}
+      {walletTotalCoin(wallet) < totalCost && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Not enough currency.</div>}
     </div>
   );
 }

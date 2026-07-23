@@ -1583,13 +1583,14 @@ begin
   perform public.upsert_item_catalog_entry('Steel Scale', 'material', 'Uncommon', 'Material Scales', array['Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Steel', false, 0, 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.', true, 530);
   perform public.upsert_item_catalog_entry('Mythril Scale', 'material', 'Rare', 'Material Scales', array['Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.']::text[], 0.5, true, '{}'::jsonb, 'Mythril', false, 0, 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', true, 540);
   perform public.upsert_item_catalog_entry('Vaylium Scale', 'material', 'Epic', 'Material Scales', array['Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.']::text[], 0.5, true, '{}'::jsonb, 'Vaylium', false, 0, 'Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.', true, 550);
-  perform public.upsert_item_catalog_entry('Dragonscale Scale', 'material', 'Legendary', 'Material Scales', array['Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.']::text[], 0.5, true, '{}'::jsonb, 'Dragonscale', false, 0, 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.', true, 560);
-  perform public.upsert_item_catalog_entry('Ember Rune', 'rune', 'Rare', 'Runes', array['Can be used for Ember enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Ember enchantments.', true, 570);
-  perform public.upsert_item_catalog_entry('Frost Rune', 'rune', 'Rare', 'Runes', array['Can be used for Frost enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Frost enchantments.', true, 580);
-  perform public.upsert_item_catalog_entry('Lightning Rune', 'rune', 'Rare', 'Runes', array['Can be used for Lightning enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Lightning enchantments.', true, 590);
-  perform public.upsert_item_catalog_entry('Earth Rune', 'rune', 'Rare', 'Runes', array['Can be used for Earth enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Earth enchantments.', true, 600);
-  perform public.upsert_item_catalog_entry('Wind Rune', 'rune', 'Rare', 'Runes', array['Can be used for Wind enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Wind enchantments.', true, 610);
-  perform public.upsert_item_catalog_entry('Mountain Rune', 'rune', 'Rare', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 620);
+  perform public.upsert_item_catalog_entry('Dragonscale Scale', 'material', 'Legendary', 'Material Scales', array['Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.']::text[], 0.5, true, '{}'::jsonb, 'Dragonscale', false, 0, 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', true, 560);
+  perform public.upsert_item_catalog_entry('Ember Rune', 'rune', 'Epic', 'Runes', array['Can be used for Ember enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Ember enchantments.', true, 570);
+  perform public.upsert_item_catalog_entry('Frost Rune', 'rune', 'Epic', 'Runes', array['Can be used for Frost enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Frost enchantments.', true, 580);
+  perform public.upsert_item_catalog_entry('Lightning Rune', 'rune', 'Epic', 'Runes', array['Can be used for Lightning enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Lightning enchantments.', true, 590);
+  perform public.upsert_item_catalog_entry('Earth Rune', 'rune', 'Epic', 'Runes', array['Can be used for Earth enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Earth enchantments.', true, 600);
+  perform public.upsert_item_catalog_entry('Wind Rune', 'rune', 'Epic', 'Runes', array['Can be used for Wind enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Wind enchantments.', true, 610);
+  perform public.upsert_item_catalog_entry('Mountain Rune', 'rune', 'Epic', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 620);
+  perform public.upsert_item_catalog_entry('Void Rune', 'rune', 'Mythical', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 625);
   perform public.upsert_item_catalog_entry('Dagger', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 630);
   perform public.upsert_item_catalog_entry('Throwing Knives', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 640);
   perform public.upsert_item_catalog_entry('Shortbow', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 650);
@@ -1610,6 +1611,12 @@ begin
   perform public.upsert_item_catalog_entry('Staff', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 800);
   perform public.upsert_item_catalog_entry('Custom Magecraft Commission', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 810);
   perform public.upsert_item_catalog_entry('Shield', 'shield', 'Common', 'Shield Creation', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 820);
+  perform public.upsert_item_catalog_entry('Leather Armor', 'armor', 'Common', 'Armor Creation', array['-1 Vitality']::text[], 1, true, jsonb_build_object('vitality', -1), 'Leather', false, 0, 'Flexible baseline armor.', true, 830);
+  perform public.upsert_item_catalog_entry('Iron Armor', 'armor', 'Common', 'Armor Creation', array['-1 Agility']::text[], 1, true, jsonb_build_object('agility', -1), 'Iron', false, 0, 'Heavy city-forged armor.', true, 840);
+  perform public.upsert_item_catalog_entry('Steel Armor', 'armor', 'Uncommon', 'Armor Creation', array['+1 Vitality']::text[], 1, true, jsonb_build_object('vitality', 1), 'Steel', false, 0, 'Reinforced steel armor.', true, 850);
+  perform public.upsert_item_catalog_entry('Mythril Armor', 'armor', 'Rare', 'Armor Creation', array['Enhanceable']::text[], 1, true, '{}'::jsonb, 'Mythril', false, 0, 'Mythril armor can be enhanced.', true, 860);
+  perform public.upsert_item_catalog_entry('Vaylium Armor', 'armor', 'Epic', 'Armor Creation', array['+3 Intelligence', '+1 Magic Resist']::text[], 1, true, jsonb_build_object('intelligence', 3, 'magic_resist', 1), 'Vaylium', false, 0, 'Armor tuned for arcane defence.', true, 870);
+  perform public.upsert_item_catalog_entry('Dragonscale Armor', 'armor', 'Legendary', 'Armor Creation', array['+2 Vitality', '+5 Magic Resist']::text[], 1, true, jsonb_build_object('vitality', 2, 'magic_resist', 5), 'Dragonscale', false, 0, 'Legendary armor with immense magical resilience.', true, 880);
 end $$;
 
 update public.item_catalog
@@ -3616,23 +3623,26 @@ on conflict (product_key) do nothing;
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
-delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune');
+delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
+with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
+delete from public.market_products p using armory_vendor v where p.vendor_id = v.id;
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
-  ('blacksmith-bronze-scale', 'Bronze Scale', 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 0.5, 'bronze-scale', true, 10),
-  ('blacksmith-iron-scale', 'Iron Scale', 'Iron: neutral weapon material; +1 Vitality when used for shields.', 'material', 'Common', 400, 40, 'Material Scales', 0.5, 'iron-scale', true, 20),
-  ('blacksmith-steel-scale', 'Steel Scale', 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 0.5, 'steel-scale', true, 30),
-  ('blacksmith-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 0.5, 'mythril-scale', true, 40),
-  ('blacksmith-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.', 'material', 'Epic', 5000, 10, 'Material Scales', 0.5, 'vaylium-scale', true, 50),
-  ('blacksmith-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.', 'material', 'Legendary', 15000, 2, 'Material Scales', 0.5, 'dragonscale-scale', true, 60),
-  ('blacksmith-ember-rune', 'Ember Rune', 'Can be used for Ember enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'ember-rune', false, 70),
-  ('blacksmith-frost-rune', 'Frost Rune', 'Can be used for Frost enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'frost-rune', false, 80),
-  ('blacksmith-lightning-rune', 'Lightning Rune', 'Can be used for Lightning enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'lightning-rune', false, 90),
-  ('blacksmith-earth-rune', 'Earth Rune', 'Can be used for Earth enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'earth-rune', false, 100),
-  ('blacksmith-wind-rune', 'Wind Rune', 'Can be used for Wind enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'wind-rune', false, 110),
-  ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'mountain-rune', false, 120)
+  ('blacksmith-bronze-scale', 'Bronze Scale', 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 1, 'bronze-scale', true, 10),
+  ('blacksmith-iron-scale', 'Iron Scale', 'Iron: neutral weapon material; +1 Vitality when used for shields; -1 Agility when used for armor.', 'material', 'Common', 400, 40, 'Material Scales', 1, 'iron-scale', true, 20),
+  ('blacksmith-steel-scale', 'Steel Scale', 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields or armor.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 1, 'steel-scale', true, 30),
+  ('blacksmith-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 1, 'mythril-scale', true, 40),
+  ('blacksmith-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Intelligence for weapons; +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 10, 'Material Scales', 1, 'vaylium-scale', true, 50),
+  ('blacksmith-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 2, 'Material Scales', 1, 'dragonscale-scale', true, 60),
+  ('blacksmith-ember-rune', 'Ember Rune', 'Can be used for Ember enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'ember-rune', false, 70),
+  ('blacksmith-frost-rune', 'Frost Rune', 'Can be used for Frost enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'frost-rune', false, 80),
+  ('blacksmith-lightning-rune', 'Lightning Rune', 'Can be used for Lightning enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'lightning-rune', false, 90),
+  ('blacksmith-earth-rune', 'Earth Rune', 'Can be used for Earth enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'earth-rune', false, 100),
+  ('blacksmith-wind-rune', 'Wind Rune', 'Can be used for Wind enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'wind-rune', false, 110),
+  ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'mountain-rune', false, 120),
+  ('blacksmith-void-rune', 'Void Rune', 'Cannot be used for enchantments yet.', 'rune', 'Mythical', 0, 0, 'Runes', 1, 'void-rune', false, 130)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
 on conflict (product_key) do nothing;
 
@@ -4038,7 +4048,12 @@ begin
     stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
     catalog_item_key = case when v_patch ? 'catalogItemKey' then nullif(trim(coalesce(v_patch->>'catalogItemKey', '')), '') else catalog_item_key end,
     shop_section = case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares') else shop_section end,
-    quantity_step = case when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 when v_patch ? 'quantityStep' then 1 else quantity_step end,
+    quantity_step = case
+      when lower(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale') then 1
+      when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5
+      when v_patch ? 'quantityStep' then 1
+      else quantity_step
+    end,
     is_available = case when v_patch ? 'available' then (v_patch->>'available')::boolean else is_available end
   where id = p_product_id;
 
@@ -4057,7 +4072,7 @@ security definer
 set search_path = public
 as $$
 declare
-  v_needed numeric := public.assert_valid_item_quantity(p_item_name, 'misc', p_quantity);
+  v_needed numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_item public.inventory_items%rowtype;
   v_take numeric;
 begin
@@ -4094,7 +4109,7 @@ $$;
 
 revoke execute on function public.consume_character_item_by_name(uuid, text, numeric) from anon, authenticated;
 
-create or replace function public.blacksmith_material_modifiers(
+create or replace function public.forge_material_modifiers(
   p_material text,
   p_item_type text
 )
@@ -4104,13 +4119,184 @@ immutable
 as $$
   select case lower(trim(coalesce(p_material, '')))
     when 'bronze' then case when p_item_type = 'weapon' then jsonb_build_object('strength', -1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
-    when 'iron' then case when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
-    when 'steel' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
+    when 'iron' then case when p_item_type = 'shield' then jsonb_build_object('vitality', 1) when p_item_type = 'armor' then jsonb_build_object('agility', -1) else '{}'::jsonb end
+    when 'steel' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 1) when p_item_type in ('shield', 'armor') then jsonb_build_object('vitality', 1) else '{}'::jsonb end
     when 'mythril' then case when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
-    when 'vaylium' then case when p_item_type = 'weapon' then jsonb_build_object('intelligence', 1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1, 'intelligence', 1) else jsonb_build_object('intelligence', 1) end
-    when 'dragonscale' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 2, 'magic_resist', 3) when p_item_type = 'shield' then jsonb_build_object('vitality', 2, 'magic_resist', 5) else jsonb_build_object('magic_resist', 3) end
+    when 'vaylium' then case when p_item_type = 'weapon' then jsonb_build_object('intelligence', 1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1, 'intelligence', 1) when p_item_type = 'armor' then jsonb_build_object('intelligence', 3, 'magic_resist', 1) else jsonb_build_object('intelligence', 1) end
+    when 'dragonscale' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 2, 'magic_resist', 3) when p_item_type = 'shield' then jsonb_build_object('vitality', 2, 'magic_resist', 3) when p_item_type = 'armor' then jsonb_build_object('vitality', 2, 'magic_resist', 5) else jsonb_build_object('magic_resist', 3) end
+    when 'leather' then case when p_item_type = 'armor' then jsonb_build_object('vitality', -1) else '{}'::jsonb end
     else '{}'::jsonb
   end
+$$;
+
+drop function if exists public.blacksmith_material_modifiers(text, text);
+
+create or replace function public.carried_item_quantity_by_name(
+  p_character_id uuid,
+  p_item_name text
+)
+returns numeric
+language sql
+stable
+as $$
+  select coalesce(sum(i.quantity), 0)
+  from public.inventory_items i
+  where i.character_id = p_character_id
+    and i.loadout_slot is null
+    and i.is_storage = false
+    and lower(i.item_name) = lower(trim(p_item_name))
+    and (
+      i.parent_item_id is null
+      or exists (
+        select 1
+        from public.inventory_items storage
+        where storage.id = i.parent_item_id
+          and storage.character_id = p_character_id
+          and storage.is_storage = true
+      )
+    )
+$$;
+
+create or replace function public.add_forge_material_leftover(
+  p_character_id uuid,
+  p_product public.market_products,
+  p_quantity numeric,
+  p_inventory_slots int
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_slot int;
+  v_target public.inventory_items%rowtype;
+begin
+  if coalesce(p_quantity, 0) <= 0 then
+    return;
+  end if;
+
+  select * into v_target
+  from public.inventory_items
+  where character_id = p_character_id
+    and loadout_slot is null
+    and is_storage = false
+    and lower(item_name) = lower(p_product.item_name)
+    and item_type = 'material'
+  order by parent_item_id nulls first, slot_index, created_at
+  limit 1;
+
+  if v_target.id is not null then
+    update public.inventory_items
+    set quantity = quantity + p_quantity
+    where id = v_target.id;
+    return;
+  end if;
+
+  v_slot := public.find_first_free_inventory_slot(p_character_id, null, p_inventory_slots);
+  if v_slot is null then
+    raise exception 'Inventory full for leftover material.';
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    item_type,
+    rarity,
+    quantity,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
+  )
+  values (
+    p_character_id,
+    null,
+    v_slot,
+    p_product.item_name,
+    'material',
+    p_product.rarity,
+    p_quantity,
+    false,
+    0,
+    '{}'::jsonb,
+    null,
+    regexp_replace(p_product.item_name, '[[:space:]]+Scale$', '', 'i'),
+    0,
+    false
+  );
+end;
+$$;
+
+create or replace function public.consume_forge_materials(
+  p_character_id uuid,
+  p_material_product_id uuid,
+  p_required_quantity numeric,
+  p_inventory_slots int,
+  p_expected_material_name text default null
+)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_product public.market_products%rowtype;
+  v_required numeric := greatest(0, coalesce(p_required_quantity, 0));
+  v_carried numeric;
+  v_from_carried numeric;
+  v_missing numeric;
+  v_buy_quantity numeric;
+  v_leftover numeric;
+begin
+  if v_required <= 0 then
+    return 0;
+  end if;
+
+  select * into v_product from public.market_products where id = p_material_product_id;
+  if v_product.id is null or v_product.item_type <> 'material' then
+    raise exception 'Choose a material scale.';
+  end if;
+  if p_expected_material_name is not null and lower(v_product.item_name) <> lower(trim(p_expected_material_name)) then
+    raise exception 'That recipe needs %, not %.', p_expected_material_name, v_product.item_name;
+  end if;
+
+  v_carried := public.carried_item_quantity_by_name(p_character_id, v_product.item_name);
+  v_from_carried := least(v_required, v_carried);
+  v_missing := greatest(0, v_required - v_from_carried);
+  v_buy_quantity := case when v_missing > 0 then ceil(v_missing) else 0 end;
+
+  if v_buy_quantity > 0 then
+    if not v_product.is_available or v_product.price_coin <= 0 then
+      raise exception '% is not available from this forge.', v_product.item_name;
+    end if;
+    if v_product.stock_quantity is not null and v_product.stock_quantity < v_buy_quantity then
+      raise exception 'Not enough % stock.', v_product.item_name;
+    end if;
+  end if;
+
+  if v_from_carried > 0 then
+    perform public.consume_character_item_by_name(p_character_id, v_product.item_name, v_from_carried);
+  end if;
+
+  if v_buy_quantity > 0 and v_product.stock_quantity is not null then
+    update public.market_products
+    set stock_quantity = greatest(0, stock_quantity - v_buy_quantity)
+    where id = v_product.id;
+  end if;
+
+  v_leftover := greatest(0, v_buy_quantity - v_missing);
+  if v_leftover > 0 then
+    perform public.add_forge_material_leftover(p_character_id, v_product, v_leftover, p_inventory_slots);
+  end if;
+
+  return (v_product.price_coin * v_buy_quantity)::int;
+end;
 $$;
 
 create or replace function public.enchantment_spell_for_rune(p_rune_name text)
@@ -4227,35 +4413,25 @@ begin
       v_labor := 0;
     end if;
 
+    v_cost := v_labor;
     if v_material_quantity > 0 then
-      select * into v_material_product from public.market_products where id = p_material_product_id and is_available and price_coin > 0;
+      select * into v_material_product from public.market_products where id = p_material_product_id;
       if v_material_product.id is null or v_material_product.item_type <> 'material' then
         raise exception 'Choose an available material scale.';
       end if;
-      if v_material_product.stock_quantity is not null and v_material_product.stock_quantity < v_material_quantity then
-        raise exception 'Not enough material stock.';
-      end if;
       v_material := regexp_replace(v_material_product.item_name, '[[:space:]]+Scale$', '', 'i');
       v_rarity := v_material_product.rarity;
-      v_cost := v_labor + ceil((v_material_product.price_coin * v_material_quantity)::numeric)::int;
-    else
-      v_cost := v_labor;
+      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots);
     end if;
 
     v_wallet := public.wallet_total_coin(v_character.id);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
     perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
 
-    if v_material_quantity > 0 and v_material_product.stock_quantity is not null then
-      update public.market_products
-      set stock_quantity = greatest(0, stock_quantity - v_material_quantity)
-      where id = v_material_product.id;
-    end if;
-
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
 
-    v_modifiers := public.blacksmith_material_modifiers(v_material, v_recipe_type);
+    v_modifiers := public.forge_material_modifiers(v_material, v_recipe_type);
 
     insert into public.inventory_items (
       character_id,
@@ -4308,7 +4484,7 @@ begin
   if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
 
   if lower(coalesce(p_action, '')) = 'enhance' then
-    if v_target.item_type not in ('weapon', 'shield', 'armor') then raise exception 'Only Mythril weapons, shields, or armor can be enhanced.'; end if;
+    if v_target.item_type not in ('weapon', 'shield') then raise exception 'Blacksmith enhancement is for Mythril weapons and shields.'; end if;
     if v_target.enchantment is not null then raise exception 'An enchanted item cannot be enhanced.'; end if;
     if v_target.enhancement_count >= 3 then raise exception 'That item already has three enhancements.'; end if;
     if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < 1 then raise exception 'Not enough rune stock.'; end if;
@@ -4370,6 +4546,171 @@ begin
 end;
 $$;
 
+create or replace function public.run_armory_action(
+  p_session_token text,
+  p_character_id uuid,
+  p_action text,
+  p_recipe_key text default null,
+  p_material_product_id uuid default null,
+  p_target_item_id uuid default null,
+  p_rune_product_id uuid default null,
+  p_modifier_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_material_product public.market_products%rowtype;
+  v_rune_product public.market_products%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_wallet int;
+  v_cost int := 0;
+  v_labor int := 0;
+  v_material_quantity numeric := 0;
+  v_material_name text;
+  v_recipe_name text := '';
+  v_material text := '';
+  v_rarity public.item_rarity := 'Common';
+  v_slot int;
+  v_modifiers jsonb := '{}'::jsonb;
+  v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
+  v_catalyst text;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  if lower(coalesce(p_action, '')) = 'craft' then
+    case lower(coalesce(p_recipe_key, ''))
+      when 'leather-armor' then v_recipe_name := 'Leather Armor'; v_labor := 0; v_material_quantity := 0; v_material := 'Leather'; v_rarity := 'Common';
+      when 'iron-armor' then v_recipe_name := 'Iron Armor'; v_labor := 500; v_material_quantity := 3; v_material_name := 'Iron Scale';
+      when 'steel-armor' then v_recipe_name := 'Steel Armor'; v_labor := 2500; v_material_quantity := 3; v_material_name := 'Steel Scale';
+      when 'mythril-armor' then v_recipe_name := 'Mythril Armor'; v_labor := 5000; v_material_quantity := 3; v_material_name := 'Mythril Scale';
+      when 'vaylium-armor' then v_recipe_name := 'Vaylium Armor'; v_labor := 7500; v_material_quantity := 3; v_material_name := 'Vaylium Scale';
+      when 'dragonscale-armor' then v_recipe_name := 'Dragonscale Armor'; v_labor := 10000; v_material_quantity := 3; v_material_name := 'Dragonscale Scale';
+      else raise exception 'Unknown armory recipe.';
+    end case;
+
+    if lower(v_character.class_key) = 'armor-clad' or lower(v_character.class_name) = 'armor-clad' then
+      v_labor := 0;
+    end if;
+
+    v_cost := v_labor;
+    if v_material_quantity > 0 then
+      select * into v_material_product from public.market_products where id = p_material_product_id;
+      if v_material_product.id is null or v_material_product.item_type <> 'material' then
+        raise exception 'Choose a material scale.';
+      end if;
+      v_material := regexp_replace(v_material_product.item_name, '[[:space:]]+Scale$', '', 'i');
+      v_rarity := v_material_product.rarity;
+      v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_material_name);
+    end if;
+
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+
+    v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+    if v_slot is null then raise exception 'Inventory full.'; end if;
+
+    v_modifiers := public.forge_material_modifiers(v_material, 'armor');
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
+    )
+    values (
+      v_character.id,
+      null,
+      v_slot,
+      v_recipe_name,
+      'armor',
+      v_rarity,
+      1,
+      false,
+      0,
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      false
+    )
+    returning * into v_item;
+
+    return public.get_discovered_cities(p_session_token);
+  end if;
+
+  if lower(coalesce(p_action, '')) = 'enhance' then
+    select * into v_target
+    from public.inventory_items
+    where id = p_target_item_id
+      and character_id = v_character.id;
+
+    if v_target.id is null then raise exception 'Choose an eligible Mythril armor.'; end if;
+    if v_target.item_type <> 'armor' then raise exception 'Armory enhancement is for Mythril armor.'; end if;
+    if lower(coalesce(v_target.material, '') || ' ' || v_target.item_name) not like '%mythril%' then
+      raise exception 'Only Mythril armor can use that service.';
+    end if;
+    if v_target.enchantment is not null then raise exception 'An enchanted item cannot be enhanced.'; end if;
+    if v_target.enhancement_count >= 3 then raise exception 'That armor already has three enhancements.'; end if;
+
+    select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available and price_coin > 0;
+    if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
+    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < 1 then raise exception 'Not enough rune stock.'; end if;
+
+    v_catalyst := case v_key
+      when 'strength' then 'Titanvine Root'
+      when 'accuracy' then 'Hawkeye Blossom'
+      when 'intelligence' then 'Star Sage Orchid'
+      when 'vitality' then 'Heartwood Sprout'
+      when 'magic_resist' then 'Null Fern'
+      when 'stealth' then 'Shade Moss'
+      else null
+    end;
+    if v_catalyst is null then raise exception 'Unsupported enhancement.'; end if;
+
+    v_labor := case when lower(v_character.class_key) = 'armor-clad' or lower(v_character.class_name) = 'armor-clad' then 0 else 1000 end;
+    v_cost := v_labor + v_rune_product.price_coin;
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
+
+    perform public.consume_character_item_by_name(v_character.id, v_catalyst, 20);
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    if v_rune_product.stock_quantity is not null then
+      update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
+    end if;
+
+    v_modifiers := coalesce(v_target.modifiers, '{}'::jsonb) || jsonb_build_object(v_key, coalesce((v_target.modifiers->>v_key)::int, 0) + 1);
+    update public.inventory_items
+    set modifiers = v_modifiers,
+        enhancement_count = enhancement_count + 1
+    where id = v_target.id;
+
+    return public.get_discovered_cities(p_session_token);
+  end if;
+
+  raise exception 'Unknown armory action.';
+end;
+$$;
+
 grant execute on function public.city_record_to_json(public.cities) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products) to anon, authenticated;
 grant execute on function public.currency_coin_value(text) to anon, authenticated;
@@ -4379,9 +4720,139 @@ grant execute on function public.get_discovered_cities(text) to anon, authentica
 grant execute on function public.purchase_market_product(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
-grant execute on function public.blacksmith_material_modifiers(text, text) to anon, authenticated;
+grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
 grant execute on function public.enchantment_spell_for_rune(text) to anon, authenticated;
 grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
+
+update public.market_products
+set item_name = 'Mountain Rune',
+    catalog_item_key = 'mountain-rune'
+where lower(item_name) = 'mountian rune'
+   or product_key = 'blacksmith-mountian-rune';
+
+update public.market_products
+set item_type = 'rune',
+    rarity = 'Epic',
+    quantity_step = 1
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune');
+
+update public.market_products
+set item_type = 'rune',
+    rarity = 'Mythical',
+    quantity_step = 1
+where lower(item_name) = 'void rune';
+
+update public.market_products
+set item_type = 'material',
+    quantity_step = 1
+where lower(item_name) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale');
+
+update public.market_products
+set description = 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.'
+where product_key = 'blacksmith-dragonscale-scale'
+  and description like '%+5 Magic Resist for shields%';
+
+update public.item_catalog
+set item_name = 'Mountain Rune',
+    item_key = 'mountain-rune'
+where lower(item_name) = 'mountian rune';
+
+update public.item_catalog
+set item_type = 'rune',
+    rarity = 'Epic',
+    quantity_step = 1
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune');
+
+update public.item_catalog
+set item_type = 'rune',
+    rarity = 'Mythical',
+    quantity_step = 1
+where lower(item_name) = 'void rune';
+
+update public.inventory_items
+set item_name = case when lower(item_name) = 'mountian rune' then 'Mountain Rune' else item_name end,
+    item_type = case when lower(item_name) like '%rune' then 'rune' else item_type end,
+    rarity = case
+      when lower(item_name) in ('void rune') then 'Mythical'::public.item_rarity
+      when lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune') then 'Epic'::public.item_rarity
+      else rarity
+    end
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune', 'void rune');
+
+update public.house_inventory_items
+set item_name = case when lower(item_name) = 'mountian rune' then 'Mountain Rune' else item_name end,
+    item_type = case when lower(item_name) like '%rune' then 'rune' else item_type end,
+    rarity = case
+      when lower(item_name) in ('void rune') then 'Mythical'::public.item_rarity
+      when lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune') then 'Epic'::public.item_rarity
+      else rarity
+    end
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune', 'void rune');
+
+update public.loot_items
+set item_name = case when lower(item_name) = 'mountian rune' then 'Mountain Rune' else item_name end,
+    item_type = case when lower(item_name) like '%rune' then 'rune' else item_type end,
+    rarity = case
+      when lower(item_name) in ('void rune') then 'Mythical'::public.item_rarity
+      when lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune') then 'Epic'::public.item_rarity
+      else rarity
+    end
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'mountian rune', 'void rune');
+
+update public.inventory_items
+set modifiers = jsonb_set(
+      coalesce(modifiers, '{}'::jsonb),
+      '{magic_resist}',
+      to_jsonb(greatest(3, coalesce((modifiers->>'magic_resist')::int, 0) - 2)),
+      true
+    )
+where item_type = 'shield'
+  and lower(coalesce(material, '') || ' ' || item_name) like '%dragonscale%'
+  and modifiers ? 'magic_resist'
+  and coalesce((modifiers->>'magic_resist')::int, 0) >= 5;
+
+update public.inventory_items
+set item_name = 'Leather Armor',
+    item_type = 'armor',
+    rarity = 'Common',
+    material = 'Leather',
+    modifiers = coalesce(modifiers, '{}'::jsonb) || jsonb_build_object('vitality', -1)
+where lower(item_name) in ('light armor', 'leather armor');
+
+update public.inventory_items
+set item_type = 'armor',
+    rarity = 'Common',
+    material = 'Iron',
+    modifiers = coalesce(modifiers, '{}'::jsonb) || jsonb_build_object('agility', -1)
+where lower(item_name) = 'iron armor';
+
+update public.inventory_items
+set item_type = 'armor',
+    rarity = 'Uncommon',
+    material = 'Steel',
+    modifiers = coalesce(modifiers, '{}'::jsonb) || jsonb_build_object('vitality', 1)
+where lower(item_name) = 'steel armor';
+
+update public.inventory_items
+set item_type = 'armor',
+    rarity = 'Rare',
+    material = 'Mythril'
+where lower(item_name) = 'mythril armor';
+
+update public.inventory_items
+set item_type = 'armor',
+    rarity = 'Epic',
+    material = 'Vaylium',
+    modifiers = coalesce(modifiers, '{}'::jsonb) || jsonb_build_object('intelligence', 3, 'magic_resist', 1)
+where lower(item_name) = 'vaylium armor';
+
+update public.inventory_items
+set item_type = 'armor',
+    rarity = 'Legendary',
+    material = 'Dragonscale',
+    modifiers = coalesce(modifiers, '{}'::jsonb) || jsonb_build_object('vitality', 2, 'magic_resist', 5)
+where lower(item_name) = 'dragonscale armor';
 
 
 -- ============================================================
@@ -5947,8 +6418,14 @@ begin
     if v_name is null then
       continue;
     end if;
+    if lower(v_name) = 'mountian rune' then
+      v_name := 'Mountain Rune';
+    end if;
 
     v_type_text := public.normalize_item_type(coalesce(nullif(v_row->>'type', ''), nullif(v_row->>'item_type', ''), 'misc'));
+    if lower(v_name) like '% rune' then
+      v_type_text := 'rune';
+    end if;
 
     v_pool_key := lower(regexp_replace(coalesce(v_row->>'poolKey', v_row->>'pool_key', v_row->>'pool', 'catalog-' || v_type_text), '[^a-z0-9]+', '-', 'g'));
     v_pool_name := coalesce(nullif(trim(v_row->>'pool'), ''), initcap(replace(v_pool_key, '-', ' ')));
