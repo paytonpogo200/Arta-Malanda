@@ -46,7 +46,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       p_is_storage: Boolean(body.isStorage),
       p_storage_capacity: Math.max(0, Number(body.storageCapacity ?? 0)),
       p_modifiers: body.modifiers ?? {},
-      p_enchantment: body.enchantment || null
+      p_enchantment: body.enchantment || null,
+      p_material: body.material || null,
+      p_enhancement_count: Math.max(0, Math.min(3, Number(body.enhancementCount ?? 0))),
+      p_is_two_handed: Boolean(body.isTwoHanded)
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

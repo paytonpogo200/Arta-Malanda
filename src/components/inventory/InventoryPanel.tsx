@@ -12,8 +12,19 @@ import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
-import { rarityOptions } from '@/lib/utils/rarity';
-import type { Character, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, LoadoutSlot, WalletBalance } from '@/lib/types';
+import {
+  EDITABLE_MODIFIER_FIELDS,
+  canManuallyEnchant,
+  canManuallyEnhance,
+  cleanModifiers,
+  itemHasEnhancementVisual,
+  modifierEntries,
+  modifierText,
+  modifierToneClass,
+  spellForEnchantment
+} from '@/features/inventory/itemDetails';
+import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
+import type { Character, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, LoadoutModifierKey, LoadoutModifiers, LoadoutSlot, Spell, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -28,6 +39,10 @@ type ItemDraft = {
   quantity: number;
   storageCapacity: number;
   enchantment: string;
+  material: string;
+  enhancementCount: number;
+  isTwoHanded: boolean;
+  modifiers: LoadoutModifiers;
 };
 
 const EMPTY_DRAFT: ItemDraft = {
@@ -36,7 +51,11 @@ const EMPTY_DRAFT: ItemDraft = {
   rarity: 'Common',
   quantity: 1,
   storageCapacity: 0,
-  enchantment: ''
+  enchantment: '',
+  material: '',
+  enhancementCount: 0,
+  isTwoHanded: false,
+  modifiers: {}
 };
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
@@ -73,6 +92,25 @@ function inferStorageCapacity(itemName: string) {
   return 6;
 }
 
+function itemSupportsLoadoutDetails(type: ItemType) {
+  return type === 'weapon' || type === 'armor' || type === 'shield' || type === 'accessory' || type === 'pet';
+}
+
+function draftFromItem(item: InventoryItem): ItemDraft {
+  return {
+    name: item.name,
+    type: item.type,
+    rarity: item.rarity,
+    quantity: item.quantity,
+    storageCapacity: item.storageCapacity,
+    enchantment: item.enchantment ?? '',
+    material: item.material ?? '',
+    enhancementCount: item.enhancementCount,
+    isTwoHanded: item.isTwoHanded,
+    modifiers: cleanModifiers(item.modifiers)
+  };
+}
+
 export function InventoryPanel({
   character,
   canManage,
@@ -95,6 +133,7 @@ export function InventoryPanel({
   const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
   const [dropQuantity, setDropQuantity] = useState(1);
   const [catalog, setCatalog] = useState<ItemCatalogEntry[]>([]);
+  const [spells, setSpells] = useState<Spell[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
@@ -130,6 +169,7 @@ export function InventoryPanel({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) return;
       const normalized = normalizeUpdateAssetsPayload(payload);
+      setSpells(normalized.spells.sort((a, b) => a.name.localeCompare(b.name)));
       const uniqueByName = new Map<string, ItemCatalogEntry>();
       const catalogSource = normalized.itemCatalog.length
         ? normalized.itemCatalog.filter((entry) => entry.type !== 'currency' && entry.active)
@@ -175,18 +215,13 @@ export function InventoryPanel({
       : catalog;
     return source.slice(0, 80);
   }, [catalog, catalogSearch]);
+  const modalSpell = useMemo(() => modal?.item ? spellForEnchantment(spells, modal.item.enchantment) : null, [modal, spells]);
+  const sortedSpells = useMemo(() => [...spells].sort((a, b) => a.name.localeCompare(b.name)), [spells]);
 
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
     setModal({ slot, parentItemId, item });
-    setDraft(item ? {
-      name: item.name,
-      type: item.type,
-      rarity: item.rarity,
-      quantity: item.quantity,
-      storageCapacity: item.storageCapacity,
-      enchantment: item.enchantment ?? ''
-    } : EMPTY_DRAFT);
+    setDraft(item ? draftFromItem(item) : EMPTY_DRAFT);
     setDropQuantity(item?.quantity ?? 1);
     setCatalogSearch('');
     setAddMode(item ? 'custom' : 'catalog');
@@ -199,7 +234,33 @@ export function InventoryPanel({
       rarity: item.rarity,
       quantity: Math.max(item.quantityStep || 1, item.quantityStep || 1),
       storageCapacity: item.type === 'storage' ? item.storageCapacity || inferStorageCapacity(item.name) : 0,
-      enchantment: ''
+      enchantment: '',
+      material: item.material,
+      enhancementCount: 0,
+      isTwoHanded: item.isTwoHanded,
+      modifiers: cleanModifiers(item.defaultModifiers)
+    });
+  }
+
+  function updateDraftModifier(key: LoadoutModifierKey, value: number) {
+    const next = cleanModifiers({ ...draft.modifiers, [key]: value });
+    setDraft({ ...draft, modifiers: next });
+  }
+
+  function updateDraftEnchantment(enchantment: string) {
+    setDraft({
+      ...draft,
+      enchantment,
+      enhancementCount: enchantment.trim() ? 0 : draft.enhancementCount
+    });
+  }
+
+  function updateDraftEnhancementCount(enhancementCount: number) {
+    const nextCount = Math.min(3, Math.max(0, Math.round(enhancementCount)));
+    setDraft({
+      ...draft,
+      enhancementCount: nextCount,
+      enchantment: nextCount > 0 ? '' : draft.enchantment
     });
   }
 
@@ -267,7 +328,11 @@ export function InventoryPanel({
         slotIndex: modal.slot,
         isStorage: draft.type === 'storage',
         storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        enchantment: draft.enchantment.trim() || null
+        enchantment: draft.enchantment.trim() || null,
+        material: draft.material.trim(),
+        enhancementCount: draft.enhancementCount,
+        isTwoHanded: draft.isTwoHanded,
+        modifiers: cleanModifiers(draft.modifiers)
       })
     });
   }
@@ -285,7 +350,11 @@ export function InventoryPanel({
         quantity: Math.max(quantityStepForItem(draft), draft.quantity),
         isStorage: draft.type === 'storage',
         storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        enchantment: draft.enchantment.trim() || null
+        enchantment: draft.enchantment.trim() || null,
+        material: draft.material.trim(),
+        enhancementCount: draft.enhancementCount,
+        isTwoHanded: draft.isTwoHanded,
+        modifiers: cleanModifiers(draft.modifiers)
       })
     });
   }
@@ -354,6 +423,80 @@ export function InventoryPanel({
     }
   }
 
+  function renderItemDraftControls() {
+    const modifierList = modifierEntries(draft.modifiers);
+    const showLoadoutDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.material.trim()) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
+    const enchantable = canManuallyEnchant(draft) || Boolean(draft.enchantment.trim());
+    const enhanceable = canManuallyEnhance(draft);
+    const hasCurrentCustomSpell = Boolean(draft.enchantment.trim()) && !sortedSpells.some((spell) => spell.name === draft.enchantment);
+
+    return (
+      <>
+        <TextField placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <div className="grid gap-2 sm:grid-cols-3">
+          <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+          <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
+          <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
+        </div>
+        {draft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
+
+        {showLoadoutDetails && (
+          <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+            <p className="eyebrow">Equipment details</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <TextField placeholder="Material, e.g. Mythril" value={draft.material} onChange={(event) => setDraft({ ...draft, material: event.target.value })} />
+              {draft.type === 'weapon' && (
+                <label className="flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 px-3 text-sm font-black">
+                  <input type="checkbox" checked={draft.isTwoHanded} onChange={(event) => setDraft({ ...draft, isTwoHanded: event.target.checked })} />
+                  Two-handed weapon
+                </label>
+              )}
+            </div>
+          </div>
+        )}
+
+        {enchantable && (
+          <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/35 bg-[#56e2c2]/10 p-3">
+            <div>
+              <p className="eyebrow text-[#56e2c2]">Enchantment</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons can carry one spell. Adding one clears manual enhancement count.</p>
+            </div>
+            <SelectField value={draft.enchantment} disabled={draft.enhancementCount > 0} onChange={(event) => updateDraftEnchantment(event.target.value)}>
+              <option value="">No enchantment</option>
+              {hasCurrentCustomSpell && <option value={draft.enchantment}>{draft.enchantment}</option>}
+              {sortedSpells.map((spell) => <option key={spell.id} value={spell.name}>{spell.name} · {spell.manaCost} mana</option>)}
+            </SelectField>
+            {draft.enhancementCount > 0 && <p className="text-xs font-black text-[var(--red)]">Remove enhancements before adding an enchantment.</p>}
+          </div>
+        )}
+
+        {enhanceable && (
+          <div className="grid gap-2 rounded-2xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3">
+            <div>
+              <p className="eyebrow">Manual enhancement</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons, shields, and armor can be marked enhanced. Adding enhancements clears enchantment.</p>
+            </div>
+            <NumberInput aria-label="Enhancement count" min={0} max={3} value={draft.enhancementCount} onValueChange={updateDraftEnhancementCount} />
+          </div>
+        )}
+
+        {showLoadoutDetails && (
+          <details open={enhanceable || modifierList.length > 0} className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+            <summary className="cursor-pointer text-sm font-black uppercase tracking-wider text-[var(--brass)]">Loadout modifiers</summary>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {EDITABLE_MODIFIER_FIELDS.map((field) => (
+                <label key={field.key}>
+                  <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{field.label}</span>
+                  <NumberInput value={Number(draft.modifiers[field.key] ?? 0)} onValueChange={(value) => updateDraftModifier(field.key, value)} />
+                </label>
+              ))}
+            </div>
+          </details>
+        )}
+      </>
+    );
+  }
+
   return (
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -391,7 +534,7 @@ export function InventoryPanel({
             {canAdd && <Button variant="teal" className="mt-2" onClick={saveWallet} disabled={saving}>Save wallet</Button>}
           </section>
 
-          <LoadoutPanel items={items} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
+          <LoadoutPanel items={items} spells={spells} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
 
           <div className="mt-5 rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
           <div className="inventory-grid grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6">
@@ -453,7 +596,39 @@ export function InventoryPanel({
         <Modal title={modal.item ? modal.item.name : 'Add item'} onClose={() => setModal(null)}>
           {modal.item ? (
             <div className="space-y-3">
-              <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
+              <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(modal.item.rarity)} ${modal.item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(modal.item) ? 'inventory-enhanced' : ''}`}>
+                <div className="relative z-10 flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-black/25 text-[var(--brass)]"><ItemIcon type={modal.item.type} size={22} /></span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-lg font-black leading-5">{modal.item.name}</p>
+                    <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
+                    {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">Material: {modal.item.material}</p>}
+                    {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
+                    {modal.item.enchantment && (
+                      <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+                        <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Enchantment: {modalSpell?.name ?? modal.item.enchantment}</p>
+                        {modalSpell ? (
+                          <div className="mt-1 space-y-1 text-xs leading-5 text-[var(--paper)]">
+                            <p><span className="font-black">Mana:</span> {modalSpell.manaCost}</p>
+                            <p>{modalSpell.details || modalSpell.summary || 'No spell description entered yet.'}</p>
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Spell details were not found in the global spell list.</p>
+                        )}
+                      </div>
+                    )}
+                    {modifierEntries(modal.item.modifiers).length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {modifierEntries(modal.item.modifiers).map((modifier) => (
+                          <span key={modifier.key} className={`rounded-full bg-black/35 px-2 py-1 text-[10px] font-black uppercase ${modifierToneClass(modifier.value)}`}>
+                            {modifierText(modifier.value)} {modifier.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
               {canManage && (
                 <div className="grid gap-2">
                   {!modal.item.loadoutSlot && (
@@ -473,14 +648,7 @@ export function InventoryPanel({
               )}
               {canAdd && (
                 <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-                  <TextField placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-                    <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                    <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
-                  </div>
-                  {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
-                  {draft.type === 'weapon' && <TextField placeholder="Enchantment (optional)" value={draft.enchantment} onChange={(event) => setDraft({ ...draft, enchantment: event.target.value })} />}
+                  {renderItemDraftControls()}
                   <Button variant="primary" disabled={!draft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
@@ -534,14 +702,7 @@ export function InventoryPanel({
                 </div>
               )}
 
-              <TextField autoFocus={addMode === 'custom'} placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-              <div className="grid gap-2 sm:grid-cols-3">
-                <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-                <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
-              </div>
-              {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
-              {draft.type === 'weapon' && <TextField placeholder="Enchantment (optional)" value={draft.enchantment} onChange={(event) => setDraft({ ...draft, enchantment: event.target.value })} />}
+              {renderItemDraftControls()}
               <Button variant="primary" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}

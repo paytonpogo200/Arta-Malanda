@@ -1850,6 +1850,7 @@ as $$
     and coalesce(a.material, '') = coalesce(b.material, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
+    and a.modifiers = b.modifiers
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -1866,7 +1867,10 @@ create or replace function public.add_character_inventory_item(
   p_is_storage boolean default false,
   p_storage_capacity int default 0,
   p_modifiers jsonb default '{}'::jsonb,
-  p_enchantment text default null
+  p_enchantment text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -1885,6 +1889,7 @@ declare
   v_modifiers jsonb;
   v_material text := '';
   v_is_two_handed boolean := false;
+  v_enhancement_count int := least(3, greatest(0, coalesce(p_enhancement_count, 0)));
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_make_storage_container boolean := false;
   v_storage_item public.inventory_items%rowtype;
@@ -1914,6 +1919,13 @@ begin
     v_material := v_catalog.material;
     v_is_two_handed := v_catalog.is_two_handed;
     v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
+  end if;
+  if length(trim(coalesce(p_material, ''))) > 0 then
+    v_material := trim(p_material);
+  end if;
+  v_is_two_handed := coalesce(p_is_two_handed, false) or v_is_two_handed;
+  if length(trim(coalesce(p_enchantment, ''))) > 0 then
+    v_enhancement_count := 0;
   end if;
   v_quantity := public.assert_valid_item_quantity(p_item_name, v_item_type, v_quantity);
 
@@ -1952,7 +1964,7 @@ begin
       v_modifiers,
       nullif(trim(coalesce(p_enchantment, '')), ''),
       v_material,
-      0,
+      v_enhancement_count,
       v_is_two_handed
     )
     returning * into v_storage_item;
@@ -1979,8 +1991,9 @@ begin
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.material, '') = coalesce(v_material, '')
-      and v_target.enhancement_count = 0
+      and v_target.enhancement_count = v_enhancement_count
       and v_target.is_two_handed = v_is_two_handed
+      and v_target.modifiers = v_modifiers
       and v_target.is_storage = false
     then
       update public.inventory_items
@@ -2022,7 +2035,7 @@ begin
     v_modifiers,
     nullif(trim(coalesce(p_enchantment, '')), ''),
     v_material,
-    0,
+    v_enhancement_count,
     v_is_two_handed
   )
   returning * into v_item;
@@ -2060,7 +2073,7 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -2073,9 +2086,18 @@ begin
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
-      enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
+      modifiers = case when v_patch ? 'modifiers' and jsonb_typeof(v_patch->'modifiers') = 'object' then v_patch->'modifiers' else modifiers end,
+      enchantment = case
+        when v_patch ? 'enhancementCount' and (v_patch->>'enhancementCount')::int > 0 then null
+        when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '')
+        else enchantment
+      end,
       material = case when v_patch ? 'material' then trim(coalesce(v_patch->>'material', '')) else material end,
-      enhancement_count = case when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int)) else enhancement_count end,
+      enhancement_count = case
+        when v_patch ? 'enchantment' and length(trim(coalesce(v_patch->>'enchantment', ''))) > 0 then 0
+        when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int))
+        else enhancement_count
+      end,
       is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
     where id = p_item_id
     returning * into v_item;
@@ -2259,7 +2281,7 @@ grant execute on function public.assert_inventory_slot_capacity(public.character
 grant execute on function public.next_storage_container_slot(uuid) to anon, authenticated;
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
-grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
+grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
@@ -2479,6 +2501,7 @@ as $$
     and coalesce(a.material, '') = coalesce(b.material, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
+    and a.modifiers = b.modifiers
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -2694,7 +2717,7 @@ begin
 
   v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -2707,9 +2730,18 @@ begin
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
-      enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
+      modifiers = case when v_patch ? 'modifiers' and jsonb_typeof(v_patch->'modifiers') = 'object' then v_patch->'modifiers' else modifiers end,
+      enchantment = case
+        when v_patch ? 'enhancementCount' and (v_patch->>'enhancementCount')::int > 0 then null
+        when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '')
+        else enchantment
+      end,
       material = case when v_patch ? 'material' then trim(coalesce(v_patch->>'material', '')) else material end,
-      enhancement_count = case when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int)) else enhancement_count end,
+      enhancement_count = case
+        when v_patch ? 'enchantment' and length(trim(coalesce(v_patch->>'enchantment', ''))) > 0 then 0
+        when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int))
+        else enhancement_count
+      end,
       is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
     where id = p_item_id
     returning * into v_item;

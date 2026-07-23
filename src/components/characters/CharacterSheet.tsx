@@ -51,6 +51,14 @@ function activeAttributeValue(character: Character, items: InventoryItem[], key:
   return (character.attributes[key] ?? 0) + loadoutModifierTotal(items, [key]);
 }
 
+function armorDefenseBase(armor?: string) {
+  const normalized = (armor ?? '').toLowerCase();
+  if (normalized.includes('heavy')) return 13;
+  if (normalized.includes('medium')) return 10;
+  if (normalized.includes('light')) return 7;
+  return 0;
+}
+
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
@@ -77,12 +85,12 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   const sheetStats = useMemo(() => {
     const vitality = activeAttributeValue(character, inventoryItems, 'vitality');
-    const defense = vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
+    const defense = armorDefenseBase(classTemplate?.armor) + vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
     const magicResist = character.magicResist + loadoutModifierTotal(inventoryItems, ['magic_resist', 'magicResist', 'magicResistance']);
     const maxHp = Math.max(0, character.maxHp + loadoutModifierTotal(inventoryItems, ['health', 'hp', 'maxHp', 'max_hp']));
     const maxMana = Math.max(0, character.maxMana + loadoutModifierTotal(inventoryItems, ['mana', 'maxMana', 'max_mana']));
     return { defense, magicResist, maxHp, maxMana };
-  }, [character, inventoryItems]);
+  }, [character, classTemplate?.armor, inventoryItems]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -261,7 +269,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </SoftCard>
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--brass)]"><Shield size={14} /> Defense</div>
-              <p className="mt-2 text-2xl font-black">{signed(sheetStats.defense)}</p>
+              <p className="mt-2 text-2xl font-black">{sheetStats.defense}</p>
             </SoftCard>
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--teal)]"><WandSparkles size={14} /> Magic Resist</div>
@@ -334,7 +342,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
                   <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Defense</p>
-                  <p className="mt-1 text-lg font-black text-[var(--paper)]">{signed(sheetStats.defense)}</p>
+                  <p className="mt-1 text-lg font-black text-[var(--paper)]">{sheetStats.defense}</p>
                 </div>
                 <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
                   <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Magic Resist</p>
