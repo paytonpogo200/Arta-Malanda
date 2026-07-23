@@ -23,15 +23,6 @@ function PanelLoading({ label }: { label: string }) {
   );
 }
 
-function FuturePanel({ title, moduleName }: { title: string; moduleName?: string }) {
-  return (
-    <Card>
-      <p className="eyebrow">{moduleName ?? 'Queued rebuild module'}</p>
-      <h2 className="mt-2 text-3xl font-black">{title}</h2>
-    </Card>
-  );
-}
-
 export function DashboardClient({ profile }: { profile: Profile }) {
   const [tab, setTab] = useState<DashboardTabId>('characters');
   const isDm = profile.role === 'dm';

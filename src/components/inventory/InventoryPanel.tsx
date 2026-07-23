@@ -43,6 +43,10 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
 }
 
+function modifierSignature(item: InventoryItem) {
+  return JSON.stringify(Object.entries(item.modifiers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+}
+
 function stackableItems(a: InventoryItem, b: InventoryItem) {
   return a.name === b.name
     && a.type === b.type
@@ -50,6 +54,10 @@ function stackableItems(a: InventoryItem, b: InventoryItem) {
     && !a.isStorage
     && !b.isStorage
     && (a.enchantment ?? '') === (b.enchantment ?? '')
+    && (a.material ?? '') === (b.material ?? '')
+    && a.enhancementCount === b.enhancementCount
+    && a.isTwoHanded === b.isTwoHanded
+    && modifierSignature(a) === modifierSignature(b)
     && a.loadoutSlot === null
     && b.loadoutSlot === null;
 }

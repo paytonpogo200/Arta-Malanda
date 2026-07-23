@@ -11,7 +11,7 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, quantityStepForItem } from '@/features/inventory/data';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
-import type { InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor } from '@/lib/types';
+import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor } from '@/lib/types';
 
 const EMPTY_PAYLOAD: CitiesPayload = { characters: [], cities: [], vendors: [] };
 
@@ -156,6 +156,24 @@ function runeProducts(vendor: ShopVendor) {
   return vendor.products.filter((product) => RUNE_SECTION_ALIASES.has(productSection(product).toLowerCase()) || product.type === 'rune');
 }
 
+function hasUsableStock(product: MarketProduct, quantity = 1) {
+  return product.available
+    && product.priceCoin > 0
+    && (product.stockQuantity === null || product.stockQuantity >= quantity);
+}
+
+function unavailableReason(product: MarketProduct) {
+  if (!product.available) return 'Unavailable';
+  if (product.priceCoin <= 0) return 'Needs price';
+  if (product.stockQuantity === 0) return 'Out of stock';
+  return '';
+}
+
+function isBlacksmithClass(character: Character | null) {
+  if (!character) return false;
+  return character.classKey.toLowerCase() === 'blacksmith' || character.className.toLowerCase() === 'blacksmith';
+}
+
 function eligibleEnhancementTargets(items: InventoryItem[]) {
   return items.filter((item) => {
     return !item.enchantment
@@ -202,6 +220,20 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const cityLocked = Boolean(calostrynn?.locked);
   const shopperInCity = selectedShopper?.locationName === (calostrynn?.name ?? 'Calostrynn');
   const canShop = Boolean(selectedShopper && calostrynn && !cityLocked && shopperInCity);
+  const canConfirmBlacksmith = useMemo(() => {
+    if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
+    if (craftModal.mode === 'craft') {
+      if (craftModal.recipe.materialQuantity <= 0) return true;
+      const material = materialProducts(selectedVendor).find((product) => product.id === craftMaterialProductId);
+      return Boolean(material && hasUsableStock(material, craftModal.recipe.materialQuantity));
+    }
+
+    const rune = runeProducts(selectedVendor).find((product) => product.id === craftRuneProductId);
+    if (!rune || !hasUsableStock(rune)) return false;
+    if (!craftTargetItemId) return false;
+    if (craftModal.mode === 'enhance' && !craftModifier) return false;
+    return true;
+  }, [canShop, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === calostrynn?.key)
@@ -422,8 +454,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   function openCraftModal(next: CraftModalState) {
     setCraftModal(next);
-    setCraftMaterialProductId(selectedVendor ? materialProducts(selectedVendor).find((product) => product.available)?.id ?? '' : '');
-    setCraftRuneProductId(selectedVendor ? runeProducts(selectedVendor).find((product) => product.available)?.id ?? '' : '');
+    setCraftMaterialProductId(selectedVendor ? materialProducts(selectedVendor).find((product) => hasUsableStock(product))?.id ?? '' : '');
+    setCraftRuneProductId(selectedVendor ? runeProducts(selectedVendor).find((product) => hasUsableStock(product))?.id ?? '' : '');
     setCraftTargetItemId('');
     setCraftModifier('strength');
   }
@@ -527,7 +559,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin * quantity)}</div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I'll pass</Button>
+              <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
               <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> Buy</Button>
             </div>
           </div>
@@ -539,7 +571,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           <div className="grid gap-4">
             {!selectedShopper && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose a character first.</div>}
             {craftModal.mode === 'craft' ? (
-              <CraftRecipeForm vendor={selectedVendor} recipe={craftModal.recipe} materialProductId={craftMaterialProductId} setMaterialProductId={setCraftMaterialProductId} />
+              <CraftRecipeForm vendor={selectedVendor} shopper={selectedShopper} recipe={craftModal.recipe} materialProductId={craftMaterialProductId} setMaterialProductId={setCraftMaterialProductId} />
             ) : (
               <MythrilServiceForm
                 vendor={selectedVendor}
@@ -553,7 +585,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 setModifier={setCraftModifier}
               />
             )}
-            <Button variant="primary" disabled={!canShop || saving || !selectedShopper} onClick={runBlacksmithAction}>
+            <Button variant="primary" disabled={saving || !canConfirmBlacksmith} onClick={runBlacksmithAction}>
               {craftModal.mode === 'craft' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
               Confirm work
             </Button>
@@ -771,7 +803,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   return (
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {products.map((product) => {
-        const disabled = !product.available || product.stockQuantity === 0;
+        const disabled = !hasUsableStock(product);
         return (
           <button
             key={product.id}
@@ -791,10 +823,10 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               </span>
               {isDm && (
                 <span className="flex shrink-0 gap-1">
-                  <span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onPatchProduct(product, { available: !product.available }); }} className="rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)]">
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)] ${saving ? 'pointer-events-none opacity-50' : ''}`}>
                     {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
                   </span>
-                  <span role="button" tabIndex={0} onClick={(event) => { event.stopPropagation(); onEditProduct(product); }} className="rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)]"><Pencil size={13} /></span>
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)] ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
                 </span>
               )}
             </span>
@@ -803,6 +835,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               <span className="text-[var(--brass)]">{formatCoinValue(product.priceCoin)}</span>
               <span className="text-[var(--muted)]">{product.stockQuantity === null ? 'Stock ∞' : `Stock ${product.stockQuantity}`}</span>
             </span>
+            {disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">{unavailableReason(product)}</span>}
             {!canShop && !disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">Unavailable from current location</span>}
           </button>
         );
@@ -811,16 +844,18 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   );
 }
 
-function CraftRecipeForm({ vendor, recipe, materialProductId, setMaterialProductId }: {
+function CraftRecipeForm({ vendor, shopper, recipe, materialProductId, setMaterialProductId }: {
   vendor: ShopVendor;
+  shopper: Character | null;
   recipe: CraftRecipe;
   materialProductId: string;
   setMaterialProductId: (value: string) => void;
 }) {
-  const materials = materialProducts(vendor).filter((product) => product.available);
+  const materials = materialProducts(vendor).filter((product) => hasUsableStock(product, recipe.materialQuantity || 1));
   const selectedMaterial = materials.find((product) => product.id === materialProductId) ?? null;
   const materialCost = recipe.materialQuantity && selectedMaterial ? selectedMaterial.priceCoin * recipe.materialQuantity : 0;
-  const totalCost = materialCost + recipe.laborCoin;
+  const laborCost = isBlacksmithClass(shopper) ? 0 : recipe.laborCoin;
+  const totalCost = materialCost + laborCost;
   return (
     <div className="grid gap-3">
       <SoftCard>
@@ -838,7 +873,11 @@ function CraftRecipeForm({ vendor, recipe, materialProductId, setMaterialProduct
       )}
       <div className="grid gap-2 sm:grid-cols-3">
         <SoftCard><p className="eyebrow">Materials</p><p className="font-black">{formatCoinValue(materialCost)}</p></SoftCard>
-        <SoftCard><p className="eyebrow">Labor</p><p className="font-black">{formatCoinValue(recipe.laborCoin)}</p></SoftCard>
+        <SoftCard>
+          <p className="eyebrow">Labor</p>
+          <p className="font-black">{formatCoinValue(laborCost)}</p>
+          {laborCost === 0 && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--teal)]">Blacksmith discount</span>}
+        </SoftCard>
         <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCoinValue(totalCost)}</p></SoftCard>
       </div>
     </div>
@@ -856,7 +895,7 @@ function MythrilServiceForm({ vendor, mode, inventory, targetItemId, setTargetIt
   modifier: string;
   setModifier: (value: string) => void;
 }) {
-  const runes = runeProducts(vendor).filter((product) => product.available);
+  const runes = runeProducts(vendor).filter((product) => hasUsableStock(product));
   const targets = mode === 'enhance' ? eligibleEnhancementTargets(inventory) : eligibleEnchantmentTargets(inventory);
   return (
     <div className="grid gap-3">

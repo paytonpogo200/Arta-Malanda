@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LocateFixed, Minus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
@@ -76,6 +76,7 @@ export function BattleMap({
   const mapRef = useRef<HTMLDivElement | null>(null);
   const panRef = useRef({ x: 16, y: 16 });
   const zoomRef = useRef(STARTING_ZOOM);
+  const tokensRef = useRef(tokens);
   const dragRef = useRef<{ id: number; x: number; y: number; baseX: number; baseY: number; moved: boolean } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
@@ -83,6 +84,7 @@ export function BattleMap({
 
   const size = useMemo(() => ({ width: battle.gridWidth * CELL_SIZE, height: battle.gridHeight * CELL_SIZE }), [battle.gridWidth, battle.gridHeight]);
   const isDm = profile.role === 'dm';
+  tokensRef.current = tokens;
 
   function applyTransform() {
     if (!mapRef.current) return;
@@ -96,11 +98,11 @@ export function BattleMap({
     applyTransform();
   }
 
-  function centerView(nextZoom = STARTING_ZOOM) {
+  const centerView = useCallback((nextZoom = STARTING_ZOOM) => {
     const viewport = viewportRef.current;
     const viewportWidth = viewport?.clientWidth ?? 900;
     const viewportHeight = viewport?.clientHeight ?? 520;
-    const visible = tokens.filter((token) => Number.isFinite(token.x) && Number.isFinite(token.y));
+    const visible = tokensRef.current.filter((token) => Number.isFinite(token.x) && Number.isFinite(token.y));
     const center = visible.length
       ? {
           x: visible.reduce((sum, token) => sum + token.x, 0) / visible.length + 0.5,
@@ -114,12 +116,12 @@ export function BattleMap({
       y: viewportHeight / 2 - center.y * CELL_SIZE * nextZoom
     };
     applyTransform();
-  }
+  }, [battle.gridHeight, battle.gridWidth]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => centerView());
     return () => window.cancelAnimationFrame(frame);
-  }, [battle.id, tokens.length]);
+  }, [battle.id, centerView, tokens.length]);
 
   function pointerDown(event: React.PointerEvent<HTMLDivElement>) {
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });

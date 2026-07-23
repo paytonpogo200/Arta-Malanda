@@ -32,8 +32,6 @@ const EMPTY_ASSETS: UpdateAssetsPayload = {
   bestiary: []
 };
 
-const LOOT_ITEM_TYPES = [...ITEM_TYPES, 'currency'] as const;
-
 function endpointFor(target: EditorTarget) {
   if (target.kind === 'class') return `/api/assets/classes/${target.value.id}`;
   if (target.kind === 'product') return `/api/cities/products/${target.value.id}`;
@@ -354,7 +352,7 @@ export function UpdateAssetsPanel() {
               <>
                 <TextField value={String(draft.name ?? '')} onChange={(event) => updateDraft('name', event.target.value)} placeholder="Loot item" />
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <SelectField value={String(draft.type ?? 'misc')} onChange={(event) => updateDraft('type', event.target.value)}>{LOOT_ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+                  <SelectField value={String(draft.type ?? 'misc')} onChange={(event) => updateDraft('type', event.target.value)}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                   <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                   <NumberInput value={Number(draft.minDifficulty ?? 1)} onValueChange={(value) => updateDraft('minDifficulty', value)} />
                   <NumberInput value={Number(draft.maxDifficulty ?? 5)} onValueChange={(value) => updateDraft('maxDifficulty', value)} />

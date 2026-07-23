@@ -207,6 +207,27 @@ export function ExplorationPanel() {
           <span>Biomes: <b className="text-[var(--paper)]">{payload.settings.biomes.length}</b></span>
           <span>Pool sizes: <b className="text-[var(--paper)]">{payload.settings.poolSizes.length}</b></span>
         </div>
+        <details className="mt-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">
+          <summary className="cursor-pointer font-black uppercase tracking-wide text-[var(--brass)]">Import diagnostics</summary>
+          <div className="mt-3 grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <span>Room types: <b className="text-[var(--paper)]">{payload.settings.roomTypes.join(', ') || 'None'}</b></span>
+              <span>Difficulties: <b className="text-[var(--paper)]">{payload.settings.difficulties.join(', ') || 'None'}</b></span>
+              <span>Luck: <b className="text-[var(--paper)]">{payload.settings.luckPotionOptions.join(', ') || 'None'}</b></span>
+              <span>Rare boost: <b className="text-[var(--paper)]">{payload.settings.rareBoostRarities.join(', ') || 'None'}</b></span>
+            </div>
+            {!!Object.keys(payload.settings.sourceFormulas).length && (
+              <div className="grid gap-2">
+                {Object.entries(payload.settings.sourceFormulas).map(([key, formula]) => (
+                  <div key={key} className="rounded-xl border border-[var(--line)] bg-black/15 p-2">
+                    <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--brass)]">{key}</span>
+                    <code className="mt-1 block max-h-20 overflow-auto whitespace-pre-wrap break-words text-[0.68rem] text-[var(--paper)]">{formula || 'Not found'}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </details>
       </Card>
 
       <Card>

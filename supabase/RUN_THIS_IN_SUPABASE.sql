@@ -161,21 +161,6 @@ alter table public.inventory_items
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   add column if not exists is_two_handed boolean not null default false;
 
-do $$
-declare
-  v_legacy_column text := 'spell' || '_imbue';
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public'
-      and table_name = 'inventory_items'
-      and column_name = v_legacy_column
-  ) then
-    execute format('update public.inventory_items set enchantment = coalesce(enchantment, %I)', v_legacy_column);
-    execute format('alter table public.inventory_items drop column %I', v_legacy_column);
-  end if;
-end $$;
-
 create table if not exists public.battles (
   id uuid primary key default gen_random_uuid(),
   created_by uuid not null references public.profiles(id) on delete restrict,
@@ -464,24 +449,6 @@ alter table public.characters
 alter table public.characters
   add column if not exists previous_owner_name text not null default '';
 
-do $$
-begin
-  if exists (
-    select 1
-    from information_schema.columns
-    where table_schema = 'public'
-      and table_name = 'characters'
-      and column_name = 'legacy_owner_name'
-  ) then
-    update public.characters
-    set previous_owner_name = legacy_owner_name
-    where previous_owner_name = ''
-      and legacy_owner_name <> '';
-
-    alter table public.characters drop column legacy_owner_name;
-  end if;
-end $$;
-
 create index if not exists characters_class_key_idx on public.characters(class_key);
 
 create or replace function public.profile_from_campaign_session(p_session_token text)
@@ -595,38 +562,13 @@ create trigger bestiary_categories_touch_updated_at
 before update on public.bestiary_categories
 for each row execute function public.touch_updated_at();
 
-create or replace function public.is_retired_bestiary_category(p_category text)
-returns boolean
-language sql
-immutable
-as $$
-  select lower(trim(coalesce(p_category, ''))) in ('animal', 'beast', 'being', 'monster', 'spirit')
-$$;
-
-create or replace function public.purge_retired_bestiary_categories()
-returns void
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-begin
-  delete from public.bestiary_entities
-  where public.is_retired_bestiary_category(category);
-
-  delete from public.bestiary_categories
-  where public.is_retired_bestiary_category(category_key)
-     or public.is_retired_bestiary_category(name);
-end;
-$$;
-
 insert into public.bestiary_categories (category_key, name, display_order)
 select distinct
   e.category,
   initcap(replace(e.category, '-', ' ')),
   1000
 from public.bestiary_entities e
-where not public.is_retired_bestiary_category(e.category)
-  and not exists (
+where not exists (
   select 1 from public.bestiary_categories c where c.category_key = e.category
 );
 
@@ -679,38 +621,32 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   v_is_dm := v_profile.role = 'dm'::public.user_role;
-  perform public.purge_retired_bestiary_categories();
 
   return jsonb_build_object(
     'categories', (
       select coalesce(jsonb_agg(public.bestiary_category_record_to_json(c) order by c.display_order, c.name), '[]'::jsonb)
       from public.bestiary_categories c
-      where not public.is_retired_bestiary_category(c.category_key)
-        and not public.is_retired_bestiary_category(c.name)
-        and (v_is_dm or not c.is_hidden)
+      where v_is_dm or not c.is_hidden
     ),
     'entities', (
       select coalesce(jsonb_agg(public.bestiary_entity_record_to_json(e) order by coalesce(c.display_order, 999999), e.display_order, e.name), '[]'::jsonb)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where not public.is_retired_bestiary_category(e.category)
-        and (v_is_dm or e.is_unlocked)
+      where (v_is_dm or e.is_unlocked)
         and (v_is_dm or coalesce(c.is_hidden, false) = false)
     ),
     'unlockedCount', (
       select count(*)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where not public.is_retired_bestiary_category(e.category)
-        and e.is_unlocked
+      where e.is_unlocked
         and (v_is_dm or coalesce(c.is_hidden, false) = false)
     ),
     'totalCount', (
       select count(*)
       from public.bestiary_entities e
       left join public.bestiary_categories c on c.category_key = e.category
-      where not public.is_retired_bestiary_category(e.category)
-        and (v_is_dm or (e.is_unlocked and coalesce(c.is_hidden, false) = false))
+      where v_is_dm or (e.is_unlocked and coalesce(c.is_hidden, false) = false)
     )
   );
 end;
@@ -735,11 +671,6 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can update bestiary categories.'; end if;
   v_category_key := coalesce(nullif(trim(p_category_key), ''), 'unsorted');
-
-  if public.is_retired_bestiary_category(v_category_key)
-    or public.is_retired_bestiary_category(v_patch->>'name') then
-    raise exception 'That retired bestiary category cannot be restored.';
-  end if;
 
   insert into public.bestiary_categories (category_key, name, display_order)
   values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
@@ -777,9 +708,6 @@ begin
 
   if v_patch ? 'category' then
     v_category_key := coalesce(nullif(trim(v_patch->>'category'), ''), 'uncategorized');
-    if public.is_retired_bestiary_category(v_category_key) then
-      raise exception 'That retired bestiary category cannot be restored.';
-    end if;
     insert into public.bestiary_categories (category_key, name, display_order)
     values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
     on conflict (category_key) do nothing;
@@ -808,8 +736,6 @@ $$;
 
 grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
 grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
-grant execute on function public.is_retired_bestiary_category(text) to anon, authenticated;
-grant execute on function public.purge_retired_bestiary_categories() to anon, authenticated;
 grant execute on function public.get_bestiary(text) to anon, authenticated;
 grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
@@ -846,10 +772,6 @@ begin
   for v_category in select value from jsonb_array_elements(coalesce(p_categories, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_category->>'key', ''), 'unsorted');
-    if public.is_retired_bestiary_category(v_category_key)
-      or public.is_retired_bestiary_category(v_category->>'name') then
-      continue;
-    end if;
 
     insert into public.bestiary_categories (category_key, name, display_order)
     values (
@@ -865,9 +787,6 @@ begin
   for v_entity in select value from jsonb_array_elements(coalesce(p_entities, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_entity->>'category', ''), 'unsorted');
-    if public.is_retired_bestiary_category(v_category_key) then
-      continue;
-    end if;
 
     insert into public.bestiary_categories (category_key, name, display_order)
     values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
@@ -909,13 +828,13 @@ begin
         display_order = excluded.display_order;
   end loop;
 
-  perform public.purge_retired_bestiary_categories();
-
   return public.get_bestiary(p_session_token);
 end;
 $$;
 
 drop function if exists public.import_bestiary_markdown(text, jsonb, jsonb);
+drop function if exists public.is_retired_bestiary_category(text);
+drop function if exists public.purge_retired_bestiary_categories();
 grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to anon, authenticated;
 
 
@@ -1346,6 +1265,36 @@ as $$
   select lower(regexp_replace(trim(coalesce(p_name, '')), '[^a-zA-Z0-9]+', '-', 'g'))
 $$;
 
+create or replace function public.normalize_item_type(p_item_type text)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when lower(trim(coalesce(p_item_type, ''))) = any (array[
+      'weapon',
+      'armor',
+      'shield',
+      'pet',
+      'accessory',
+      'storage',
+      'material',
+      'catalyst',
+      'rune',
+      'ore',
+      'potion',
+      'food',
+      'plant',
+      'fabric',
+      'tool',
+      'quest',
+      'currency',
+      'misc'
+    ]) then lower(trim(coalesce(p_item_type, '')))
+    else 'misc'
+  end
+$$;
+
 create or replace function public.catalog_record_to_json(p_item public.item_catalog)
 returns jsonb
 language sql
@@ -1464,7 +1413,7 @@ begin
   values (
     public.catalog_key_for_name(p_item_name),
     trim(p_item_name),
-    lower(trim(coalesce(p_item_type, 'misc'))),
+    public.normalize_item_type(p_item_type),
     coalesce(nullif(p_rarity, ''), 'Common')::public.item_rarity,
     coalesce(nullif(trim(p_category), ''), 'General'),
     coalesce(p_properties, array[]::text[]),
@@ -1520,33 +1469,33 @@ begin
   perform public.upsert_item_catalog_entry('Bloodmoss', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Clotting']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clotting property when used as an ingredient', true, 90);
   perform public.upsert_item_catalog_entry('Blue Aloe', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Cooling']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Cooling property when used as an ingredient', true, 100);
   perform public.upsert_item_catalog_entry('Blueglass Petal', 'plant', 'Rare', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 110);
-  perform public.upsert_item_catalog_entry('Bogbeast Slime', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 120);
+  perform public.upsert_item_catalog_entry('Bogbeast Slime', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 120);
   perform public.upsert_item_catalog_entry('Cinderroot', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Warming']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Warming property when used as an ingredient', true, 130);
   perform public.upsert_item_catalog_entry('Clearbell Flower', 'plant', 'Rare', 'Alchemy Ingredient', array['Clear-Mind']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clear-Mind property when used as an ingredient', true, 140);
-  perform public.upsert_item_catalog_entry('Crystaline Fragments', 'other', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 150);
+  perform public.upsert_item_catalog_entry('Crystaline Fragments', 'catalyst', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 150);
   perform public.upsert_item_catalog_entry('Dawnpetal', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Wake-Up']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Wake-Up property when used as an ingredient', true, 160);
-  perform public.upsert_item_catalog_entry('Dragon Gland', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 170);
-  perform public.upsert_item_catalog_entry('Dragon Scale', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 180);
-  perform public.upsert_item_catalog_entry('Eagle Feather', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 190);
+  perform public.upsert_item_catalog_entry('Dragon Gland', 'catalyst', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 170);
+  perform public.upsert_item_catalog_entry('Dragon Scale', 'catalyst', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 180);
+  perform public.upsert_item_catalog_entry('Eagle Feather', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 190);
   perform public.upsert_item_catalog_entry('Emberleaf', 'plant', 'Common', 'Alchemy Ingredient', array['Warming']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Warming property when used as an ingredient', true, 200);
-  perform public.upsert_item_catalog_entry('Embertoothed Fang', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 210);
+  perform public.upsert_item_catalog_entry('Embertoothed Fang', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 210);
   perform public.upsert_item_catalog_entry('Fortune Clover', 'plant', 'Rare', 'Alchemy Ingredient', array['Luck']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Luck property when used as an ingredient', true, 220);
-  perform public.upsert_item_catalog_entry('Frosthorn Antler', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 230);
+  perform public.upsert_item_catalog_entry('Frosthorn Antler', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 230);
   perform public.upsert_item_catalog_entry('Frostmint', 'plant', 'Common', 'Alchemy Ingredient', array['Cooling']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Cooling property when used as an ingredient', true, 240);
   perform public.upsert_item_catalog_entry('Fulger Wheat', 'plant', 'Common', 'Alchemy Ingredient', array['Speed']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Speed property when used as an ingredient', true, 250);
-  perform public.upsert_item_catalog_entry('Golem Core', 'other', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 260);
-  perform public.upsert_item_catalog_entry('Griffin Feather', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 270);
+  perform public.upsert_item_catalog_entry('Golem Core', 'catalyst', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 260);
+  perform public.upsert_item_catalog_entry('Griffin Feather', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 270);
   perform public.upsert_item_catalog_entry('Hawkeye Blossom', 'plant', 'Rare', 'Alchemy Ingredient', array['Accuracy']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Accuracy property when used as an ingredient', true, 280);
   perform public.upsert_item_catalog_entry('Heartwood Sprout', 'plant', 'Rare', 'Alchemy Ingredient', array['Vitality']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Vitality property when used as an ingredient', true, 290);
   perform public.upsert_item_catalog_entry('Ironmoss', 'plant', 'Rare', 'Alchemy Ingredient', array['Thickskin']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Thickskin property when used as an ingredient', true, 300);
-  perform public.upsert_item_catalog_entry('Krug Stone', 'other', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 310);
+  perform public.upsert_item_catalog_entry('Krug Stone', 'catalyst', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 310);
   perform public.upsert_item_catalog_entry('Leyroot', 'plant', 'Rare', 'Alchemy Ingredient', array['Mana Regen']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Mana Regen property when used as an ingredient', true, 320);
-  perform public.upsert_item_catalog_entry('Mana Leech', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 330);
-  perform public.upsert_item_catalog_entry('Mana Tick', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 340);
+  perform public.upsert_item_catalog_entry('Mana Leech', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 330);
+  perform public.upsert_item_catalog_entry('Mana Tick', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 340);
   perform public.upsert_item_catalog_entry('Manabloom', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Mana Regen']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Mana Regen property when used as an ingredient', true, 350);
   perform public.upsert_item_catalog_entry('Moonberry', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Night-Eye']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Night-Eye property when used as an ingredient', true, 360);
   perform public.upsert_item_catalog_entry('Moonwell Moss', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stabilizer property when used as an ingredient', true, 370);
-  perform public.upsert_item_catalog_entry('Mystic Serpent Venom', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 380);
+  perform public.upsert_item_catalog_entry('Mystic Serpent Venom', 'catalyst', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 380);
   perform public.upsert_item_catalog_entry('Null Fern', 'plant', 'Rare', 'Alchemy Ingredient', array['Magic Resist']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Magic Resist property when used as an ingredient', true, 390);
   perform public.upsert_item_catalog_entry('Purewater Reed', 'plant', 'Common', 'Alchemy Ingredient', array['Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stabilizer property when used as an ingredient', true, 400);
   perform public.upsert_item_catalog_entry('Shade Moss', 'plant', 'Rare', 'Alchemy Ingredient', array['Stealth']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stealth property when used as an ingredient', true, 410);
@@ -1556,8 +1505,8 @@ begin
   perform public.upsert_item_catalog_entry('Stonebark', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Thickskin']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Thickskin property when used as an ingredient', true, 450);
   perform public.upsert_item_catalog_entry('Titanvine Root', 'plant', 'Rare', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 460);
   perform public.upsert_item_catalog_entry('Ventus Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Speed']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Speed property when used as an ingredient', true, 470);
-  perform public.upsert_item_catalog_entry('Void Avatar Residue', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 480);
-  perform public.upsert_item_catalog_entry('Wolf Fang', 'other', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 490);
+  perform public.upsert_item_catalog_entry('Void Avatar Residue', 'catalyst', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 480);
+  perform public.upsert_item_catalog_entry('Wolf Fang', 'catalyst', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 490);
   perform public.upsert_item_catalog_entry('Yarrow', 'plant', 'Common', 'Alchemy Ingredient', array['Clotting', 'Healing', 'Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clotting property when used as an ingredient; Has Healing property when used as an ingredient; Has Stabilizer property when used as an ingredient', true, 500);
   perform public.upsert_item_catalog_entry('Bronze Scale', 'material', 'Common', 'Material Scales', array['Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Bronze', false, 0, 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', true, 510);
   perform public.upsert_item_catalog_entry('Iron Scale', 'material', 'Common', 'Material Scales', array['Iron: neutral weapon material; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Iron', false, 0, 'Iron: neutral weapon material; +1 Vitality when used for shields.', true, 520);
@@ -1570,7 +1519,7 @@ begin
   perform public.upsert_item_catalog_entry('Lightning Rune', 'rune', 'Rare', 'Runes', array['Can be used for Lightning enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Lightning enchantments.', true, 590);
   perform public.upsert_item_catalog_entry('Earth Rune', 'rune', 'Rare', 'Runes', array['Can be used for Earth enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Earth enchantments.', true, 600);
   perform public.upsert_item_catalog_entry('Wind Rune', 'rune', 'Rare', 'Runes', array['Can be used for Wind enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Wind enchantments.', true, 610);
-  perform public.upsert_item_catalog_entry('Mountian Rune', 'rune', 'Rare', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 620);
+  perform public.upsert_item_catalog_entry('Mountain Rune', 'rune', 'Rare', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 620);
   perform public.upsert_item_catalog_entry('Dagger', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 630);
   perform public.upsert_item_catalog_entry('Throwing Knives', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 640);
   perform public.upsert_item_catalog_entry('Shortbow', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 650);
@@ -1592,6 +1541,16 @@ begin
   perform public.upsert_item_catalog_entry('Custom Magecraft Commission', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 810);
   perform public.upsert_item_catalog_entry('Shield', 'shield', 'Common', 'Shield Creation', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 820);
 end $$;
+
+update public.item_catalog
+set item_type = public.normalize_item_type(item_type);
+
+delete from public.item_catalog
+where item_key = 'mountian-rune';
+
+update public.inventory_items
+set item_type = public.normalize_item_type(item_type),
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end;
 
 create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type text)
 returns boolean
@@ -1944,7 +1903,7 @@ begin
   where item_key = public.catalog_key_for_name(p_item_name)
   limit 1;
 
-  v_item_type := lower(trim(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc')));
+  v_item_type := public.normalize_item_type(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc'));
   if v_catalog.id is not null and (v_item_type = 'misc' or v_item_type = '') then
     v_item_type := v_catalog.item_type;
   end if;
@@ -2109,9 +2068,9 @@ begin
     update public.inventory_items
     set
       item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-      item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
+      item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
-      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
+      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
       enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
@@ -2357,20 +2316,9 @@ alter table public.house_inventory_items
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   add column if not exists is_two_handed boolean not null default false;
 
-do $$
-declare
-  v_legacy_column text := 'spell' || '_imbue';
-begin
-  if exists (
-    select 1 from information_schema.columns
-    where table_schema = 'public'
-      and table_name = 'house_inventory_items'
-      and column_name = v_legacy_column
-  ) then
-    execute format('update public.house_inventory_items set enchantment = coalesce(enchantment, %I)', v_legacy_column);
-    execute format('alter table public.house_inventory_items drop column %I', v_legacy_column);
-  end if;
-end $$;
+update public.house_inventory_items
+set item_type = public.normalize_item_type(item_type),
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end;
 
 create table if not exists public.campaign_properties (
   id uuid primary key default gen_random_uuid(),
@@ -2643,7 +2591,7 @@ begin
   where item_key = public.catalog_key_for_name(p_item_name)
   limit 1;
 
-  v_item_type := lower(trim(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc')));
+  v_item_type := public.normalize_item_type(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc'));
   if v_catalog.id is not null and (v_item_type = 'misc' or v_item_type = '') then
     v_item_type := v_catalog.item_type;
   end if;
@@ -2754,9 +2702,9 @@ begin
     update public.house_inventory_items
     set
       item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-      item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
+      item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
-      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
+      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
       enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
@@ -3471,6 +3419,20 @@ alter table public.market_products
   add column if not exists shop_section text not null default 'Wares',
   add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1));
 
+delete from public.market_products
+where product_key = 'blacksmith-mountian-rune'
+  and exists (
+    select 1
+    from public.market_products existing
+    where existing.product_key = 'blacksmith-mountain-rune'
+  );
+
+update public.market_products
+set item_type = public.normalize_item_type(item_type),
+    item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else item_name end,
+    product_key = case when product_key = 'blacksmith-mountian-rune' then 'blacksmith-mountain-rune' else product_key end,
+    catalog_item_key = case when catalog_item_key = 'mountian-rune' then 'mountain-rune' else catalog_item_key end;
+
 alter table public.cities enable row level security;
 alter table public.shop_vendors enable row level security;
 alter table public.market_products enable row level security;
@@ -3496,9 +3458,7 @@ for each row execute function public.touch_updated_at();
 
 insert into public.cities (city_key, name, is_locked, display_order)
 values ('calostrynn', 'Calostrynn', false, 10)
-on conflict (city_key) do update
-set name = excluded.name,
-    display_order = excluded.display_order;
+on conflict (city_key) do nothing;
 
 insert into public.shop_vendors (city_key, vendor_key, name, facility, category, display_order)
 values
@@ -3507,11 +3467,7 @@ values
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
   ('calostrynn', 'calostrynn-library', 'Library Scribe', 'Library', 'Spells & Scrolls', 40),
   ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50)
-on conflict (vendor_key) do update
-set name = excluded.name,
-    facility = excluded.facility,
-    category = excluded.category,
-    display_order = excluded.display_order;
+on conflict (vendor_key) do nothing;
 
 insert into public.market_products (
   vendor_id,
@@ -3529,7 +3485,7 @@ select
   seed.product_key,
   seed.item_name,
   seed.description,
-  seed.item_type::text,
+  public.normalize_item_type(seed.item_type::text),
   seed.rarity::public.item_rarity,
   seed.price_coin,
   seed.stock_quantity,
@@ -3552,19 +3508,13 @@ join (
     ('calostrynn-blacksmith', 'iron-ore', 'Iron Ore', 'Raw ore ready for forge work.', 'ore', 'Common', 22, 35, 20)
 ) as seed(vendor_key, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, display_order)
 on v.vendor_key = seed.vendor_key
-on conflict (product_key) do update
-set item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    display_order = excluded.display_order;
+on conflict (product_key) do nothing;
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
-delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountian-rune');
+delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune');
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
-select v.id, seed.product_key, seed.item_name, seed.description, seed.item_type, seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
   ('blacksmith-bronze-scale', 'Bronze Scale', 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 0.5, 'bronze-scale', true, 10),
@@ -3578,10 +3528,9 @@ join (values
   ('blacksmith-lightning-rune', 'Lightning Rune', 'Can be used for Lightning enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'lightning-rune', false, 90),
   ('blacksmith-earth-rune', 'Earth Rune', 'Can be used for Earth enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'earth-rune', false, 100),
   ('blacksmith-wind-rune', 'Wind Rune', 'Can be used for Wind enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'wind-rune', false, 110),
-  ('blacksmith-mountian-rune', 'Mountian Rune', 'Cannot be used for enchantments yet.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'mountian-rune', false, 120)
+  ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'mountain-rune', false, 120)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
-on conflict (product_key) do update
-set item_name = excluded.item_name, description = excluded.description, item_type = excluded.item_type, rarity = excluded.rarity, price_coin = excluded.price_coin, shop_section = excluded.shop_section, quantity_step = excluded.quantity_step, catalog_item_key = excluded.catalog_item_key, is_available = excluded.is_available, display_order = excluded.display_order;
+on conflict (product_key) do nothing;
 
 create or replace function public.city_record_to_json(p_city public.cities)
 returns jsonb
@@ -3759,6 +3708,9 @@ begin
   if v_product.id is null or not v_product.is_available then
     raise exception 'That item is not available.';
   end if;
+  if v_product.price_coin <= 0 then
+    raise exception 'That item is out of stock until the DM sets a price.';
+  end if;
 
   select * into v_catalog
   from public.item_catalog
@@ -3853,6 +3805,7 @@ begin
     and coalesce(i.material, '') = coalesce(v_material, '')
     and i.enhancement_count = 0
     and i.is_two_handed = v_is_two_handed
+    and i.modifiers = v_modifiers
     and i.is_storage = false
   order by i.slot_index
   limit 1;
@@ -3879,7 +3832,10 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      enchantment
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
     )
     values (
       v_character.id,
@@ -3891,8 +3847,11 @@ begin
       v_inventory_quantity,
       false,
       0,
-      '{}'::jsonb,
-      null
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      v_is_two_handed
     )
     returning * into v_item;
   end if;
@@ -3969,7 +3928,7 @@ begin
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
     description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
-    item_type = case when v_patch ? 'type' then lower(trim(v_patch->>'type')) else item_type end,
+    item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     price_coin = case when v_patch ? 'priceCoin' then greatest(0, (v_patch->>'priceCoin')::int) else price_coin end,
     stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
@@ -4165,7 +4124,7 @@ begin
     end if;
 
     if v_material_quantity > 0 then
-      select * into v_material_product from public.market_products where id = p_material_product_id and is_available;
+      select * into v_material_product from public.market_products where id = p_material_product_id and is_available and price_coin > 0;
       if v_material_product.id is null or v_material_product.item_type <> 'material' then
         raise exception 'Choose an available material scale.';
       end if;
@@ -4241,7 +4200,7 @@ begin
     raise exception 'Only Mythril items can use that service.';
   end if;
 
-  select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available;
+  select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available and price_coin > 0;
   if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
 
   if lower(coalesce(p_action, '')) = 'enhance' then
@@ -4550,13 +4509,7 @@ select
 from public.shop_vendors v
 join public.spell_catalog s on true
 where v.vendor_key = 'calostrynn-library'
-on conflict (product_key) do update
-set item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    display_order = excluded.display_order;
+on conflict (product_key) do nothing;
 
 create or replace function public.spell_record_to_json(p_spell public.spell_catalog)
 returns jsonb
@@ -4932,6 +4885,9 @@ alter table public.loot_items
   alter column item_type type text using item_type::text,
   alter column min_quantity type numeric(12,1) using min_quantity::numeric,
   alter column max_quantity type numeric(12,1) using max_quantity::numeric;
+
+update public.loot_items
+set item_type = public.normalize_item_type(item_type);
 
 create index if not exists loot_items_workbook_filter_idx on public.loot_items(is_active, difficulty_min, difficulty_max, rarity);
 
@@ -5675,7 +5631,7 @@ begin
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
     item_key = case when v_patch ? 'name' then public.catalog_key_for_name(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) else item_key end,
-    item_type = case when v_patch ? 'type' then lower(trim(v_patch->>'type')) else item_type end,
+    item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), 'General') else category end,
     properties = case when v_patch ? 'properties' and jsonb_typeof(v_patch->'properties') = 'array' then (
@@ -5730,7 +5686,7 @@ begin
   update public.loot_items
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-    item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
+    item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     generator_biomes = case
       when v_patch ? 'biomes' and jsonb_typeof(v_patch->'biomes') = 'array' then (
@@ -5888,10 +5844,7 @@ begin
       continue;
     end if;
 
-    v_type_text := lower(coalesce(nullif(v_row->>'type', ''), nullif(v_row->>'item_type', ''), 'misc'));
-    if v_type_text not in ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc') then
-      v_type_text := 'misc';
-    end if;
+    v_type_text := public.normalize_item_type(coalesce(nullif(v_row->>'type', ''), nullif(v_row->>'item_type', ''), 'misc'));
 
     v_pool_key := lower(regexp_replace(coalesce(v_row->>'poolKey', v_row->>'pool_key', v_row->>'pool', 'catalog-' || v_type_text), '[^a-z0-9]+', '-', 'g'));
     v_pool_name := coalesce(nullif(trim(v_row->>'pool'), ''), initcap(replace(v_pool_key, '-', ' ')));

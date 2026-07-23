@@ -66,14 +66,14 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       setDraft((current) => ({
         ...current,
         classKey: current.classKey || ledger.classes[0]?.key || CLASS_TEMPLATES[0]?.key || '',
-        ownerUserId: current.ownerUserId || ledger.profiles[0]?.id || profile.id
+        ownerUserId: current.ownerUserId
       }));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'The character ledger could not be loaded.');
     } finally {
       setLoading(false);
     }
-  }, [profile.id]);
+  }, []);
 
   useEffect(() => {
     void loadLedger();
@@ -183,8 +183,8 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                 {classes.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
               </SelectField>
               <SelectField value={draft.ownerUserId} onChange={(event) => setDraft({ ...draft, ownerUserId: event.target.value })}>
+                <option value="">Unassigned</option>
                 {profiles.map((entry) => <option key={entry.id} value={entry.id}>{ownerLabel(entry)}</option>)}
-                {!profiles.length && <option value={profile.id}>{profile.displayName}</option>}
               </SelectField>
               <div className="grid gap-2 sm:grid-cols-[1fr_4.5rem]">
                 <TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
