@@ -11,7 +11,7 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type LoadoutModifiers, type Profile } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type AttributeKey, type Character, type ClassTemplate, type InventoryItem, type LoadoutModifiers, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
 type CharacterSheetProps = {
@@ -47,6 +47,10 @@ function loadoutModifierTotal(items: InventoryItem[], keys: Array<keyof LoadoutM
     .reduce((total, item) => total + keys.reduce((sum, key) => sum + modifierNumber(item.modifiers, key), 0), 0);
 }
 
+function activeAttributeValue(character: Character, items: InventoryItem[], key: AttributeKey) {
+  return (character.attributes[key] ?? 0) + loadoutModifierTotal(items, [key]);
+}
+
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
@@ -68,14 +72,17 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
     label: ATTRIBUTE_LABELS[key],
-    value: character.attributes[key] ?? 0
-  })), [character.attributes]);
+    value: activeAttributeValue(character, inventoryItems, key)
+  })), [character, inventoryItems]);
 
   const sheetStats = useMemo(() => {
-    const defense = (character.attributes.vitality ?? 0) + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence', 'vitality']);
+    const vitality = activeAttributeValue(character, inventoryItems, 'vitality');
+    const defense = vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
     const magicResist = character.magicResist + loadoutModifierTotal(inventoryItems, ['magic_resist', 'magicResist', 'magicResistance']);
-    return { defense, magicResist };
-  }, [character.attributes.vitality, character.magicResist, inventoryItems]);
+    const maxHp = Math.max(0, character.maxHp + loadoutModifierTotal(inventoryItems, ['health', 'hp', 'maxHp', 'max_hp']));
+    const maxMana = Math.max(0, character.maxMana + loadoutModifierTotal(inventoryItems, ['mana', 'maxMana', 'max_mana']));
+    return { defense, magicResist, maxHp, maxMana };
+  }, [character, inventoryItems]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -246,11 +253,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--red)]"><Heart size={14} /> Health</div>
-              <p className="mt-2 text-2xl font-black">{character.currentHp}<span className="text-sm text-[var(--muted)]"> / {character.maxHp}</span></p>
+              <p className="mt-2 text-2xl font-black">{Math.min(character.currentHp, sheetStats.maxHp)}<span className="text-sm text-[var(--muted)]"> / {sheetStats.maxHp}</span></p>
             </SoftCard>
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--blue)]"><Sparkles size={14} /> Mana</div>
-              <p className="mt-2 text-2xl font-black">{character.currentMana}<span className="text-sm text-[var(--muted)]"> / {character.maxMana}</span></p>
+              <p className="mt-2 text-2xl font-black">{Math.min(character.currentMana, sheetStats.maxMana)}<span className="text-sm text-[var(--muted)]"> / {sheetStats.maxMana}</span></p>
             </SoftCard>
             <SoftCard>
               <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[var(--brass)]"><Shield size={14} /> Defense</div>
@@ -322,8 +329,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           <Card>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Vitals</h3></div>
             <div className="grid gap-3">
-              <ResourceBar label="Health" tone="hp" current={character.currentHp} max={character.maxHp} />
-              <ResourceBar label="Mana" tone="mana" current={character.currentMana} max={character.maxMana} />
+              <ResourceBar label="Health" tone="hp" current={Math.min(character.currentHp, sheetStats.maxHp)} max={sheetStats.maxHp} />
+              <ResourceBar label="Mana" tone="mana" current={Math.min(character.currentMana, sheetStats.maxMana)} max={sheetStats.maxMana} />
               <div className="grid grid-cols-2 gap-2">
                 <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
                   <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Defense</p>

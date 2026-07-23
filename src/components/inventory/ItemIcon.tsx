@@ -1,4 +1,4 @@
-import { Box, BrickWall, Coins, FlaskConical, Leaf, PackageOpen, PawPrint, ScrollText, Shield, Shirt, Sparkles, SwatchBook, Sword, Wheat, Wrench } from 'lucide-react';
+import { Box, BrickWall, Coins, FlaskConical, Gem, Leaf, PackageOpen, PawPrint, ScrollText, Shield, Shirt, Sparkles, SwatchBook, Sword, Wheat, Wrench } from 'lucide-react';
 import type { ItemType } from '@/lib/types';
 
 export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number }) {
@@ -9,6 +9,9 @@ export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number })
     pet: PawPrint,
     accessory: Sparkles,
     storage: PackageOpen,
+    material: BrickWall,
+    catalyst: FlaskConical,
+    rune: Gem,
     ore: BrickWall,
     potion: FlaskConical,
     food: Wheat,

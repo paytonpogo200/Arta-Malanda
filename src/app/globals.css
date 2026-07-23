@@ -296,16 +296,44 @@ h3,
   will-change: transform, opacity;
 }
 
+.inventory-enhanced::after {
+  content: '';
+  position: absolute;
+  inset: -10%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .38;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 232, 153, .32), transparent 22%),
+    linear-gradient(116deg, transparent 8%, rgba(255, 209, 102, .12) 34%, rgba(119, 230, 255, .42) 50%, rgba(255, 209, 102, .16) 66%, transparent 88%);
+  background-size: 100% 100%, 240% 100%;
+  transform: translateX(-38%) rotate(3deg);
+  animation: enhanced-gleam 9s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.inventory-enchanted.inventory-enhanced::after {
+  background:
+    linear-gradient(104deg, transparent 12%, rgba(97, 245, 228, .12) 32%, rgba(111, 255, 235, .58) 48%, rgba(142, 255, 241, .18) 62%, transparent 82%);
+}
+
 @keyframes enchanted-gleam {
   0% { transform: translateX(-48%) rotate(-4deg); opacity: .22; }
   42% { transform: translateX(42%) rotate(-4deg); opacity: .56; }
   100% { transform: translateX(48%) rotate(-4deg); opacity: .22; }
 }
 
+@keyframes enhanced-gleam {
+  0% { transform: translateX(-42%) rotate(3deg); opacity: .22; }
+  50% { transform: translateX(38%) rotate(3deg); opacity: .44; }
+  100% { transform: translateX(48%) rotate(3deg); opacity: .22; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .rarity-legendary::before,
   .rarity-mythical::before,
-  .inventory-enchanted::after {
+  .inventory-enchanted::after,
+  .inventory-enhanced::after {
     animation: none;
     will-change: auto;
   }

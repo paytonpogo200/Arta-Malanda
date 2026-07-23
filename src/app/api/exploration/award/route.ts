@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
       p_session_token: token,
       p_character_id: String(body.characterId ?? ''),
       p_loot_item_id: String(body.itemId ?? ''),
-      p_quantity: Math.max(1, Number(body.quantity ?? 1))
+      p_quantity: Math.max(0.5, Number(body.quantity ?? 1))
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

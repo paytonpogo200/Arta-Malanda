@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import type { ItemRarity, ItemType } from '@/lib/types';
 
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
-const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
+const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
 
 function text(value: unknown, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -44,6 +44,9 @@ export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): 
   const combined = `${explicitType} ${name}`;
 
   if (combined.includes('coin') || combined.includes('currency') || combined.includes('callis') || combined.includes('callor')) return 'currency';
+  if (combined.includes('rune')) return 'rune';
+  if (combined.includes('catalyst') || combined.includes('fang') || combined.includes('feather') || combined.includes('venom') || combined.includes('slime') || combined.includes('gland') || combined.includes('residue')) return 'catalyst';
+  if (combined.includes('scale') || combined.includes('material')) return 'material';
   if (combined.includes('shield')) return 'shield';
   if (combined.includes('armor') || combined.includes('armour')) return 'armor';
   if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand') || combined.includes('arrows')) return 'weapon';

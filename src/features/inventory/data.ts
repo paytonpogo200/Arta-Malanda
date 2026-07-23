@@ -5,7 +5,7 @@ export type CharacterInventoryPayload = {
   wallet: WalletBalance[];
 };
 
-export const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc'];
+export const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
 export const LOADOUT_SLOTS: LoadoutSlot[] = ['weapon', 'armor', 'shield', 'active-pet', 'accessory-1', 'accessory-2', 'accessory-3', 'accessory-4'];
 
 export function acceptsLoadoutItem(slot: LoadoutSlot, type: ItemType) {
@@ -63,14 +63,34 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     name: String(source.name ?? 'Unknown item'),
     type: normalizeItemType(source.type),
     rarity: normalizeRarity(source.rarity),
-    quantity: Math.max(1, numberFrom(source.quantity, 1)),
+    quantity: Math.max(0.5, numberFrom(source.quantity, 1)),
     slotIndex: Math.max(0, numberFrom(source.slotIndex, 0)),
     loadoutSlot: normalizeLoadoutSlot(source.loadoutSlot),
     isStorage: Boolean(source.isStorage),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
     modifiers: normalizeModifiers(source.modifiers),
-    spellImbue: source.spellImbue ? String(source.spellImbue) : undefined
+    enchantment: source.enchantment ? String(source.enchantment) : undefined,
+    material: source.material ? String(source.material) : undefined,
+    enhancementCount: Math.max(0, numberFrom(source.enhancementCount, 0)),
+    isTwoHanded: Boolean(source.isTwoHanded)
   };
+}
+
+export function itemAllowsDecimalQuantity(item: Pick<InventoryItem, 'type' | 'name'> | { type: ItemType; name: string }) {
+  const name = item.name.toLowerCase();
+  return (item.type === 'material' || item.type === 'ore') && (
+    name === 'bronze scale'
+    || name === 'iron scale'
+    || name === 'steel scale'
+    || name === 'mythril scale'
+    || name === 'vaylium scale'
+    || name === 'dragonscale scale'
+    || name === 'dragon scale'
+  );
+}
+
+export function quantityStepForItem(item: Pick<InventoryItem, 'type' | 'name'> | { type: ItemType; name: string }) {
+  return itemAllowsDecimalQuantity(item) ? 0.5 : 1;
 }
 
 export function normalizeWalletBalance(value: unknown): WalletBalance | null {

@@ -37,7 +37,7 @@ function canStack(a: InventoryItem, b: InventoryItem) {
     && a.name.trim().toLowerCase() === b.name.trim().toLowerCase()
     && a.rarity === b.rarity
     && a.type === b.type
-    && (a.spellImbue ?? '') === (b.spellImbue ?? '');
+    && (a.enchantment ?? '') === (b.enchantment ?? '');
 }
 
 function centeredPosition(index: number, gridWidth: number, gridHeight: number) {

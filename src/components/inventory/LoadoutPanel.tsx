@@ -49,7 +49,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                 event.preventDefault();
                 onEquip(itemId, key);
               }}
-              className={`min-h-28 rounded-2xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'surface-soft'}`}
+              className={`min-h-28 rounded-2xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.enchantment ? 'inventory-enchanted' : ''} ${item.enhancementCount > 0 ? 'inventory-enhanced' : ''}` : 'surface-soft'}`}
             >
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{label}</p>
@@ -70,7 +70,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                   <span className="text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-black leading-4">{item.name}</span>
-                    {item.spellImbue && <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">{item.spellImbue}</span>}
+                    {item.enchantment && <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">{item.enchantment}</span>}
                   </span>
                 </button>
               ) : (

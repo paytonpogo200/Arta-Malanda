@@ -50,7 +50,7 @@ export const InventorySlot = memo(function InventorySlot({
         if (item || canAdd) onOpen();
       }}
       className={`inventory-slot relative flex min-h-[7.6rem] flex-col items-center justify-between rounded-2xl border p-2.5 text-center transition active:scale-95 sm:min-h-[7rem] ${
-        item ? `${rarityClass(item.rarity)} ${item.spellImbue ? 'inventory-enchanted' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
+        item ? `${rarityClass(item.rarity)} ${item.enchantment ? 'inventory-enchanted' : ''} ${item.enhancementCount > 0 ? 'inventory-enhanced' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
       } ${target ? 'inventory-slot-target' : ''}`}
     >
       <span className="inventory-slot-number pointer-events-none absolute top-1.5 text-[9px] font-black text-[var(--muted)]">{slot + 1}</span>

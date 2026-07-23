@@ -11,9 +11,9 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
-import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem } from '@/features/inventory/data';
+import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
-import type { Character, InventoryItem, ItemRarity, ItemType, LoadoutSlot, LootItem, WalletBalance } from '@/lib/types';
+import type { Character, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, LoadoutSlot, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -27,7 +27,7 @@ type ItemDraft = {
   rarity: ItemRarity;
   quantity: number;
   storageCapacity: number;
-  spellImbue: string;
+  enchantment: string;
 };
 
 const EMPTY_DRAFT: ItemDraft = {
@@ -36,7 +36,7 @@ const EMPTY_DRAFT: ItemDraft = {
   rarity: 'Common',
   quantity: 1,
   storageCapacity: 0,
-  spellImbue: ''
+  enchantment: ''
 };
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
@@ -49,7 +49,7 @@ function stackableItems(a: InventoryItem, b: InventoryItem) {
     && a.rarity === b.rarity
     && !a.isStorage
     && !b.isStorage
-    && (a.spellImbue ?? '') === (b.spellImbue ?? '')
+    && (a.enchantment ?? '') === (b.enchantment ?? '')
     && a.loadoutSlot === null
     && b.loadoutSlot === null;
 }
@@ -86,7 +86,7 @@ export function InventoryPanel({
   const [modal, setModal] = useState<SlotTarget | null>(null);
   const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
   const [dropQuantity, setDropQuantity] = useState(1);
-  const [catalog, setCatalog] = useState<LootItem[]>([]);
+  const [catalog, setCatalog] = useState<ItemCatalogEntry[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
@@ -122,8 +122,28 @@ export function InventoryPanel({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) return;
       const normalized = normalizeUpdateAssetsPayload(payload);
-      const uniqueByName = new Map<string, LootItem>();
-      for (const item of normalized.lootItems.filter((entry) => entry.type !== 'currency')) {
+      const uniqueByName = new Map<string, ItemCatalogEntry>();
+      const catalogSource = normalized.itemCatalog.length
+        ? normalized.itemCatalog.filter((entry) => entry.type !== 'currency' && entry.active)
+        : normalized.lootItems.filter((entry) => entry.type !== 'currency').map((entry) => ({
+          id: entry.id,
+          key: entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+          name: entry.name,
+          type: entry.type,
+          rarity: entry.rarity,
+          category: entry.category,
+          properties: [],
+          quantityStep: 1,
+          stackable: true,
+          defaultModifiers: {},
+          material: '',
+          isTwoHanded: false,
+          storageCapacity: entry.type === 'storage' ? inferStorageCapacity(entry.name) : 0,
+          notes: entry.notes,
+          active: true,
+          order: 0
+        } satisfies ItemCatalogEntry));
+      for (const item of catalogSource) {
         const key = `${item.name.toLowerCase()}|${item.rarity}|${item.type}`;
         if (!uniqueByName.has(key)) uniqueByName.set(key, item);
       }
@@ -143,7 +163,7 @@ export function InventoryPanel({
   const filteredCatalog = useMemo(() => {
     const search = catalogSearch.trim().toLowerCase();
     const source = search
-      ? catalog.filter((item) => `${item.name} ${item.type} ${item.rarity} ${item.category}`.toLowerCase().includes(search))
+      ? catalog.filter((item) => `${item.name} ${item.type} ${item.rarity} ${item.category} ${item.properties.join(' ')}`.toLowerCase().includes(search))
       : catalog;
     return source.slice(0, 80);
   }, [catalog, catalogSearch]);
@@ -157,21 +177,21 @@ export function InventoryPanel({
       rarity: item.rarity,
       quantity: item.quantity,
       storageCapacity: item.storageCapacity,
-      spellImbue: item.spellImbue ?? ''
+      enchantment: item.enchantment ?? ''
     } : EMPTY_DRAFT);
     setDropQuantity(item?.quantity ?? 1);
     setCatalogSearch('');
     setAddMode(item ? 'custom' : 'catalog');
   }
 
-  function chooseCatalogItem(item: LootItem) {
+  function chooseCatalogItem(item: ItemCatalogEntry) {
     setDraft({
       name: item.name,
       type: item.type,
       rarity: item.rarity,
-      quantity: Math.max(1, item.minQuantity || 1),
-      storageCapacity: item.type === 'storage' ? inferStorageCapacity(item.name) : 0,
-      spellImbue: ''
+      quantity: Math.max(item.quantityStep || 1, item.quantityStep || 1),
+      storageCapacity: item.type === 'storage' ? item.storageCapacity || inferStorageCapacity(item.name) : 0,
+      enchantment: ''
     });
   }
 
@@ -239,7 +259,7 @@ export function InventoryPanel({
         slotIndex: modal.slot,
         isStorage: draft.type === 'storage',
         storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        spellImbue: draft.spellImbue.trim() || null
+        enchantment: draft.enchantment.trim() || null
       })
     });
   }
@@ -254,10 +274,10 @@ export function InventoryPanel({
         name: draft.name.trim(),
         type: draft.type,
         rarity: draft.rarity,
-        quantity: Math.max(1, draft.quantity),
+        quantity: Math.max(quantityStepForItem(draft), draft.quantity),
         isStorage: draft.type === 'storage',
         storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        spellImbue: draft.spellImbue.trim() || null
+        enchantment: draft.enchantment.trim() || null
       })
     });
   }
@@ -291,7 +311,7 @@ export function InventoryPanel({
 
   async function dropItem(item: InventoryItem) {
     if (!canManage) return;
-    await requestInventoryChange(`/api/inventory/items/${item.id}?quantity=${Math.max(1, dropQuantity)}`, { method: 'DELETE' });
+    await requestInventoryChange(`/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function sendToHouse(item: InventoryItem) {
@@ -438,7 +458,7 @@ export function InventoryPanel({
                   {modal.item.loadoutSlot && <Button variant="secondary" onClick={() => equipItem(modal.item!.id, null)}>Unequip to first open slot</Button>}
                   {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <NumberInput min={1} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
+                    <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
                     <Button variant="danger" onClick={() => dropItem(modal.item!)} disabled={saving}>Drop</Button>
                   </div>
                 </div>
@@ -449,10 +469,10 @@ export function InventoryPanel({
                   <div className="grid gap-2 sm:grid-cols-3">
                     <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                     <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                    <NumberInput min={1} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
+                    <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
                   </div>
                   {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
-                  {draft.type === 'weapon' && <TextField placeholder="Spell imbue (optional)" value={draft.spellImbue} onChange={(event) => setDraft({ ...draft, spellImbue: event.target.value })} />}
+                  {draft.type === 'weapon' && <TextField placeholder="Enchantment (optional)" value={draft.enchantment} onChange={(event) => setDraft({ ...draft, enchantment: event.target.value })} />}
                   <Button variant="primary" disabled={!draft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
@@ -510,10 +530,10 @@ export function InventoryPanel({
               <div className="grid gap-2 sm:grid-cols-3">
                 <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                 <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                <NumberInput min={1} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
+                <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
               </div>
               {draft.type === 'storage' && <NumberInput min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
-              {draft.type === 'weapon' && <TextField placeholder="Spell imbue (optional)" value={draft.spellImbue} onChange={(event) => setDraft({ ...draft, spellImbue: event.target.value })} />}
+              {draft.type === 'weapon' && <TextField placeholder="Enchantment (optional)" value={draft.enchantment} onChange={(event) => setDraft({ ...draft, enchantment: event.target.value })} />}
               <Button variant="primary" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}

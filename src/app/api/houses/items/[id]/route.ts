@@ -33,7 +33,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 
     const { id } = await context.params;
     const { searchParams } = new URL(request.url);
-    const quantity = Math.max(1, Number(searchParams.get('quantity') ?? 999999));
+    const quantity = Math.max(0.5, Number(searchParams.get('quantity') ?? 999999));
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 

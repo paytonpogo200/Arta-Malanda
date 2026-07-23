@@ -29,12 +29,6 @@ end $$;
 
 do $$
 begin
-  create type public.item_type as enum ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'misc');
-exception when duplicate_object then null;
-end $$;
-
-do $$
-begin
   create type public.battle_status as enum ('active', 'ended');
 exception when duplicate_object then null;
 end $$;
@@ -119,21 +113,26 @@ create table if not exists public.inventory_items (
   character_id uuid not null references public.characters(id) on delete cascade,
   parent_item_id uuid references public.inventory_items(id) on delete cascade,
   item_name text not null,
-  item_type public.item_type not null default 'misc',
+  item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
-  quantity int not null default 1 check (quantity > 0),
+  quantity numeric(12,1) not null default 1 check (quantity > 0),
   slot_index int not null default 0,
   loadout_slot text,
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
-  spell_imbue text,
+  enchantment text,
+  material text,
+  enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
+  is_two_handed boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.inventory_items drop constraint if exists inventory_items_slot_index_check;
 alter table public.inventory_items drop constraint if exists inventory_items_visible_or_storage_slot_check;
+alter table public.inventory_items drop constraint if exists inventory_item_type_valid;
+alter table public.inventory_items drop constraint if exists inventory_items_item_type_valid;
 alter table public.inventory_items add constraint inventory_items_visible_or_storage_slot_check
   check (
     slot_index >= 0
@@ -151,6 +150,31 @@ create unique index if not exists inventory_container_slot_unique
 create unique index if not exists inventory_loadout_slot_unique
   on public.inventory_items (character_id, loadout_slot)
   where loadout_slot is not null;
+
+alter table public.inventory_items
+  alter column item_type type text using item_type::text,
+  alter column quantity type numeric(12,1) using quantity::numeric;
+
+alter table public.inventory_items
+  add column if not exists enchantment text,
+  add column if not exists material text,
+  add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
+  add column if not exists is_two_handed boolean not null default false;
+
+do $$
+declare
+  v_legacy_column text := 'spell' || '_imbue';
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'inventory_items'
+      and column_name = v_legacy_column
+  ) then
+    execute format('update public.inventory_items set enchantment = coalesce(enchantment, %I)', v_legacy_column);
+    execute format('alter table public.inventory_items drop column %I', v_legacy_column);
+  end if;
+end $$;
 
 create table if not exists public.battles (
   id uuid primary key default gen_random_uuid(),
@@ -1280,17 +1304,306 @@ alter table public.character_wallet_balances enable row level security;
 revoke all on table public.currency_units from anon, authenticated;
 revoke all on table public.character_wallet_balances from anon, authenticated;
 
-create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type public.item_type)
+-- ============================================================
+-- ============================================================
+
+-- Global item catalog foundation. This powers inventory add, shops, loot imports, and crafting.
+
+create table if not exists public.item_catalog (
+  id uuid primary key default gen_random_uuid(),
+  item_key text not null unique,
+  item_name text not null,
+  item_type text not null default 'misc',
+  rarity public.item_rarity not null default 'Common',
+  category text not null default 'General',
+  properties text[] not null default array[]::text[],
+  quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
+  is_stackable boolean not null default true,
+  default_modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(default_modifiers) = 'object'),
+  material text not null default '',
+  is_two_handed boolean not null default false,
+  storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
+  notes text not null default '',
+  is_active boolean not null default true,
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.item_catalog enable row level security;
+revoke all on public.item_catalog from anon, authenticated;
+
+drop trigger if exists item_catalog_touch_updated_at on public.item_catalog;
+create trigger item_catalog_touch_updated_at
+before update on public.item_catalog
+for each row execute function public.touch_updated_at();
+
+create or replace function public.catalog_key_for_name(p_name text)
+returns text
+language sql
+immutable
+as $$
+  select lower(regexp_replace(trim(coalesce(p_name, '')), '[^a-zA-Z0-9]+', '-', 'g'))
+$$;
+
+create or replace function public.catalog_record_to_json(p_item public.item_catalog)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_item.id,
+    'key', p_item.item_key,
+    'name', p_item.item_name,
+    'type', p_item.item_type,
+    'rarity', p_item.rarity,
+    'category', p_item.category,
+    'properties', to_jsonb(p_item.properties),
+    'quantityStep', p_item.quantity_step,
+    'stackable', p_item.is_stackable,
+    'defaultModifiers', p_item.default_modifiers,
+    'material', p_item.material,
+    'isTwoHanded', p_item.is_two_handed,
+    'storageCapacity', p_item.storage_capacity,
+    'notes', p_item.notes,
+    'active', p_item.is_active,
+    'order', p_item.display_order
+  )
+$$;
+
+create or replace function public.item_quantity_step(p_item_name text, p_item_type text)
+returns numeric
+language sql
+stable
+as $$
+  select case
+    when lower(trim(coalesce(p_item_name, ''))) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale', 'dragon scale')
+      and lower(trim(coalesce(p_item_type, ''))) in ('material', 'ore')
+      then 0.5::numeric
+    else coalesce((
+      select c.quantity_step
+      from public.item_catalog c
+      where c.item_key = public.catalog_key_for_name(p_item_name)
+        and c.is_active = true
+      limit 1
+    ), 1::numeric)
+  end
+$$;
+
+create or replace function public.assert_valid_item_quantity(p_item_name text, p_item_type text, p_quantity numeric)
+returns numeric
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_quantity numeric := coalesce(p_quantity, 1);
+  v_step numeric := public.item_quantity_step(p_item_name, p_item_type);
+begin
+  if v_quantity <= 0 then
+    raise exception 'Item quantity must be greater than zero.';
+  end if;
+
+  if v_step = 0.5 then
+    if mod((v_quantity * 2)::numeric, 1::numeric) <> 0 then
+      raise exception 'This material can only use half-scale increments.';
+    end if;
+  elsif mod(v_quantity::numeric, 1::numeric) <> 0 then
+    raise exception 'This item must use whole-number quantities.';
+  end if;
+
+  return round(v_quantity * 2) / 2;
+end;
+$$;
+
+create or replace function public.upsert_item_catalog_entry(
+  p_item_name text,
+  p_item_type text,
+  p_rarity text,
+  p_category text default 'General',
+  p_properties text[] default array[]::text[],
+  p_quantity_step numeric default 1,
+  p_is_stackable boolean default true,
+  p_default_modifiers jsonb default '{}'::jsonb,
+  p_material text default '',
+  p_is_two_handed boolean default false,
+  p_storage_capacity int default 0,
+  p_notes text default '',
+  p_is_active boolean default true,
+  p_display_order int default 0
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  if length(trim(coalesce(p_item_name, ''))) = 0 then
+    raise exception 'Item name is required.';
+  end if;
+
+  insert into public.item_catalog (
+    item_key,
+    item_name,
+    item_type,
+    rarity,
+    category,
+    properties,
+    quantity_step,
+    is_stackable,
+    default_modifiers,
+    material,
+    is_two_handed,
+    storage_capacity,
+    notes,
+    is_active,
+    display_order
+  )
+  values (
+    public.catalog_key_for_name(p_item_name),
+    trim(p_item_name),
+    lower(trim(coalesce(p_item_type, 'misc'))),
+    coalesce(nullif(p_rarity, ''), 'Common')::public.item_rarity,
+    coalesce(nullif(trim(p_category), ''), 'General'),
+    coalesce(p_properties, array[]::text[]),
+    case when coalesce(p_quantity_step, 1) = 0.5 then 0.5 else 1 end,
+    coalesce(p_is_stackable, true),
+    case when jsonb_typeof(coalesce(p_default_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_default_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    coalesce(trim(p_material), ''),
+    coalesce(p_is_two_handed, false),
+    greatest(0, coalesce(p_storage_capacity, 0)),
+    coalesce(p_notes, ''),
+    coalesce(p_is_active, true),
+    coalesce(p_display_order, 0)
+  )
+  on conflict (item_key) do update
+  set item_name = excluded.item_name,
+      item_type = excluded.item_type,
+      rarity = excluded.rarity,
+      category = excluded.category,
+      properties = (
+        select coalesce(array_agg(distinct prop order by prop), array[]::text[])
+        from unnest(public.item_catalog.properties || excluded.properties) as prop
+        where nullif(trim(prop), '') is not null
+      ),
+      quantity_step = excluded.quantity_step,
+      is_stackable = excluded.is_stackable,
+      default_modifiers = case
+        when excluded.default_modifiers = '{}'::jsonb then public.item_catalog.default_modifiers
+        else public.item_catalog.default_modifiers || excluded.default_modifiers
+      end,
+      material = case when excluded.material = '' then public.item_catalog.material else excluded.material end,
+      is_two_handed = excluded.is_two_handed,
+      storage_capacity = greatest(public.item_catalog.storage_capacity, excluded.storage_capacity),
+      notes = case when excluded.notes = '' then public.item_catalog.notes else excluded.notes end,
+      is_active = excluded.is_active,
+      display_order = excluded.display_order
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+-- Seed/refresh global item catalog from source assets.
+do $$
+begin
+  perform public.upsert_item_catalog_entry('Acer Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 10);
+  perform public.upsert_item_catalog_entry('Aethercap', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 20);
+  perform public.upsert_item_catalog_entry('Agilis', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Agility']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Agility property when used as an ingredient', true, 30);
+  perform public.upsert_item_catalog_entry('Aloe', 'plant', 'Common', 'Alchemy Ingredient', array['Healing', 'Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Healing property when used as an ingredient; Has Stabilizer property when used as an ingredient', true, 40);
+  perform public.upsert_item_catalog_entry('Axillium', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Healing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Healing property when used as an ingredient', true, 50);
+  perform public.upsert_item_catalog_entry('Bitterleaf', 'plant', 'Common', 'Alchemy Ingredient', array['Antidote']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Antidote property when used as an ingredient', true, 60);
+  perform public.upsert_item_catalog_entry('Bitterwake Root', 'plant', 'Rare', 'Alchemy Ingredient', array['Wake-Up']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Wake-Up property when used as an ingredient', true, 70);
+  perform public.upsert_item_catalog_entry('Blessing Berry', 'plant', 'Common', 'Alchemy Ingredient', array['Healing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Healing property when used as an ingredient', true, 80);
+  perform public.upsert_item_catalog_entry('Bloodmoss', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Clotting']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clotting property when used as an ingredient', true, 90);
+  perform public.upsert_item_catalog_entry('Blue Aloe', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Cooling']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Cooling property when used as an ingredient', true, 100);
+  perform public.upsert_item_catalog_entry('Blueglass Petal', 'plant', 'Rare', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 110);
+  perform public.upsert_item_catalog_entry('Bogbeast Slime', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 120);
+  perform public.upsert_item_catalog_entry('Cinderroot', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Warming']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Warming property when used as an ingredient', true, 130);
+  perform public.upsert_item_catalog_entry('Clearbell Flower', 'plant', 'Rare', 'Alchemy Ingredient', array['Clear-Mind']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clear-Mind property when used as an ingredient', true, 140);
+  perform public.upsert_item_catalog_entry('Crystaline Fragments', 'other', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 150);
+  perform public.upsert_item_catalog_entry('Dawnpetal', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Wake-Up']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Wake-Up property when used as an ingredient', true, 160);
+  perform public.upsert_item_catalog_entry('Dragon Gland', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 170);
+  perform public.upsert_item_catalog_entry('Dragon Scale', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 180);
+  perform public.upsert_item_catalog_entry('Eagle Feather', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 190);
+  perform public.upsert_item_catalog_entry('Emberleaf', 'plant', 'Common', 'Alchemy Ingredient', array['Warming']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Warming property when used as an ingredient', true, 200);
+  perform public.upsert_item_catalog_entry('Embertoothed Fang', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 210);
+  perform public.upsert_item_catalog_entry('Fortune Clover', 'plant', 'Rare', 'Alchemy Ingredient', array['Luck']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Luck property when used as an ingredient', true, 220);
+  perform public.upsert_item_catalog_entry('Frosthorn Antler', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 230);
+  perform public.upsert_item_catalog_entry('Frostmint', 'plant', 'Common', 'Alchemy Ingredient', array['Cooling']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Cooling property when used as an ingredient', true, 240);
+  perform public.upsert_item_catalog_entry('Fulger Wheat', 'plant', 'Common', 'Alchemy Ingredient', array['Speed']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Speed property when used as an ingredient', true, 250);
+  perform public.upsert_item_catalog_entry('Golem Core', 'other', 'Rare', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 260);
+  perform public.upsert_item_catalog_entry('Griffin Feather', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 270);
+  perform public.upsert_item_catalog_entry('Hawkeye Blossom', 'plant', 'Rare', 'Alchemy Ingredient', array['Accuracy']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Accuracy property when used as an ingredient', true, 280);
+  perform public.upsert_item_catalog_entry('Heartwood Sprout', 'plant', 'Rare', 'Alchemy Ingredient', array['Vitality']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Vitality property when used as an ingredient', true, 290);
+  perform public.upsert_item_catalog_entry('Ironmoss', 'plant', 'Rare', 'Alchemy Ingredient', array['Thickskin']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Thickskin property when used as an ingredient', true, 300);
+  perform public.upsert_item_catalog_entry('Krug Stone', 'other', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 310);
+  perform public.upsert_item_catalog_entry('Leyroot', 'plant', 'Rare', 'Alchemy Ingredient', array['Mana Regen']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Mana Regen property when used as an ingredient', true, 320);
+  perform public.upsert_item_catalog_entry('Mana Leech', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 330);
+  perform public.upsert_item_catalog_entry('Mana Tick', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 340);
+  perform public.upsert_item_catalog_entry('Manabloom', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Mana Regen']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Mana Regen property when used as an ingredient', true, 350);
+  perform public.upsert_item_catalog_entry('Moonberry', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Night-Eye']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Night-Eye property when used as an ingredient', true, 360);
+  perform public.upsert_item_catalog_entry('Moonwell Moss', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stabilizer property when used as an ingredient', true, 370);
+  perform public.upsert_item_catalog_entry('Mystic Serpent Venom', 'other', 'Uncommon', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 380);
+  perform public.upsert_item_catalog_entry('Null Fern', 'plant', 'Rare', 'Alchemy Ingredient', array['Magic Resist']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Magic Resist property when used as an ingredient', true, 390);
+  perform public.upsert_item_catalog_entry('Purewater Reed', 'plant', 'Common', 'Alchemy Ingredient', array['Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stabilizer property when used as an ingredient', true, 400);
+  perform public.upsert_item_catalog_entry('Shade Moss', 'plant', 'Rare', 'Alchemy Ingredient', array['Stealth']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Stealth property when used as an ingredient', true, 410);
+  perform public.upsert_item_catalog_entry('Snakebane Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Antidote']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Antidote property when used as an ingredient', true, 420);
+  perform public.upsert_item_catalog_entry('Star Sage Orchid', 'plant', 'Rare', 'Alchemy Ingredient', array['Intelligence']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Intelligence property when used as an ingredient', true, 430);
+  perform public.upsert_item_catalog_entry('Stillwater Reed', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Clear-Mind', 'Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clear-Mind property when used as an ingredient; Has Stabilizer property when used as an ingredient', true, 440);
+  perform public.upsert_item_catalog_entry('Stonebark', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Thickskin']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Thickskin property when used as an ingredient', true, 450);
+  perform public.upsert_item_catalog_entry('Titanvine Root', 'plant', 'Rare', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 460);
+  perform public.upsert_item_catalog_entry('Ventus Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Speed']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Speed property when used as an ingredient', true, 470);
+  perform public.upsert_item_catalog_entry('Void Avatar Residue', 'other', 'Legendary', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 480);
+  perform public.upsert_item_catalog_entry('Wolf Fang', 'other', 'Common', 'Alchemy Ingredient', array['Catalyst']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Catalyst property when used as an ingredient', true, 490);
+  perform public.upsert_item_catalog_entry('Yarrow', 'plant', 'Common', 'Alchemy Ingredient', array['Clotting', 'Healing', 'Stabilizer']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Clotting property when used as an ingredient; Has Healing property when used as an ingredient; Has Stabilizer property when used as an ingredient', true, 500);
+  perform public.upsert_item_catalog_entry('Bronze Scale', 'material', 'Common', 'Material Scales', array['Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Bronze', false, 0, 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', true, 510);
+  perform public.upsert_item_catalog_entry('Iron Scale', 'material', 'Common', 'Material Scales', array['Iron: neutral weapon material; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Iron', false, 0, 'Iron: neutral weapon material; +1 Vitality when used for shields.', true, 520);
+  perform public.upsert_item_catalog_entry('Steel Scale', 'material', 'Uncommon', 'Material Scales', array['Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.']::text[], 0.5, true, '{}'::jsonb, 'Steel', false, 0, 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.', true, 530);
+  perform public.upsert_item_catalog_entry('Mythril Scale', 'material', 'Rare', 'Material Scales', array['Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.']::text[], 0.5, true, '{}'::jsonb, 'Mythril', false, 0, 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', true, 540);
+  perform public.upsert_item_catalog_entry('Vaylium Scale', 'material', 'Epic', 'Material Scales', array['Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.']::text[], 0.5, true, '{}'::jsonb, 'Vaylium', false, 0, 'Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.', true, 550);
+  perform public.upsert_item_catalog_entry('Dragonscale Scale', 'material', 'Legendary', 'Material Scales', array['Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.']::text[], 0.5, true, '{}'::jsonb, 'Dragonscale', false, 0, 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.', true, 560);
+  perform public.upsert_item_catalog_entry('Ember Rune', 'rune', 'Rare', 'Runes', array['Can be used for Ember enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Ember enchantments.', true, 570);
+  perform public.upsert_item_catalog_entry('Frost Rune', 'rune', 'Rare', 'Runes', array['Can be used for Frost enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Frost enchantments.', true, 580);
+  perform public.upsert_item_catalog_entry('Lightning Rune', 'rune', 'Rare', 'Runes', array['Can be used for Lightning enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Lightning enchantments.', true, 590);
+  perform public.upsert_item_catalog_entry('Earth Rune', 'rune', 'Rare', 'Runes', array['Can be used for Earth enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Earth enchantments.', true, 600);
+  perform public.upsert_item_catalog_entry('Wind Rune', 'rune', 'Rare', 'Runes', array['Can be used for Wind enchantments.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Can be used for Wind enchantments.', true, 610);
+  perform public.upsert_item_catalog_entry('Mountian Rune', 'rune', 'Rare', 'Runes', array['Cannot be used for enchantments yet.']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cannot be used for enchantments yet.', true, 620);
+  perform public.upsert_item_catalog_entry('Dagger', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 630);
+  perform public.upsert_item_catalog_entry('Throwing Knives', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 640);
+  perform public.upsert_item_catalog_entry('Shortbow', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 650);
+  perform public.upsert_item_catalog_entry('Custom Light Weapon', 'weapon', 'Common', 'Light Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 660);
+  perform public.upsert_item_catalog_entry('Sword', 'weapon', 'Common', 'Medium Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 670);
+  perform public.upsert_item_catalog_entry('Spear', 'weapon', 'Common', 'Medium Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 680);
+  perform public.upsert_item_catalog_entry('Longbow', 'weapon', 'Common', 'Medium Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 690);
+  perform public.upsert_item_catalog_entry('Custom Medium Weapon', 'weapon', 'Common', 'Medium Weapons', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 700);
+  perform public.upsert_item_catalog_entry('Battleaxe', 'weapon', 'Common', 'Heavy Weapons', array[]::text[], 1, true, '{}'::jsonb, '', true, 0, '', true, 710);
+  perform public.upsert_item_catalog_entry('Mace', 'weapon', 'Common', 'Heavy Weapons', array[]::text[], 1, true, '{}'::jsonb, '', true, 0, '', true, 720);
+  perform public.upsert_item_catalog_entry('Claymore', 'weapon', 'Common', 'Heavy Weapons', array[]::text[], 1, true, '{}'::jsonb, '', true, 0, '', true, 730);
+  perform public.upsert_item_catalog_entry('Crossbow', 'weapon', 'Common', 'Heavy Weapons', array[]::text[], 1, true, '{}'::jsonb, '', true, 0, '', true, 740);
+  perform public.upsert_item_catalog_entry('Custom Heavy Weapon', 'weapon', 'Common', 'Heavy Weapons', array[]::text[], 1, true, '{}'::jsonb, '', true, 0, '', true, 750);
+  perform public.upsert_item_catalog_entry('Magic Bow', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 760);
+  perform public.upsert_item_catalog_entry('Magic Longbow', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 770);
+  perform public.upsert_item_catalog_entry('Wand', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 780);
+  perform public.upsert_item_catalog_entry('Scepter', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 790);
+  perform public.upsert_item_catalog_entry('Staff', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 800);
+  perform public.upsert_item_catalog_entry('Custom Magecraft Commission', 'weapon', 'Common', 'Magecraft Commissions', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 810);
+  perform public.upsert_item_catalog_entry('Shield', 'shield', 'Common', 'Shield Creation', array[]::text[], 1, true, '{}'::jsonb, '', false, 0, '', true, 820);
+end $$;
+
+create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type text)
 returns boolean
 language sql
 immutable
 as $$
   select case
-    when p_loadout_slot = 'weapon' then p_item_type = 'weapon'::public.item_type
-    when p_loadout_slot = 'armor' then p_item_type = 'armor'::public.item_type
-    when p_loadout_slot = 'shield' then p_item_type = 'shield'::public.item_type
-    when p_loadout_slot = 'active-pet' then p_item_type = 'pet'::public.item_type
-    when p_loadout_slot in ('accessory-1', 'accessory-2', 'accessory-3', 'accessory-4') then p_item_type = 'accessory'::public.item_type
+    when p_loadout_slot = 'weapon' then p_item_type = 'weapon'::text
+    when p_loadout_slot = 'armor' then p_item_type = 'armor'::text
+    when p_loadout_slot = 'shield' then p_item_type = 'shield'::text
+    when p_loadout_slot = 'active-pet' then p_item_type = 'pet'::text
+    when p_loadout_slot in ('accessory-1', 'accessory-2', 'accessory-3', 'accessory-4') then p_item_type = 'accessory'::text
     else false
   end
 $$;
@@ -1314,7 +1627,10 @@ as $$
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
-    'spellImbue', p_item.spell_imbue
+    'enchantment', p_item.enchantment,
+    'material', p_item.material,
+    'enhancementCount', p_item.enhancement_count,
+    'isTwoHanded', p_item.is_two_handed
   )
 $$;
 
@@ -1505,7 +1821,7 @@ as $$
     where i.character_id = p_character_id
       and i.parent_item_id is null
       and i.loadout_slot is null
-      and i.item_type = 'storage'::public.item_type
+      and i.item_type = 'storage'::text
       and i.is_storage = true
       and lower(i.item_name) = lower(trim(coalesce(p_item_name, '')))
   )
@@ -1522,7 +1838,7 @@ with duplicate_empty_storage as (
     from public.inventory_items i
     where i.parent_item_id is null
       and i.loadout_slot is null
-      and i.item_type = 'storage'::public.item_type
+      and i.item_type = 'storage'::text
       and i.is_storage = true
   ) ranked
   where duplicate_rank > 1
@@ -1541,7 +1857,7 @@ with active_storage as (
   from public.inventory_items i
   where i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_type = 'storage'::public.item_type
+    and i.item_type = 'storage'::text
     and i.is_storage = true
 )
 update public.inventory_items i
@@ -1555,7 +1871,7 @@ with active_storage as (
   from public.inventory_items i
   where i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_type = 'storage'::public.item_type
+    and i.item_type = 'storage'::text
     and i.is_storage = true
 )
 update public.inventory_items i
@@ -1571,7 +1887,10 @@ as $$
   select a.item_name = b.item_name
     and a.item_type = b.item_type
     and a.rarity = b.rarity
-    and coalesce(a.spell_imbue, '') = coalesce(b.spell_imbue, '')
+    and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
+    and coalesce(a.material, '') = coalesce(b.material, '')
+    and a.enhancement_count = b.enhancement_count
+    and a.is_two_handed = b.is_two_handed
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -1584,11 +1903,11 @@ create or replace function public.add_character_inventory_item(
   p_item_name text,
   p_item_type text,
   p_rarity text,
-  p_quantity int,
+  p_quantity numeric,
   p_is_storage boolean default false,
   p_storage_capacity int default 0,
   p_modifiers jsonb default '{}'::jsonb,
-  p_spell_imbue text default null
+  p_enchantment text default null
 )
 returns jsonb
 language plpgsql
@@ -1600,8 +1919,14 @@ declare
   v_character public.characters%rowtype;
   v_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
-  v_item_type public.item_type;
-  v_quantity int := greatest(1, coalesce(p_quantity, 1));
+  v_catalog public.item_catalog%rowtype;
+  v_item_type text;
+  v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
+  v_rarity public.item_rarity;
+  v_modifiers jsonb;
+  v_material text := '';
+  v_is_two_handed boolean := false;
+  v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_make_storage_container boolean := false;
   v_storage_item public.inventory_items%rowtype;
 begin
@@ -1614,8 +1939,26 @@ begin
     raise exception 'Item name is required.';
   end if;
 
-  v_item_type := p_item_type::public.item_type;
-  v_make_storage_container := v_item_type = 'storage'::public.item_type
+  select * into v_catalog
+  from public.item_catalog
+  where item_key = public.catalog_key_for_name(p_item_name)
+  limit 1;
+
+  v_item_type := lower(trim(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc')));
+  if v_catalog.id is not null and (v_item_type = 'misc' or v_item_type = '') then
+    v_item_type := v_catalog.item_type;
+  end if;
+  v_rarity := coalesce(nullif(p_rarity, ''), coalesce(v_catalog.rarity::text, 'Common'))::public.item_rarity;
+  v_modifiers := case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end;
+  if v_catalog.id is not null then
+    v_modifiers := v_catalog.default_modifiers || v_modifiers;
+    v_material := v_catalog.material;
+    v_is_two_handed := v_catalog.is_two_handed;
+    v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
+  end if;
+  v_quantity := public.assert_valid_item_quantity(p_item_name, v_item_type, v_quantity);
+
+  v_make_storage_container := v_item_type = 'storage'::text
     and coalesce(p_is_storage, false)
     and p_parent_item_id is null
     and not public.character_storage_container_exists(p_character_id, p_item_name);
@@ -1632,7 +1975,10 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      spell_imbue
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
     )
     values (
       p_character_id,
@@ -1640,12 +1986,15 @@ begin
       public.next_storage_container_slot(p_character_id),
       trim(p_item_name),
       v_item_type,
-      p_rarity::public.item_rarity,
+      v_rarity,
       1,
       true,
-      greatest(1, coalesce(p_storage_capacity, 6)),
-      case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
-      nullif(trim(coalesce(p_spell_imbue, '')), '')
+      greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)),
+      v_modifiers,
+      nullif(trim(coalesce(p_enchantment, '')), ''),
+      v_material,
+      0,
+      v_is_two_handed
     )
     returning * into v_storage_item;
 
@@ -1668,8 +2017,11 @@ begin
   if v_target.id is not null then
     if v_target.item_name = trim(p_item_name)
       and v_target.item_type = v_item_type
-      and v_target.rarity = p_rarity::public.item_rarity
-      and coalesce(v_target.spell_imbue, '') = coalesce(nullif(trim(p_spell_imbue), ''), '')
+      and v_target.rarity = v_rarity
+      and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
+      and coalesce(v_target.material, '') = coalesce(v_material, '')
+      and v_target.enhancement_count = 0
+      and v_target.is_two_handed = v_is_two_handed
       and v_target.is_storage = false
     then
       update public.inventory_items
@@ -1693,7 +2045,10 @@ begin
     is_storage,
     storage_capacity,
     modifiers,
-    spell_imbue
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
   )
   values (
     p_character_id,
@@ -1701,12 +2056,15 @@ begin
     p_slot_index,
     trim(p_item_name),
     v_item_type,
-    p_rarity::public.item_rarity,
+    v_rarity,
     v_quantity,
     false,
     0,
-    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
-    nullif(trim(coalesce(p_spell_imbue, '')), '')
+    v_modifiers,
+    nullif(trim(coalesce(p_enchantment, '')), ''),
+    v_material,
+    0,
+    v_is_two_handed
   )
   returning * into v_item;
 
@@ -1743,7 +2101,7 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'spellImbue') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -1751,12 +2109,15 @@ begin
     update public.inventory_items
     set
       item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-      item_type = case when v_patch ? 'type' then (v_patch->>'type')::public.item_type else item_type end,
+      item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
-      quantity = case when v_patch ? 'quantity' then greatest(1, (v_patch->>'quantity')::int) else quantity end,
+      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
-      spell_imbue = case when v_patch ? 'spellImbue' then nullif(trim(coalesce(v_patch->>'spellImbue', '')), '') else spell_imbue end
+      enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
+      material = case when v_patch ? 'material' then trim(coalesce(v_patch->>'material', '')) else material end,
+      enhancement_count = case when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int)) else enhancement_count end,
+      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
     where id = p_item_id
     returning * into v_item;
   end if;
@@ -1778,6 +2139,28 @@ begin
 
     if not public.loadout_slot_accepts_item(v_loadout_slot, v_item.item_type) then
       raise exception 'That item cannot go in that loadout slot.';
+    end if;
+
+    if v_loadout_slot = 'shield'
+      and exists (
+        select 1 from public.inventory_items i
+        where i.character_id = v_item.character_id
+          and i.loadout_slot = 'weapon'
+          and i.is_two_handed = true
+      )
+    then
+      raise exception 'A shield cannot be active with a heavy two-handed weapon.';
+    end if;
+
+    if v_loadout_slot = 'weapon'
+      and v_item.is_two_handed = true
+      and exists (
+        select 1 from public.inventory_items i
+        where i.character_id = v_item.character_id
+          and i.loadout_slot = 'shield'
+      )
+    then
+      raise exception 'A heavy two-handed weapon cannot be active with a shield.';
     end if;
 
     if exists (select 1 from public.inventory_items where character_id = v_item.character_id and loadout_slot = v_loadout_slot and id <> v_item.id) then
@@ -1833,7 +2216,7 @@ $$;
 create or replace function public.drop_inventory_item_quantity(
   p_session_token text,
   p_item_id uuid,
-  p_quantity int
+  p_quantity numeric
 )
 returns jsonb
 language plpgsql
@@ -1843,6 +2226,7 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_item public.inventory_items%rowtype;
+  v_drop_quantity numeric;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -1852,13 +2236,15 @@ begin
 
   perform public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if greatest(1, coalesce(p_quantity, 1)) >= v_item.quantity then
+  v_drop_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+
+  if v_drop_quantity >= v_item.quantity then
     delete from public.inventory_items where id = v_item.id;
     return null;
   end if;
 
   update public.inventory_items
-  set quantity = quantity - greatest(1, coalesce(p_quantity, 1))
+  set quantity = quantity - v_drop_quantity
   where id = v_item.id
   returning * into v_item;
 
@@ -1904,7 +2290,7 @@ begin
 end;
 $$;
 
-grant execute on function public.loadout_slot_accepts_item(text, public.item_type) to anon, authenticated;
+grant execute on function public.loadout_slot_accepts_item(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
 grant execute on function public.wallet_balances_for_character(uuid) to anon, authenticated;
 grant execute on function public.get_character_inventory(text, uuid) to anon, authenticated;
@@ -1914,9 +2300,9 @@ grant execute on function public.assert_inventory_slot_capacity(public.character
 grant execute on function public.next_storage_container_slot(uuid) to anon, authenticated;
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
-grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, int, boolean, int, jsonb, text) to anon, authenticated;
+grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
-grant execute on function public.drop_inventory_item_quantity(text, uuid, int) to anon, authenticated;
+grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
 
 
@@ -1939,20 +2325,52 @@ create table if not exists public.house_inventory_items (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
   item_name text not null,
-  item_type public.item_type not null default 'misc',
+  item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
-  quantity int not null default 1 check (quantity > 0),
+  quantity numeric(12,1) not null default 1 check (quantity > 0),
   slot_index int not null default 0 check (slot_index >= 0),
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
-  spell_imbue text,
+  enchantment text,
+  material text,
+  enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
+  is_two_handed boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create unique index if not exists house_inventory_main_slot_unique
   on public.house_inventory_items (owner_user_id, slot_index);
+
+alter table public.house_inventory_items
+  drop constraint if exists house_inventory_item_type_valid,
+  drop constraint if exists house_inventory_items_item_type_valid;
+
+alter table public.house_inventory_items
+  alter column item_type type text using item_type::text,
+  alter column quantity type numeric(12,1) using quantity::numeric;
+
+alter table public.house_inventory_items
+  add column if not exists enchantment text,
+  add column if not exists material text,
+  add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
+  add column if not exists is_two_handed boolean not null default false;
+
+do $$
+declare
+  v_legacy_column text := 'spell' || '_imbue';
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'house_inventory_items'
+      and column_name = v_legacy_column
+  ) then
+    execute format('update public.house_inventory_items set enchantment = coalesce(enchantment, %I)', v_legacy_column);
+    execute format('alter table public.house_inventory_items drop column %I', v_legacy_column);
+  end if;
+end $$;
 
 create table if not exists public.campaign_properties (
   id uuid primary key default gen_random_uuid(),
@@ -2076,7 +2494,10 @@ as $$
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
-    'spellImbue', p_item.spell_imbue
+    'enchantment', p_item.enchantment,
+    'material', p_item.material,
+    'enhancementCount', p_item.enhancement_count,
+    'isTwoHanded', p_item.is_two_handed
   )
 $$;
 
@@ -2106,7 +2527,10 @@ as $$
   select a.item_name = b.item_name
     and a.item_type = b.item_type
     and a.rarity = b.rarity
-    and coalesce(a.spell_imbue, '') = coalesce(b.spell_imbue, '')
+    and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
+    and coalesce(a.material, '') = coalesce(b.material, '')
+    and a.enhancement_count = b.enhancement_count
+    and a.is_two_handed = b.is_two_handed
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -2178,11 +2602,11 @@ create or replace function public.add_house_inventory_item(
   p_item_name text,
   p_item_type text,
   p_rarity text,
-  p_quantity int,
+  p_quantity numeric,
   p_is_storage boolean default false,
   p_storage_capacity int default 0,
   p_modifiers jsonb default '{}'::jsonb,
-  p_spell_imbue text default null
+  p_enchantment text default null
 )
 returns jsonb
 language plpgsql
@@ -2194,6 +2618,14 @@ declare
   v_house public.player_houses%rowtype;
   v_item public.house_inventory_items%rowtype;
   v_target public.house_inventory_items%rowtype;
+  v_catalog public.item_catalog%rowtype;
+  v_item_type text;
+  v_rarity public.item_rarity;
+  v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
+  v_modifiers jsonb;
+  v_material text := '';
+  v_is_two_handed boolean := false;
+  v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   v_house := public.assert_house_access(v_profile, p_owner_user_id, true);
@@ -2206,6 +2638,25 @@ begin
     raise exception 'Item name is required.';
   end if;
 
+  select * into v_catalog
+  from public.item_catalog
+  where item_key = public.catalog_key_for_name(p_item_name)
+  limit 1;
+
+  v_item_type := lower(trim(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc')));
+  if v_catalog.id is not null and (v_item_type = 'misc' or v_item_type = '') then
+    v_item_type := v_catalog.item_type;
+  end if;
+  v_rarity := coalesce(nullif(p_rarity, ''), coalesce(v_catalog.rarity::text, 'Common'))::public.item_rarity;
+  v_quantity := public.assert_valid_item_quantity(p_item_name, v_item_type, v_quantity);
+  v_modifiers := case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end;
+  if v_catalog.id is not null then
+    v_modifiers := v_catalog.default_modifiers || v_modifiers;
+    v_material := v_catalog.material;
+    v_is_two_handed := v_catalog.is_two_handed;
+    v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
+  end if;
+
   select * into v_target
   from public.house_inventory_items i
   where i.owner_user_id = p_owner_user_id
@@ -2214,14 +2665,17 @@ begin
 
   if v_target.id is not null then
     if v_target.item_name = trim(p_item_name)
-      and v_target.item_type = p_item_type::public.item_type
-      and v_target.rarity = p_rarity::public.item_rarity
-      and coalesce(v_target.spell_imbue, '') = coalesce(nullif(trim(p_spell_imbue), ''), '')
+      and v_target.item_type = v_item_type
+      and v_target.rarity = v_rarity
+      and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
+      and coalesce(v_target.material, '') = coalesce(v_material, '')
+      and v_target.enhancement_count = 0
+      and v_target.is_two_handed = v_is_two_handed
       and v_target.is_storage = false
       and not coalesce(p_is_storage, false)
     then
       update public.house_inventory_items
-      set quantity = quantity + greatest(1, coalesce(p_quantity, 1))
+      set quantity = quantity + v_quantity
       where id = v_target.id
       returning * into v_item;
       return public.house_item_record_to_json(v_item);
@@ -2240,19 +2694,25 @@ begin
     is_storage,
     storage_capacity,
     modifiers,
-    spell_imbue
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
   )
   values (
     p_owner_user_id,
     p_slot_index,
     trim(p_item_name),
-    p_item_type::public.item_type,
-    p_rarity::public.item_rarity,
-    greatest(1, coalesce(p_quantity, 1)),
+    v_item_type,
+    v_rarity,
+    v_quantity,
     coalesce(p_is_storage, false),
-    case when coalesce(p_is_storage, false) then greatest(1, coalesce(p_storage_capacity, 6)) else 0 end,
-    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
-    nullif(trim(coalesce(p_spell_imbue, '')), '')
+    case when coalesce(p_is_storage, false) then greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)) else 0 end,
+    v_modifiers,
+    nullif(trim(coalesce(p_enchantment, '')), ''),
+    v_material,
+    0,
+    v_is_two_handed
   )
   returning * into v_item;
 
@@ -2286,7 +2746,7 @@ begin
 
   v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'spellImbue') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -2294,12 +2754,15 @@ begin
     update public.house_inventory_items
     set
       item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-      item_type = case when v_patch ? 'type' then (v_patch->>'type')::public.item_type else item_type end,
+      item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
-      quantity = case when v_patch ? 'quantity' then greatest(1, (v_patch->>'quantity')::int) else quantity end,
+      quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
-      spell_imbue = case when v_patch ? 'spellImbue' then nullif(trim(coalesce(v_patch->>'spellImbue', '')), '') else spell_imbue end
+      enchantment = case when v_patch ? 'enchantment' then nullif(trim(coalesce(v_patch->>'enchantment', '')), '') else enchantment end,
+      material = case when v_patch ? 'material' then trim(coalesce(v_patch->>'material', '')) else material end,
+      enhancement_count = case when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int)) else enhancement_count end,
+      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
     where id = p_item_id
     returning * into v_item;
   end if;
@@ -2344,7 +2807,7 @@ $$;
 create or replace function public.drop_house_inventory_item_quantity(
   p_session_token text,
   p_item_id uuid,
-  p_quantity int
+  p_quantity numeric
 )
 returns jsonb
 language plpgsql
@@ -2354,6 +2817,7 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_item public.house_inventory_items%rowtype;
+  v_drop_quantity numeric;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -2363,13 +2827,15 @@ begin
 
   perform public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
-  if greatest(1, coalesce(p_quantity, 1)) >= v_item.quantity then
+  v_drop_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+
+  if v_drop_quantity >= v_item.quantity then
     delete from public.house_inventory_items where id = v_item.id;
     return null;
   end if;
 
   update public.house_inventory_items
-  set quantity = quantity - greatest(1, coalesce(p_quantity, 1))
+  set quantity = quantity - v_drop_quantity
   where id = v_item.id
   returning * into v_item;
 
@@ -2414,7 +2880,10 @@ begin
     and h.item_name = v_item.item_name
     and h.item_type = v_item.item_type
     and h.rarity = v_item.rarity
-    and coalesce(h.spell_imbue, '') = coalesce(v_item.spell_imbue, '')
+    and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
+    and coalesce(h.material, '') = coalesce(v_item.material, '')
+    and h.enhancement_count = v_item.enhancement_count
+    and h.is_two_handed = v_item.is_two_handed
     and h.is_storage = false
     and v_item.is_storage = false
   order by h.slot_index
@@ -2444,7 +2913,10 @@ begin
     is_storage,
     storage_capacity,
     modifiers,
-    spell_imbue
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
   )
   values (
     v_character.owner_user_id,
@@ -2456,7 +2928,10 @@ begin
     v_item.is_storage,
     v_item.storage_capacity,
     v_item.modifiers,
-    v_item.spell_imbue
+    v_item.enchantment,
+    v_item.material,
+    v_item.enhancement_count,
+    v_item.is_two_handed
   )
   returning * into v_house_item;
 
@@ -2599,9 +3074,9 @@ grant execute on function public.property_record_to_json(public.campaign_propert
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, int) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
-grant execute on function public.add_house_inventory_item(text, uuid, int, text, text, text, int, boolean, int, jsonb, text) to anon, authenticated;
+grant execute on function public.add_house_inventory_item(text, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
-grant execute on function public.drop_house_inventory_item_quantity(text, uuid, int) to anon, authenticated;
+grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;
@@ -2967,10 +3442,13 @@ create table if not exists public.market_products (
   product_key text not null unique,
   item_name text not null,
   description text not null default '',
-  item_type public.item_type not null default 'misc',
+  item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   price_coin int not null default 0 check (price_coin >= 0),
-  stock_quantity int check (stock_quantity is null or stock_quantity >= 0),
+  stock_quantity numeric(12,1) check (stock_quantity is null or stock_quantity >= 0),
+  catalog_item_key text,
+  shop_section text not null default 'Wares',
+  quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
   is_available boolean not null default true,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -2979,6 +3457,19 @@ create table if not exists public.market_products (
 
 create index if not exists shop_vendors_city_idx on public.shop_vendors(city_key);
 create index if not exists market_products_vendor_idx on public.market_products(vendor_id);
+
+alter table public.market_products
+  drop constraint if exists market_products_item_type_valid,
+  drop constraint if exists market_product_item_type_valid;
+
+alter table public.market_products
+  alter column item_type type text using item_type::text,
+  alter column stock_quantity type numeric(12,1) using stock_quantity::numeric;
+
+alter table public.market_products
+  add column if not exists catalog_item_key text,
+  add column if not exists shop_section text not null default 'Wares',
+  add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1));
 
 alter table public.cities enable row level security;
 alter table public.shop_vendors enable row level security;
@@ -3038,7 +3529,7 @@ select
   seed.product_key,
   seed.item_name,
   seed.description,
-  seed.item_type::public.item_type,
+  seed.item_type::text,
   seed.rarity::public.item_rarity,
   seed.price_coin,
   seed.stock_quantity,
@@ -3069,6 +3560,29 @@ set item_name = excluded.item_name,
     price_coin = excluded.price_coin,
     display_order = excluded.display_order;
 
+-- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
+with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
+delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountian-rune');
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, seed.item_type, seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
+from public.shop_vendors v
+join (values
+  ('blacksmith-bronze-scale', 'Bronze Scale', 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 0.5, 'bronze-scale', true, 10),
+  ('blacksmith-iron-scale', 'Iron Scale', 'Iron: neutral weapon material; +1 Vitality when used for shields.', 'material', 'Common', 400, 40, 'Material Scales', 0.5, 'iron-scale', true, 20),
+  ('blacksmith-steel-scale', 'Steel Scale', 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 0.5, 'steel-scale', true, 30),
+  ('blacksmith-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 0.5, 'mythril-scale', true, 40),
+  ('blacksmith-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Intelligence; weapons use Intelligence instead of Strength.', 'material', 'Epic', 5000, 10, 'Material Scales', 0.5, 'vaylium-scale', true, 50),
+  ('blacksmith-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +5 Magic Resist for shields.', 'material', 'Legendary', 15000, 2, 'Material Scales', 0.5, 'dragonscale-scale', true, 60),
+  ('blacksmith-ember-rune', 'Ember Rune', 'Can be used for Ember enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'ember-rune', false, 70),
+  ('blacksmith-frost-rune', 'Frost Rune', 'Can be used for Frost enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'frost-rune', false, 80),
+  ('blacksmith-lightning-rune', 'Lightning Rune', 'Can be used for Lightning enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'lightning-rune', false, 90),
+  ('blacksmith-earth-rune', 'Earth Rune', 'Can be used for Earth enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'earth-rune', false, 100),
+  ('blacksmith-wind-rune', 'Wind Rune', 'Can be used for Wind enchantments.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'wind-rune', false, 110),
+  ('blacksmith-mountian-rune', 'Mountian Rune', 'Cannot be used for enchantments yet.', 'rune', 'Rare', 0, 0, 'Runes', 1, 'mountian-rune', false, 120)
+) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
+on conflict (product_key) do update
+set item_name = excluded.item_name, description = excluded.description, item_type = excluded.item_type, rarity = excluded.rarity, price_coin = excluded.price_coin, shop_section = excluded.shop_section, quantity_step = excluded.quantity_step, catalog_item_key = excluded.catalog_item_key, is_available = excluded.is_available, display_order = excluded.display_order;
+
 create or replace function public.city_record_to_json(p_city public.cities)
 returns jsonb
 language sql
@@ -3098,6 +3612,9 @@ as $$
     'rarity', p_product.rarity,
     'priceCoin', p_product.price_coin,
     'stockQuantity', p_product.stock_quantity,
+    'catalogItemKey', p_product.catalog_item_key,
+    'section', p_product.shop_section,
+    'quantityStep', p_product.quantity_step,
     'available', p_product.is_available
   )
 $$;
@@ -3204,7 +3721,7 @@ create or replace function public.purchase_market_product(
   p_session_token text,
   p_character_id uuid,
   p_product_id uuid,
-  p_quantity int default 1
+  p_quantity numeric default 1
 )
 returns jsonb
 language plpgsql
@@ -3217,11 +3734,16 @@ declare
   v_city public.cities%rowtype;
   v_product public.market_products%rowtype;
   v_vendor public.shop_vendors%rowtype;
-  v_quantity int := greatest(1, coalesce(p_quantity, 1));
+  v_catalog public.item_catalog%rowtype;
+  v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_cost int;
   v_wallet int;
   v_slot int;
-  v_inventory_quantity int;
+  v_inventory_quantity numeric;
+  v_modifiers jsonb := '{}'::jsonb;
+  v_material text := '';
+  v_is_two_handed boolean := false;
+  v_storage_capacity int := 0;
   v_storage_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
@@ -3236,6 +3758,19 @@ begin
   select * into v_product from public.market_products where id = p_product_id;
   if v_product.id is null or not v_product.is_available then
     raise exception 'That item is not available.';
+  end if;
+
+  select * into v_catalog
+  from public.item_catalog
+  where item_key = coalesce(nullif(v_product.catalog_item_key, ''), public.catalog_key_for_name(v_product.item_name))
+  limit 1;
+
+  v_quantity := public.assert_valid_item_quantity(v_product.item_name, v_product.item_type, v_quantity);
+  if v_catalog.id is not null then
+    v_modifiers := v_catalog.default_modifiers;
+    v_material := v_catalog.material;
+    v_is_two_handed := v_catalog.is_two_handed;
+    v_storage_capacity := v_catalog.storage_capacity;
   end if;
 
   select * into v_vendor from public.shop_vendors where id = v_product.vendor_id;
@@ -3256,7 +3791,7 @@ begin
     raise exception 'Not enough stock.';
   end if;
 
-  v_cost := v_product.price_coin * v_quantity;
+  v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
   v_wallet := public.wallet_total_coin(v_character.id);
   if v_wallet < v_cost then
     raise exception 'Not enough currency.';
@@ -3264,7 +3799,7 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_product.item_type = 'storage'::public.item_type
+  if v_product.item_type = 'storage'::text
     and not public.character_storage_container_exists(v_character.id, v_product.item_name)
   then
     insert into public.inventory_items (
@@ -3278,7 +3813,10 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      spell_imbue
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
     )
     values (
       v_character.id,
@@ -3289,9 +3827,12 @@ begin
       v_product.rarity,
       1,
       true,
-      public.catalog_storage_capacity(v_product.item_name),
-      '{}'::jsonb,
-      null
+      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_product.item_name))),
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      v_is_two_handed
     )
     returning * into v_storage_item;
 
@@ -3308,7 +3849,10 @@ begin
     and i.item_name = v_product.item_name
     and i.item_type = v_product.item_type
     and i.rarity = v_product.rarity
-    and coalesce(i.spell_imbue, '') = ''
+    and coalesce(i.enchantment, '') = ''
+    and coalesce(i.material, '') = coalesce(v_material, '')
+    and i.enhancement_count = 0
+    and i.is_two_handed = v_is_two_handed
     and i.is_storage = false
   order by i.slot_index
   limit 1;
@@ -3335,7 +3879,7 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      spell_imbue
+      enchantment
     )
     values (
       v_character.id,
@@ -3425,14 +3969,341 @@ begin
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
     description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
-    item_type = case when v_patch ? 'type' then (case when v_patch->>'type' = 'currency' then 'misc' else v_patch->>'type' end)::public.item_type else item_type end,
+    item_type = case when v_patch ? 'type' then lower(trim(v_patch->>'type')) else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     price_coin = case when v_patch ? 'priceCoin' then greatest(0, (v_patch->>'priceCoin')::int) else price_coin end,
-    stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::int) else stock_quantity end,
+    stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
+    catalog_item_key = case when v_patch ? 'catalogItemKey' then nullif(trim(coalesce(v_patch->>'catalogItemKey', '')), '') else catalog_item_key end,
+    shop_section = case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares') else shop_section end,
+    quantity_step = case when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 when v_patch ? 'quantityStep' then 1 else quantity_step end,
     is_available = case when v_patch ? 'available' then (v_patch->>'available')::boolean else is_available end
   where id = p_product_id;
 
   return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.consume_character_item_by_name(
+  p_character_id uuid,
+  p_item_name text,
+  p_quantity numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := public.assert_valid_item_quantity(p_item_name, 'misc', p_quantity);
+  v_item public.inventory_items%rowtype;
+  v_take numeric;
+begin
+  if v_needed <= 0 then
+    return;
+  end if;
+
+  for v_item in
+    select *
+    from public.inventory_items
+    where character_id = p_character_id
+      and loadout_slot is null
+      and is_storage = false
+      and lower(item_name) = lower(trim(p_item_name))
+    order by parent_item_id nulls first, slot_index, created_at
+  loop
+    exit when v_needed <= 0;
+    v_take := least(v_item.quantity, v_needed);
+    if v_take >= v_item.quantity then
+      delete from public.inventory_items where id = v_item.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - v_take
+      where id = v_item.id;
+    end if;
+    v_needed := v_needed - v_take;
+  end loop;
+
+  if v_needed > 0 then
+    raise exception 'Missing required item: % x%.', p_item_name, p_quantity;
+  end if;
+end;
+$$;
+
+revoke execute on function public.consume_character_item_by_name(uuid, text, numeric) from anon, authenticated;
+
+create or replace function public.blacksmith_material_modifiers(
+  p_material text,
+  p_item_type text
+)
+returns jsonb
+language sql
+immutable
+as $$
+  select case lower(trim(coalesce(p_material, '')))
+    when 'bronze' then case when p_item_type = 'weapon' then jsonb_build_object('strength', -1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
+    when 'iron' then case when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
+    when 'steel' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
+    when 'mythril' then case when p_item_type = 'shield' then jsonb_build_object('vitality', 1) else '{}'::jsonb end
+    when 'vaylium' then case when p_item_type = 'weapon' then jsonb_build_object('intelligence', 1) when p_item_type = 'shield' then jsonb_build_object('vitality', 1, 'intelligence', 1) else jsonb_build_object('intelligence', 1) end
+    when 'dragonscale' then case when p_item_type = 'weapon' then jsonb_build_object('strength', 2, 'magic_resist', 3) when p_item_type = 'shield' then jsonb_build_object('vitality', 2, 'magic_resist', 5) else jsonb_build_object('magic_resist', 3) end
+    else '{}'::jsonb
+  end
+$$;
+
+create or replace function public.enchantment_spell_for_rune(p_rune_name text)
+returns text
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_key text := lower(trim(replace(coalesce(p_rune_name, ''), ' Rune', '')));
+  v_options text[];
+  v_roll int;
+  v_weight int;
+  v_total int;
+  v_index int;
+begin
+  v_options := case v_key
+    when 'ember' then array['Emberbolt', 'Scorch', 'Flame Ring', 'Solar Flare', 'Radiance', 'Fireball', 'Sear']
+    when 'frost' then array['Frostbite', 'Ice Shard', 'Hypothermia', 'Ice Wall', 'Ice Cube', 'Christmas Tree', 'Absolute Zero']
+    when 'lightning' then array['Sparkshot', 'Static Charge', 'Arc Shot', 'Defibulate', 'Electric Explosion', 'Thunder Crash', 'Lightning Chain']
+    when 'earth' then array['Stone Fist', 'Quicksand', 'Earthen Spikes', 'Earthquake']
+    when 'wind' then array['Wind Cutter', 'Mighty Gust', 'Wind Be With Me', 'Gale Burst']
+    else null
+  end;
+
+  if v_options is null or array_length(v_options, 1) is null then
+    raise exception 'That rune cannot be used for enchantment yet.';
+  end if;
+
+  v_total := (array_length(v_options, 1) * (array_length(v_options, 1) + 1)) / 2;
+  v_roll := floor(random() * v_total)::int + 1;
+
+  for v_index in 1..array_length(v_options, 1) loop
+    v_weight := array_length(v_options, 1) - v_index + 1;
+    if v_roll <= v_weight then
+      return v_options[v_index];
+    end if;
+    v_roll := v_roll - v_weight;
+  end loop;
+
+  return v_options[1];
+end;
+$$;
+
+create or replace function public.run_blacksmith_action(
+  p_session_token text,
+  p_character_id uuid,
+  p_action text,
+  p_recipe_key text default null,
+  p_material_product_id uuid default null,
+  p_target_item_id uuid default null,
+  p_rune_product_id uuid default null,
+  p_modifier_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_material_product public.market_products%rowtype;
+  v_rune_product public.market_products%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_wallet int;
+  v_cost int := 0;
+  v_labor int := 0;
+  v_material_quantity numeric := 0;
+  v_recipe_name text := '';
+  v_recipe_type text := 'weapon';
+  v_two_handed boolean := false;
+  v_material text := '';
+  v_rarity public.item_rarity := 'Common';
+  v_slot int;
+  v_modifiers jsonb := '{}'::jsonb;
+  v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
+  v_catalyst text;
+  v_required_runes int;
+  v_spell_name text;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  if lower(coalesce(p_action, '')) = 'craft' then
+    case lower(coalesce(p_recipe_key, ''))
+      when 'dagger' then v_recipe_name := 'Dagger'; v_labor := 50; v_material_quantity := 0.5;
+      when 'throwing-knives' then v_recipe_name := 'Throwing Knives'; v_labor := 100; v_material_quantity := 0.5;
+      when 'shortbow' then v_recipe_name := 'Shortbow'; v_labor := 100; v_material_quantity := 0.5;
+      when 'custom-light-weapon' then v_recipe_name := 'Custom Light Weapon'; v_labor := 1000; v_material_quantity := 0.5;
+      when 'sword' then v_recipe_name := 'Sword'; v_labor := 300; v_material_quantity := 1;
+      when 'spear' then v_recipe_name := 'Spear'; v_labor := 500; v_material_quantity := 1;
+      when 'longbow' then v_recipe_name := 'Longbow'; v_labor := 500; v_material_quantity := 1;
+      when 'custom-medium-weapon' then v_recipe_name := 'Custom Medium Weapon'; v_labor := 2500; v_material_quantity := 1;
+      when 'battleaxe' then v_recipe_name := 'Battleaxe'; v_labor := 3000; v_material_quantity := 2; v_two_handed := true;
+      when 'mace' then v_recipe_name := 'Mace'; v_labor := 3000; v_material_quantity := 2; v_two_handed := true;
+      when 'claymore' then v_recipe_name := 'Claymore'; v_labor := 3000; v_material_quantity := 2; v_two_handed := true;
+      when 'crossbow' then v_recipe_name := 'Crossbow'; v_labor := 4000; v_material_quantity := 2; v_two_handed := true;
+      when 'custom-heavy-weapon' then v_recipe_name := 'Custom Heavy Weapon'; v_labor := 5000; v_material_quantity := 2; v_two_handed := true;
+      when 'magic-bow' then v_recipe_name := 'Magic Bow'; v_labor := 3000; v_material_quantity := 0;
+      when 'magic-longbow' then v_recipe_name := 'Magic Longbow'; v_labor := 5000; v_material_quantity := 0;
+      when 'wand' then v_recipe_name := 'Wand'; v_labor := 100; v_material_quantity := 0.5;
+      when 'scepter' then v_recipe_name := 'Scepter'; v_labor := 1000; v_material_quantity := 1;
+      when 'staff' then v_recipe_name := 'Staff'; v_labor := 5000; v_material_quantity := 2;
+      when 'custom-magecraft' then v_recipe_name := 'Custom Magecraft Commission'; v_labor := 6500; v_material_quantity := 1;
+      when 'shield' then v_recipe_name := 'Shield'; v_recipe_type := 'shield'; v_labor := 5000; v_material_quantity := 1;
+      else raise exception 'Unknown blacksmith recipe.';
+    end case;
+
+    if lower(v_character.class_key) = 'blacksmith' or lower(v_character.class_name) = 'blacksmith' then
+      v_labor := 0;
+    end if;
+
+    if v_material_quantity > 0 then
+      select * into v_material_product from public.market_products where id = p_material_product_id and is_available;
+      if v_material_product.id is null or v_material_product.item_type <> 'material' then
+        raise exception 'Choose an available material scale.';
+      end if;
+      if v_material_product.stock_quantity is not null and v_material_product.stock_quantity < v_material_quantity then
+        raise exception 'Not enough material stock.';
+      end if;
+      v_material := regexp_replace(v_material_product.item_name, '[[:space:]]+Scale$', '', 'i');
+      v_rarity := v_material_product.rarity;
+      v_cost := v_labor + ceil((v_material_product.price_coin * v_material_quantity)::numeric)::int;
+    else
+      v_cost := v_labor;
+    end if;
+
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+
+    if v_material_quantity > 0 and v_material_product.stock_quantity is not null then
+      update public.market_products
+      set stock_quantity = greatest(0, stock_quantity - v_material_quantity)
+      where id = v_material_product.id;
+    end if;
+
+    v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+    if v_slot is null then raise exception 'Inventory full.'; end if;
+
+    v_modifiers := public.blacksmith_material_modifiers(v_material, v_recipe_type);
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
+    )
+    values (
+      v_character.id,
+      null,
+      v_slot,
+      trim(concat_ws(' ', nullif(v_material, ''), v_recipe_name)),
+      v_recipe_type,
+      v_rarity,
+      1,
+      false,
+      0,
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      v_two_handed
+    )
+    returning * into v_item;
+
+    return public.get_discovered_cities(p_session_token);
+  end if;
+
+  select * into v_target
+  from public.inventory_items
+  where id = p_target_item_id
+    and character_id = v_character.id;
+
+  if v_target.id is null then raise exception 'Choose an eligible Mythril item.'; end if;
+  if lower(coalesce(v_target.material, '') || ' ' || v_target.item_name) not like '%mythril%' then
+    raise exception 'Only Mythril items can use that service.';
+  end if;
+
+  select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available;
+  if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
+
+  if lower(coalesce(p_action, '')) = 'enhance' then
+    if v_target.item_type not in ('weapon', 'shield', 'armor') then raise exception 'Only Mythril weapons, shields, or armor can be enhanced.'; end if;
+    if v_target.enchantment is not null then raise exception 'An enchanted item cannot be enhanced.'; end if;
+    if v_target.enhancement_count >= 3 then raise exception 'That item already has three enhancements.'; end if;
+    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < 1 then raise exception 'Not enough rune stock.'; end if;
+
+    v_catalyst := case v_key
+      when 'strength' then 'Titanvine Root'
+      when 'accuracy' then 'Hawkeye Blossom'
+      when 'intelligence' then 'Star Sage Orchid'
+      when 'vitality' then 'Heartwood Sprout'
+      when 'magic_resist' then 'Null Fern'
+      when 'stealth' then 'Shade Moss'
+      else null
+    end;
+    if v_catalyst is null then raise exception 'Unsupported enhancement.'; end if;
+
+    v_cost := 1000 + v_rune_product.price_coin;
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
+
+    perform public.consume_character_item_by_name(v_character.id, v_catalyst, 20);
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    if v_rune_product.stock_quantity is not null then
+      update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
+    end if;
+
+    v_modifiers := coalesce(v_target.modifiers, '{}'::jsonb) || jsonb_build_object(v_key, coalesce((v_target.modifiers->>v_key)::int, 0) + 1);
+    update public.inventory_items
+    set modifiers = v_modifiers,
+        enhancement_count = enhancement_count + 1
+    where id = v_target.id;
+
+    return public.get_discovered_cities(p_session_token);
+  end if;
+
+  if lower(coalesce(p_action, '')) = 'enchant' then
+    if v_target.item_type <> 'weapon' then raise exception 'Only Mythril weapons can be enchanted.'; end if;
+    if v_target.enchantment is not null then raise exception 'That weapon is already enchanted.'; end if;
+    if v_target.enhancement_count > 0 then raise exception 'An enhanced weapon cannot be enchanted.'; end if;
+    v_required_runes := case when lower(v_character.class_key) = 'talismanist' or lower(v_character.class_name) = 'talismanist' then 3 else 5 end;
+    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < v_required_runes then raise exception 'Not enough rune stock.'; end if;
+
+    v_spell_name := public.enchantment_spell_for_rune(v_rune_product.item_name);
+    v_cost := 1000 + (v_rune_product.price_coin * v_required_runes);
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    if v_rune_product.stock_quantity is not null then
+      update public.market_products set stock_quantity = greatest(0, stock_quantity - v_required_runes) where id = v_rune_product.id;
+    end if;
+
+    update public.inventory_items
+    set enchantment = v_spell_name
+    where id = v_target.id;
+
+    return public.get_discovered_cities(p_session_token);
+  end if;
+
+  raise exception 'Unknown blacksmith action.';
 end;
 $$;
 
@@ -3442,9 +4313,12 @@ grant execute on function public.currency_coin_value(text) to anon, authenticate
 grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
 grant execute on function public.set_wallet_from_coin_value(uuid, int) to anon, authenticated;
 grant execute on function public.get_discovered_cities(text) to anon, authenticated;
-grant execute on function public.purchase_market_product(text, uuid, uuid, int) to anon, authenticated;
+grant execute on function public.purchase_market_product(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.blacksmith_material_modifiers(text, text) to anon, authenticated;
+grant execute on function public.enchantment_spell_for_rune(text) to anon, authenticated;
+grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
 
 
 -- ============================================================
@@ -3573,14 +4447,76 @@ for each row execute function public.touch_updated_at();
 
 insert into public.spell_catalog (spell_key, name, school, mana_cost, summary, details, rarity, display_order)
 values
-  ('spark', 'Spark', 'arcane', 5, 'A small controlled flame or arc of heat.', 'Useful for lighting, signaling, or small combat tricks.', 'Common', 10),
-  ('mend-flesh', 'Mend Flesh', 'restoration', 12, 'Restore a modest amount of health to one target.', 'A staple restorative spell for keeping allies upright.', 'Common', 20),
-  ('arcane-bolt', 'Arcane Bolt', 'arcane', 15, 'A direct bolt of force against a target.', 'Reliable magical damage with little flourish.', 'Uncommon', 30),
-  ('warding-shell', 'Warding Shell', 'rune', 18, 'Briefly reinforce a target against harm.', 'A rune-like defensive veil that can turn a hit from terrible to survivable.', 'Uncommon', 40),
-  ('verdant-snare', 'Verdant Snare', 'nature', 16, 'Roots or vines hinder a creature.', 'Best used to slow movement, set up allies, or control a narrow path.', 'Uncommon', 50),
-  ('shadow-step', 'Shadow Step', 'shadow', 22, 'Slip through dim space to reposition.', 'A short evasive movement spell favored by skirmishers.', 'Rare', 60),
-  ('greater-mend', 'Greater Mend', 'restoration', 30, 'Restore a large amount of health to one target.', 'A stronger recovery spell for rough encounters.', 'Rare', 70),
-  ('alchemy-flare', 'Alchemy Flare', 'alchemy', 20, 'Ignite volatile reagents into a burst.', 'A flexible spell for alchemists and potion-heavy casters.', 'Rare', 80)
+  ('emberbolt', 'Emberbolt', 'arcane', 8, 'Deals 15 fire damage', 'Deals 15 fire damage', 'Common', 10),
+  ('scorch', 'Scorch', 'arcane', 12, 'Deals 10 burning damage for 3 turns', 'Deals 10 burning damage for 3 turns', 'Uncommon', 20),
+  ('flame-ring', 'Flame Ring', 'arcane', 18, 'Deals 22 fire damage to all tiles touching you', 'Deals 22 fire damage to all tiles touching you', 'Uncommon', 30),
+  ('solar-flare', 'Solar Flare', 'arcane', 18, 'Blinds opponent for 1 turn', 'Blinds opponent for 1 turn', 'Uncommon', 40),
+  ('radiance', 'Radiance', 'arcane', 45, 'Blinds 3 closest opponents for 1 turn', 'Blinds 3 closest opponents for 1 turn', 'Legendary', 50),
+  ('fireball', 'Fireball', 'arcane', 30, 'Deals 30 fire damage in a 3x3 area', 'Deals 30 fire damage in a 3x3 area', 'Epic', 60),
+  ('sear', 'Sear', 'arcane', 35, 'Deals an AOE burn in a 3x3 area, 10 fire damage per turn for 5 turns', 'Deals an AOE burn in a 3x3 area, 10 fire damage per turn for 5 turns', 'Epic', 70),
+  ('frostbite', 'Frostbite', 'arcane', 10, 'Deals 12 ice damage and slow target', 'Deals 12 ice damage and slow target', 'Common', 80),
+  ('ice-shard', 'Ice Shard', 'arcane', 11, 'Deals 20 piercing ice damage', 'Deals 20 piercing ice damage', 'Common', 90),
+  ('hypothermia', 'Hypothermia', 'arcane', 18, 'Prevents movement and dashes for 1 turn', 'Prevents movement and dashes for 1 turn', 'Uncommon', 100),
+  ('ice-wall', 'Ice Wall', 'arcane', 25, 'Creates a 3x1 defensive ice barrier with 60 HP', 'Creates a 3x1 defensive ice barrier with 60 HP', 'Rare', 110),
+  ('ice-cube', 'Ice Cube', 'arcane', 22, 'Skips a chosen enemies turn', 'Skips a chosen enemies turn', 'Rare', 120),
+  ('christmas-tree', 'Christmas Tree', 'arcane', 25, 'Places a ward that deals 15 Ice damage per turn in its radius for 3 turns', 'Places a ward that deals 15 Ice damage per turn in its radius for 3 turns', 'Rare', 130),
+  ('absolute-zero', 'Absolute Zero', 'arcane', 45, 'Prevents the movement and dashes of all enemies and allies in a radius of 2 movements', 'Prevents the movement and dashes of all enemies and allies in a radius of 2 movements', 'Legendary', 140),
+  ('sparkshot', 'Sparkshot', 'arcane', 9, 'Deals 14 lightning damage', 'Deals 14 lightning damage', 'Common', 150),
+  ('static-charge', 'Static Charge', 'arcane', 20, 'Deals 26 lightning damage to 1 enemy, 13 each to 2 enemies, or 9 each to 3 enemies', 'Deals 26 lightning damage to 1 enemy, 13 each to 2 enemies, or 9 each to 3 enemies', 'Rare', 160),
+  ('arc-shot', 'Arc Shot', 'arcane', 32, 'Deals 35 lightning damage to 3 close enemies', 'Deals 35 lightning damage to 3 close enemies', 'Epic', 170),
+  ('defibulate', 'Defibulate', 'arcane', 10, 'Bring an unconscious Ally or Enemy back to 1 hp', 'Bring an unconscious Ally or Enemy back to 1 hp', 'Common', 180),
+  ('electric-explosion', 'Electric Explosion', 'arcane', 20, 'Deal 15 Lightning damage to all allies and enemies within one movement', 'Deal 15 Lightning damage to all allies and enemies within one movement', 'Rare', 190),
+  ('thunder-crash', 'Thunder Crash', 'arcane', 38, 'Deals 50 lightning damage in a small radius around the player', 'Deals 50 lightning damage in a small radius around the player', 'Epic', 200),
+  ('lightning-chain', 'Lightning Chain', 'arcane', 38, 'Deal 10 Lightning damage jumping from person to person in a chain, only stopping if it hits 10 enemies or is unable to reach next target (2 movements)', 'Deal 10 Lightning damage jumping from person to person in a chain, only stopping if it hits 10 enemies or is unable to reach next target (2 movements)', 'Epic', 210),
+  ('stone-fist', 'Stone Fist', 'nature', 12, 'Deals 18 physical damage', 'Deals 18 physical damage', 'Uncommon', 220),
+  ('quicksand', 'Quicksand', 'nature', 15, 'Turn the earth around the player in to Quicksand that will slow that enemy, must have natural earth. Prevents movements for 2 turns', 'Turn the earth around the player in to Quicksand that will slow that enemy, must have natural earth. Prevents movements for 2 turns', 'Uncommon', 230),
+  ('earthen-spikes', 'Earthen Spikes', 'nature', 26, 'Deals 40 physical damage', 'Deals 40 physical damage', 'Rare', 240),
+  ('earthquake', 'Earthquake', 'nature', 30, 'Everyone rerolls for initiative', 'Everyone rerolls for initiative', 'Epic', 250),
+  ('wind-cutter', 'Wind Cutter', 'nature', 10, 'Deals 16 wind damage', 'Deals 16 wind damage', 'Common', 260),
+  ('mighty-gust', 'Mighty Gust', 'nature', 15, 'Pushes a person one movement', 'Pushes a person one movement', 'Uncommon', 270),
+  ('wind-be-with-me', 'Wind Be With Me', 'nature', 0, 'Be allowed to dash and attack in the same turn', 'Be allowed to dash and attack in the same turn', 'Uncommon', 275),
+  ('gale-burst', 'Gale Burst', 'nature', 24, 'Pushes enemies back one movement while dealing 28 damage', 'Pushes enemies back one movement while dealing 28 damage', 'Rare', 280),
+  ('pulse', 'Pulse', 'arcane', 15, 'Deals 18 damage around the caster', 'Deals 18 damage around the caster', 'Uncommon', 290),
+  ('energy-shield', 'Energy Shield', 'arcane', 15, 'Sheild absorbs 25 damage', 'Sheild absorbs 25 damage', 'Uncommon', 300),
+  ('mend-wounds', 'Mend Wounds', 'restoration', 12, 'Heal a single target 25 HP', 'Heal a single target 25 HP', 'Uncommon', 310),
+  ('greater-mend', 'Greater Mend', 'restoration', 28, 'Heals 75 HP', 'Heals 75 HP', 'Rare', 320),
+  ('antivenom', 'Antivenom', 'restoration', 10, 'Removes poison from a single target', 'Removes poison from a single target', 'Common', 330),
+  ('fortify', 'Fortify', 'restoration', 16, '+2 Vitality for 4 turns', '+2 Vitality for 4 turns', 'Uncommon', 340),
+  ('iron-skin', 'Iron Skin', 'restoration', 25, '+4 Vitality for next 5 turns', '+4 Vitality for next 5 turns', 'Rare', 350),
+  ('shield', 'Shield', 'restoration', 10, 'Give a +5 vitality to an opponent for the next three times they get attacked', 'Give a +5 vitality to an opponent for the next three times they get attacked', 'Common', 360),
+  ('cleanse', 'Cleanse', 'restoration', 50, 'Removes all debuffs from all party members', 'Removes all debuffs from all party members', 'Legendary', 370),
+  ('revitalize', 'Revitalize', 'restoration', 10, 'Removes all slows and binds for a single target', 'Removes all slows and binds for a single target', 'Common', 380),
+  ('golden-boy', 'Golden Boy', 'restoration', 40, 'Everyone on the battlefield heals twice as much for 3 rounds', 'Everyone on the battlefield heals twice as much for 3 rounds', 'Legendary', 390),
+  ('insurance', 'Insurance', 'restoration', 45, 'Caster gives the entire party except themselves a buff that when applied and a player drops below half health, the buff is expended and the player regains 25 HP. This is applied after the damage takes place and can act as a resuraction in that regard. If the player is already below half health, heals them for 10 HP', 'Caster gives the entire party except themselves a buff that when applied and a player drops below half health, the buff is expended and the player regains 25 HP. This is applied after the damage takes place and can act as a resuraction in that regard. If the player is already below half health, heals them for 10 HP', 'Legendary', 400),
+  ('counter-attack', 'Counter Attack', 'restoration', 30, 'Gives a single target the counterattack buff for 2 turns. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Gives a single target the counterattack buff for 2 turns. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Epic', 410),
+  ('retaliation', 'Retaliation', 'restoration', 45, 'Gives the entire party the counterattack buff for 1 turn. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Gives the entire party the counterattack buff for 1 turn. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Legendary', 420),
+  ('internal-bleeding', 'Internal Bleeding', 'restoration', 25, 'Prevent a target from healing for 3 turns', 'Prevent a target from healing for 3 turns', 'Rare', 430),
+  ('strip', 'Strip', 'restoration', 30, 'Removes all buffs or potion effects from a target', 'Removes all buffs or potion effects from a target', 'Epic', 440),
+  ('demoralize', 'Demoralize', 'restoration', 55, 'Removes all buffs or potion effects from all enemies', 'Removes all buffs or potion effects from all enemies', 'Legendary', 450),
+  ('weaken', 'Weaken', 'restoration', 28, 'Lowers a targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Lowers a targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Rare', 460),
+  ('cripple', 'Cripple', 'restoration', 50, 'Lowers a targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Lowers a targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Legendary', 470),
+  ('enfeeblement', 'Enfeeblement', 'restoration', 60, 'Lowers all targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Lowers all targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Legendary', 480),
+  ('dreadfall', 'Dreadfall', 'restoration', 90, 'Lowers all targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Lowers all targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Legendary', 490),
+  ('whats-mine-is-yours', 'Whats mine is yours', 'restoration', 30, 'Swaps any active effects with any target', 'Swaps any active effects with any target', 'Epic', 500),
+  ('judas', 'Judas', 'restoration', 65, 'Chose an enemy to attack their ally. This attack will always crit.', 'Chose an enemy to attack their ally. This attack will always crit.', 'Legendary', 510),
+  ('jump-him', 'Jump Him', 'restoration', 70, 'Everyone attacks a target of choice. This action doesn''t affect the turn order, nor expends their turn or movement', 'Everyone attacks a target of choice. This action doesn''t affect the turn order, nor expends their turn or movement', 'Legendary', 520),
+  ('follow-the-leader', 'Follow the Leader', 'restoration', 45, 'For 2 rounds, party rolls one extra dice, you roll one less', 'For 2 rounds, party rolls one extra dice, you roll one less', 'Legendary', 530),
+  ('bloodthirsty', 'Bloodthirsty', 'restoration', 30, 'Will cause a teammate of your choice to follow an enemy of your choice for 3 rounds. The teammate will follow the enemy with every movement. This also counts for dashes and doesn''t cost a movement for the teammate.', 'Will cause a teammate of your choice to follow an enemy of your choice for 3 rounds. The teammate will follow the enemy with every movement. This also counts for dashes and doesn''t cost a movement for the teammate.', 'Epic', 540),
+  ('swiftness', 'Swiftness', 'rune', 14, '+1 speed for 5 turns', '+1 speed for 5 turns', 'Uncommon', 550),
+  ('clarity', 'Clarity', 'rune', 10, '+1 Accuracy and Perception for 5 turns', '+1 Accuracy and Perception for 5 turns', 'Common', 560),
+  ('mana-surge', 'Mana Surge', 'rune', 18, 'recieve 5 restored mana at the begining of each turn for 5 turns', 'recieve 5 restored mana at the begining of each turn for 5 turns', 'Uncommon', 570),
+  ('guided-strike', 'Guided Strike', 'rune', 10, '+2 Accuracy for next attack', '+2 Accuracy for next attack', 'Common', 580),
+  ('stabilize', 'Stabilize', 'rune', 10, 'Prevent a target from dying for 2 of targets turns (once per target)', 'Prevent a target from dying for 2 of targets turns (once per target)', 'Common', 590),
+  ('light-orb', 'Light Orb', 'arcane', 3, 'Floating light source', 'Floating light source', 'Common', 600),
+  ('warmth', 'Warmth', 'arcane', 5, 'Protects from cold for 1 day', 'Protects from cold for 1 day', 'Common', 610),
+  ('cooling', 'Cooling', 'arcane', 5, 'Protects from heat for 1 day', 'Protects from heat for 1 day', 'Common', 620),
+  ('levitation', 'Levitation', 'arcane', 15, 'Levitates a light to mild load, alive or not', 'Levitates a light to mild load, alive or not', 'Uncommon', 630),
+  ('seal', 'Seal', 'arcane', 12, 'Locks a container or door', 'Locks a container or door 18 Callor', 'Uncommon', 640),
+  ('magecraft-detection', 'Magecraft detection', 'arcane', 6, 'Detects all near magical energy', 'Detects all near magical energy', 'Common', 650),
+  ('purify-water', 'Purify Water', 'arcane', 5, 'Cleans water', 'Cleans water', 'Common', 660),
+  ('silent-step', 'Silent Step', 'arcane', 14, '+2 stealth for 5 turns (+3 stealth if not in combat)', '+2 stealth for 5 turns (+3 stealth if not in combat)', 'Uncommon', 670),
+  ('taunt', 'Taunt', 'arcane', 20, 'Up to 3 enemies must target you on their next turn if they can reasonably do so and bosses may resist with a roll', 'Up to 3 enemies must target you on their next turn if they can reasonably do so and bosses may resist with a roll', 'Rare', 680),
+  ('entangle', 'Entangle', 'arcane', 35, 'For 1 round of turns, redirect half of all damage done to your party to yourself', 'For 1 round of turns, redirect half of all damage done to your party to yourself Pure Chaos - Mana decided by 3d20 Next attack will be a random spell Equilibrium - Free Trades any amount of health/Mana for any amount of Health/Mana 1 to 1. Can be used up to 3 times per combat, or up to 100 gained HP AND Mana combined per combat. power of friendship', 'Epic', 690)
 on conflict (spell_key) do update
 set name = excluded.name,
     school = excluded.school,
@@ -3606,7 +4542,7 @@ select
   'spell-scroll-' || s.spell_key,
   s.name || ' Spell',
   s.summary,
-  'quest'::public.item_type,
+  'quest'::text,
   s.rarity,
   greatest(50, s.mana_cost * 12),
   3,
@@ -3929,15 +4865,15 @@ create table if not exists public.loot_items (
   id uuid primary key default gen_random_uuid(),
   pool_id uuid not null references public.loot_pools(id) on delete cascade,
   item_name text not null,
-  item_type public.item_type not null default 'misc',
+  item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   generator_biomes text[] not null default array['Any']::text[],
   difficulty_min int not null default 1 check (difficulty_min >= 1),
   difficulty_max int not null default 5 check (difficulty_max >= difficulty_min),
   loot_weight numeric not null default 1 check (loot_weight >= 0),
   tower_base_only boolean not null default false,
-  min_quantity int not null default 1 check (min_quantity >= 1),
-  max_quantity int not null default 1 check (max_quantity >= min_quantity),
+  min_quantity numeric(12,1) not null default 1 check (min_quantity > 0),
+  max_quantity numeric(12,1) not null default 1 check (max_quantity >= min_quantity),
   notes text not null default '',
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -3988,6 +4924,14 @@ alter table public.loot_items add column if not exists difficulty_min int not nu
 alter table public.loot_items add column if not exists difficulty_max int not null default 5 check (difficulty_max >= difficulty_min);
 alter table public.loot_items add column if not exists loot_weight numeric not null default 1 check (loot_weight >= 0);
 alter table public.loot_items add column if not exists tower_base_only boolean not null default false;
+
+alter table public.loot_items drop constraint if exists loot_item_type_valid;
+alter table public.loot_items drop constraint if exists loot_items_item_type_valid;
+
+alter table public.loot_items
+  alter column item_type type text using item_type::text,
+  alter column min_quantity type numeric(12,1) using min_quantity::numeric,
+  alter column max_quantity type numeric(12,1) using max_quantity::numeric;
 
 create index if not exists loot_items_workbook_filter_idx on public.loot_items(is_active, difficulty_min, difficulty_max, rarity);
 
@@ -4597,6 +5541,10 @@ begin
       select coalesce(jsonb_agg(public.shop_vendor_record_to_json(v, true) order by v.city_key, v.display_order, v.name), '[]'::jsonb)
       from public.shop_vendors v
     ),
+    'itemCatalog', (
+      select coalesce(jsonb_agg(public.catalog_record_to_json(i) order by i.category, i.display_order, i.item_name), '[]'::jsonb)
+      from public.item_catalog i
+    ),
     'spells', (
       select coalesce(jsonb_agg(public.spell_record_to_json(s) order by s.display_order, s.name), '[]'::jsonb)
       from public.spell_catalog s
@@ -4707,6 +5655,50 @@ begin
 end;
 $$;
 
+create or replace function public.update_item_catalog_asset(
+  p_session_token text,
+  p_item_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+
+  update public.item_catalog
+  set
+    item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
+    item_key = case when v_patch ? 'name' then public.catalog_key_for_name(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) else item_key end,
+    item_type = case when v_patch ? 'type' then lower(trim(v_patch->>'type')) else item_type end,
+    rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
+    category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), 'General') else category end,
+    properties = case when v_patch ? 'properties' and jsonb_typeof(v_patch->'properties') = 'array' then (
+      select coalesce(array_agg(nullif(trim(value), '')), array[]::text[])
+      from jsonb_array_elements_text(v_patch->'properties') as value
+      where nullif(trim(value), '') is not null
+    ) else properties end,
+    quantity_step = case when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 when v_patch ? 'quantityStep' then 1 else quantity_step end,
+    is_stackable = case when v_patch ? 'stackable' then (v_patch->>'stackable')::boolean else is_stackable end,
+    default_modifiers = case when v_patch ? 'defaultModifiers' and jsonb_typeof(v_patch->'defaultModifiers') = 'object' then v_patch->'defaultModifiers' else default_modifiers end,
+    material = case when v_patch ? 'material' then trim(coalesce(v_patch->>'material', '')) else material end,
+    is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end,
+    storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
+    notes = case when v_patch ? 'notes' then coalesce(v_patch->>'notes', '') else notes end,
+    is_active = case when v_patch ? 'active' then (v_patch->>'active')::boolean else is_active end
+  where id = p_item_id;
+
+  if not found then raise exception 'Catalog item was not found.'; end if;
+
+  return public.get_update_assets(p_session_token);
+end;
+$$;
+
 create or replace function public.update_loot_item_asset(
   p_session_token text,
   p_loot_item_id uuid,
@@ -4720,14 +5712,14 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
-  v_min int;
-  v_max int;
+  v_min numeric;
+  v_max numeric;
 begin
   v_profile := public.require_dm_profile(p_session_token);
 
   select
-    case when v_patch ? 'minQuantity' then greatest(1, (v_patch->>'minQuantity')::int) else min_quantity end,
-    case when v_patch ? 'maxQuantity' then greatest(1, (v_patch->>'maxQuantity')::int) else max_quantity end
+    case when v_patch ? 'minQuantity' then greatest(0.5, (v_patch->>'minQuantity')::numeric) else min_quantity end,
+    case when v_patch ? 'maxQuantity' then greatest(0.5, (v_patch->>'maxQuantity')::numeric) else max_quantity end
   into v_min, v_max
   from public.loot_items
   where id = p_loot_item_id;
@@ -4738,7 +5730,7 @@ begin
   update public.loot_items
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
-    item_type = case when v_patch ? 'type' then (v_patch->>'type')::public.item_type else item_type end,
+    item_type = case when v_patch ? 'type' then (v_patch->>'type')::text else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     generator_biomes = case
       when v_patch ? 'biomes' and jsonb_typeof(v_patch->'biomes') = 'array' then (
@@ -4772,6 +5764,7 @@ $$;
 grant execute on function public.require_dm_profile(text) to anon, authenticated;
 grant execute on function public.get_update_assets(text) to anon, authenticated;
 grant execute on function public.update_class_template_asset(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.update_item_catalog_asset(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_spell_asset(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_loot_item_asset(text, uuid, jsonb) to anon, authenticated;
 
@@ -4857,8 +5850,8 @@ declare
   v_type_text text;
   v_rarity_text text;
   v_biomes text[];
-  v_min_quantity int;
-  v_max_quantity int;
+  v_min_quantity numeric;
+  v_max_quantity numeric;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -4896,7 +5889,7 @@ begin
     end if;
 
     v_type_text := lower(coalesce(nullif(v_row->>'type', ''), nullif(v_row->>'item_type', ''), 'misc'));
-    if v_type_text not in ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc') then
+    if v_type_text not in ('weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc') then
       v_type_text := 'misc';
     end if;
 
@@ -4918,8 +5911,8 @@ begin
     v_biomes := array(select entry from unnest(v_biomes) as entry where entry is not null);
     if coalesce(array_length(v_biomes, 1), 0) = 0 then v_biomes := array['Any']::text[]; end if;
 
-    v_min_quantity := greatest(1, coalesce(nullif(v_row->>'minQuantity', '')::int, nullif(v_row->>'min_quantity', '')::int, nullif(v_row->>'min', '')::int, 1));
-    v_max_quantity := greatest(v_min_quantity, coalesce(nullif(v_row->>'maxQuantity', '')::int, nullif(v_row->>'max_quantity', '')::int, nullif(v_row->>'max', '')::int, v_min_quantity));
+    v_min_quantity := greatest(0.5, coalesce(nullif(v_row->>'minQuantity', '')::numeric, nullif(v_row->>'min_quantity', '')::numeric, nullif(v_row->>'min', '')::numeric, 1));
+    v_max_quantity := greatest(v_min_quantity, coalesce(nullif(v_row->>'maxQuantity', '')::numeric, nullif(v_row->>'max_quantity', '')::numeric, nullif(v_row->>'max', '')::numeric, v_min_quantity));
 
     insert into public.loot_pools (pool_key, name, description, display_order)
     values (v_pool_key, v_pool_name, 'Imported item catalog group.', 100)
@@ -4946,7 +5939,7 @@ begin
     values (
       v_pool.id,
       v_name,
-      (case when v_type_text = 'currency' then 'misc' else v_type_text end)::public.item_type,
+      v_type_text,
       v_rarity_text::public.item_rarity,
       v_biomes,
       greatest(1, coalesce(nullif(v_row->>'minDifficulty', '')::int, nullif(v_row->>'min_difficulty', '')::int, 1)),
@@ -4957,6 +5950,23 @@ begin
       v_max_quantity,
       coalesce(v_row->>'notes', ''),
       true
+    );
+
+    perform public.upsert_item_catalog_entry(
+      v_name,
+      v_type_text,
+      v_rarity_text,
+      v_pool_name,
+      array[]::text[],
+      public.item_quantity_step(v_name, v_type_text),
+      true,
+      '{}'::jsonb,
+      '',
+      false,
+      case when v_type_text = 'storage' then public.catalog_storage_capacity(v_name) else 0 end,
+      coalesce(v_row->>'notes', ''),
+      true,
+      100
     );
   end loop;
 
@@ -4981,11 +5991,37 @@ as $$
   end
 $$;
 
+do $$
+declare
+  v_loot public.loot_items%rowtype;
+  v_pool_name text;
+begin
+  for v_loot in select * from public.loot_items where is_active loop
+    select name into v_pool_name from public.loot_pools where id = v_loot.pool_id;
+    perform public.upsert_item_catalog_entry(
+      v_loot.item_name,
+      v_loot.item_type,
+      v_loot.rarity::text,
+      coalesce(v_pool_name, 'Loot Catalog'),
+      array[]::text[],
+      public.item_quantity_step(v_loot.item_name, v_loot.item_type),
+      true,
+      '{}'::jsonb,
+      '',
+      false,
+      case when v_loot.item_type = 'storage' then public.catalog_storage_capacity(v_loot.item_name) else 0 end,
+      v_loot.notes,
+      true,
+      100
+    );
+  end loop;
+end $$;
+
 create or replace function public.award_exploration_loot_item(
   p_session_token text,
   p_character_id uuid,
   p_loot_item_id uuid,
-  p_quantity int default 1
+  p_quantity numeric default 1
 )
 returns jsonb
 language plpgsql
@@ -4996,14 +6032,19 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_loot public.loot_items%rowtype;
+  v_catalog public.item_catalog%rowtype;
   v_currency_unit public.currency_units%rowtype;
   v_currency_key text;
   v_slot int;
-  v_inventory_quantity int;
+  v_inventory_quantity numeric;
+  v_modifiers jsonb := '{}'::jsonb;
+  v_material text := '';
+  v_is_two_handed boolean := false;
+  v_storage_capacity int := 0;
   v_storage_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
-  v_quantity int := greatest(1, coalesce(p_quantity, 1));
+  v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -5013,6 +6054,19 @@ begin
 
   select * into v_loot from public.loot_items where id = p_loot_item_id and is_active;
   if v_loot.id is null then raise exception 'Loot item not found.'; end if;
+
+  select * into v_catalog
+  from public.item_catalog
+  where item_key = public.catalog_key_for_name(v_loot.item_name)
+  limit 1;
+
+  v_quantity := public.assert_valid_item_quantity(v_loot.item_name, v_loot.item_type, v_quantity);
+  if v_catalog.id is not null then
+    v_modifiers := v_catalog.default_modifiers;
+    v_material := v_catalog.material;
+    v_is_two_handed := v_catalog.is_two_handed;
+    v_storage_capacity := v_catalog.storage_capacity;
+  end if;
 
   if public.is_currency_loot_item(v_loot) then
     v_currency_key := case lower(v_loot.item_name)
@@ -5036,7 +6090,7 @@ begin
     end if;
 
     insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
-    values (v_character.id, v_currency_unit.id, v_quantity)
+    values (v_character.id, v_currency_unit.id, v_quantity::int)
     on conflict (character_id, currency_unit_id) do update
     set amount = public.character_wallet_balances.amount + excluded.amount;
 
@@ -5051,7 +6105,7 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_loot.item_type = 'storage'::public.item_type
+  if v_loot.item_type = 'storage'::text
     and not public.character_storage_container_exists(v_character.id, v_loot.item_name)
   then
     insert into public.inventory_items (
@@ -5065,7 +6119,10 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      spell_imbue
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
     )
     values (
       v_character.id,
@@ -5076,9 +6133,12 @@ begin
       v_loot.rarity,
       1,
       true,
-      public.catalog_storage_capacity(v_loot.item_name),
-      '{}'::jsonb,
-      null
+      greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_loot.item_name))),
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      v_is_two_handed
     )
     returning * into v_storage_item;
 
@@ -5098,7 +6158,10 @@ begin
     and i.item_type = v_loot.item_type
     and i.rarity = v_loot.rarity
     and i.is_storage = false
-    and coalesce(i.spell_imbue, '') = ''
+    and coalesce(i.enchantment, '') = ''
+    and coalesce(i.material, '') = coalesce(v_material, '')
+    and i.enhancement_count = 0
+    and i.is_two_handed = v_is_two_handed
   order by i.slot_index
   limit 1;
 
@@ -5122,7 +6185,10 @@ begin
       is_storage,
       storage_capacity,
       modifiers,
-      spell_imbue
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed
     )
     values (
       v_character.id,
@@ -5134,8 +6200,11 @@ begin
       v_inventory_quantity,
       false,
       0,
-      '{}'::jsonb,
-      null
+      v_modifiers,
+      null,
+      v_material,
+      0,
+      v_is_two_handed
     )
     returning * into v_item;
   end if;
@@ -5156,5 +6225,5 @@ grant execute on function public.get_exploration_state(text) to anon, authentica
 grant execute on function public.import_loot_items(text, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
-grant execute on function public.award_exploration_loot_item(text, uuid, uuid, int) to anon, authenticated;
+grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 

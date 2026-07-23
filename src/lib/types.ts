@@ -9,6 +9,9 @@ export type ItemType =
   | 'pet'
   | 'accessory'
   | 'storage'
+  | 'material'
+  | 'catalyst'
+  | 'rune'
   | 'ore'
   | 'potion'
   | 'food'
@@ -67,8 +70,42 @@ export const ATTRIBUTE_LABELS: Record<AttributeKey, string> = {
   agility: 'Agility'
 };
 
-export type LoadoutModifierKey = AttributeKey | 'armor' | 'shield' | 'defense' | 'defence' | 'magic_resist' | 'magicResist' | 'magicResistance';
+export type LoadoutModifierKey =
+  | AttributeKey
+  | 'armor'
+  | 'shield'
+  | 'defense'
+  | 'defence'
+  | 'magic_resist'
+  | 'magicResist'
+  | 'magicResistance'
+  | 'health'
+  | 'hp'
+  | 'maxHp'
+  | 'max_hp'
+  | 'mana'
+  | 'maxMana'
+  | 'max_mana';
 export type LoadoutModifiers = Partial<Record<LoadoutModifierKey, number>>;
+
+export type ItemCatalogEntry = {
+  id: string;
+  key: string;
+  name: string;
+  type: ItemType;
+  rarity: ItemRarity;
+  category: string;
+  properties: string[];
+  quantityStep: number;
+  stackable: boolean;
+  defaultModifiers: LoadoutModifiers;
+  material: string;
+  isTwoHanded: boolean;
+  storageCapacity: number;
+  notes: string;
+  active: boolean;
+  order: number;
+};
 
 export type Profile = {
   id: string;
@@ -139,7 +176,10 @@ export type InventoryItem = {
   isStorage: boolean;
   storageCapacity: number;
   modifiers: LoadoutModifiers;
-  spellImbue?: string;
+  enchantment?: string;
+  material?: string;
+  enhancementCount: number;
+  isTwoHanded: boolean;
 };
 
 export type CurrencyUnit = {
@@ -197,6 +237,9 @@ export type MarketProduct = {
   priceCoin: number;
   stockQuantity: number | null;
   available: boolean;
+  catalogItemKey: string;
+  section: string;
+  quantityStep: number;
 };
 
 export type ShopVendor = {

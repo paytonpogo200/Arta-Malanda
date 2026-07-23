@@ -9,7 +9,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
-import { ITEM_TYPES } from '@/features/inventory/data';
+import { ITEM_TYPES, quantityStepForItem } from '@/features/inventory/data';
 import { rarityOptions } from '@/lib/utils/rarity';
 import type { CampaignProperty, InventoryItem, ItemRarity, ItemType, PropertyLocation, PropertyType } from '@/lib/types';
 
@@ -26,7 +26,7 @@ type ItemDraft = {
   rarity: ItemRarity;
   quantity: number;
   storageCapacity: number;
-  spellImbue: string;
+  enchantment: string;
 };
 
 type PropertyDraft = {
@@ -44,7 +44,7 @@ const EMPTY_ITEM: ItemDraft = {
   rarity: 'Common',
   quantity: 1,
   storageCapacity: 0,
-  spellImbue: ''
+  enchantment: ''
 };
 
 const EMPTY_PROPERTY: PropertyDraft = {
@@ -111,7 +111,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       rarity: item.rarity,
       quantity: item.quantity,
       storageCapacity: item.storageCapacity,
-      spellImbue: item.spellImbue ?? ''
+      enchantment: item.enchantment ?? ''
     } : EMPTY_ITEM);
     setDropQuantity(item?.quantity ?? 1);
   }
@@ -161,7 +161,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
         slotIndex: itemModal.slot,
         isStorage: itemDraft.type === 'storage',
         storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
-        spellImbue: itemDraft.spellImbue.trim() || null
+        enchantment: itemDraft.enchantment.trim() || null
       })
     });
   }
@@ -177,7 +177,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
         name: itemDraft.name.trim(),
         isStorage: itemDraft.type === 'storage',
         storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
-        spellImbue: itemDraft.spellImbue.trim() || null
+        enchantment: itemDraft.enchantment.trim() || null
       })
     });
   }
@@ -195,7 +195,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
 
   async function dropItem(item: InventoryItem) {
     if (!canManage) return;
-    await requestHouseChange(`/api/houses/items/${item.id}?quantity=${Math.max(1, dropQuantity)}`, { method: 'DELETE' });
+    await requestHouseChange(`/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function saveProperty(event: FormEvent) {
@@ -304,7 +304,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
               <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">{itemModal.item.type} · {itemModal.item.rarity} · Quantity {itemModal.item.quantity}</p>
               {canManage && (
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                  <NumberInput min={1} max={itemModal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
+                  <NumberInput min={quantityStepForItem(itemModal.item)} step={quantityStepForItem(itemModal.item)} max={itemModal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
                   <Button variant="danger" onClick={() => dropItem(itemModal.item!)} disabled={saving}>Drop</Button>
                 </div>
               )}
@@ -314,7 +314,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
                   <div className="grid gap-2 sm:grid-cols-3">
                     <SelectField value={itemDraft.type} onChange={(event) => setItemDraft({ ...itemDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                     <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                    <NumberInput min={1} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
+                    <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
                   </div>
                   <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Save item</Button>
                 </form>
@@ -326,7 +326,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
               <div className="grid gap-2 sm:grid-cols-3">
                 <SelectField value={itemDraft.type} onChange={(event) => setItemDraft({ ...itemDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                 <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                <NumberInput min={1} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
+                <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
               </div>
               <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Add item</Button>
             </form>

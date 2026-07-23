@@ -42,11 +42,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       p_item_name: String(body.name ?? ''),
       p_item_type: String(body.type ?? 'misc'),
       p_rarity: String(body.rarity ?? 'Common'),
-      p_quantity: Math.max(1, Number(body.quantity ?? 1)),
+      p_quantity: Math.max(0.5, Number(body.quantity ?? 1)),
       p_is_storage: Boolean(body.isStorage),
       p_storage_capacity: Math.max(0, Number(body.storageCapacity ?? 0)),
       p_modifiers: body.modifiers ?? {},
-      p_spell_imbue: body.spellImbue || null
+      p_enchantment: body.enchantment || null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

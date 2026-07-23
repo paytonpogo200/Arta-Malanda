@@ -63,7 +63,10 @@ export function normalizeProduct(value: unknown): MarketProduct {
     rarity: normalizeRarity(source.rarity),
     priceCoin: Math.max(0, numberFrom(source.priceCoin, 0)),
     stockQuantity: source.stockQuantity === null || source.stockQuantity === undefined ? null : Math.max(0, numberFrom(source.stockQuantity, 0)),
-    available: Boolean(source.available)
+    available: Boolean(source.available),
+    catalogItemKey: String(source.catalogItemKey ?? ''),
+    section: String(source.section ?? ''),
+    quantityStep: Math.max(0.1, numberFrom(source.quantityStep, 1))
   };
 }
 

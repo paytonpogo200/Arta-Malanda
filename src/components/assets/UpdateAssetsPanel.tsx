@@ -10,12 +10,13 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeUpdateAssetsPayload, type UpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
 import { SPELL_SCHOOLS } from '@/features/spells/data';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type BestiaryEntity, type ClassTemplate, type ItemRarity, type LootItem, type MarketProduct, type Spell } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type BestiaryEntity, type ClassTemplate, type ItemCatalogEntry, type ItemRarity, type LootItem, type MarketProduct, type Spell } from '@/lib/types';
 import { rarityOptions } from '@/lib/utils/rarity';
 
 type EditorTarget =
   | { kind: 'class'; value: ClassTemplate }
   | { kind: 'product'; value: MarketProduct }
+  | { kind: 'item'; value: ItemCatalogEntry }
   | { kind: 'spell'; value: Spell }
   | { kind: 'loot'; value: LootItem }
   | { kind: 'bestiary'; value: BestiaryEntity };
@@ -24,6 +25,7 @@ const EMPTY_ASSETS: UpdateAssetsPayload = {
   classes: [],
   cities: [],
   vendors: [],
+  itemCatalog: [],
   spells: [],
   lootPools: [],
   lootItems: [],
@@ -35,6 +37,7 @@ const LOOT_ITEM_TYPES = [...ITEM_TYPES, 'currency'] as const;
 function endpointFor(target: EditorTarget) {
   if (target.kind === 'class') return `/api/assets/classes/${target.value.id}`;
   if (target.kind === 'product') return `/api/cities/products/${target.value.id}`;
+  if (target.kind === 'item') return `/api/assets/items/${target.value.id}`;
   if (target.kind === 'spell') return `/api/assets/spells/${target.value.id}`;
   if (target.kind === 'loot') return `/api/assets/loot/${target.value.id}`;
   return `/api/bestiary/entities/${target.value.id}`;
@@ -43,6 +46,7 @@ function endpointFor(target: EditorTarget) {
 function titleFor(target: EditorTarget) {
   if (target.kind === 'class') return `Edit ${target.value.name}`;
   if (target.kind === 'product') return `Edit ${target.value.name}`;
+  if (target.kind === 'item') return `Edit ${target.value.name}`;
   if (target.kind === 'spell') return `Edit ${target.value.name}`;
   if (target.kind === 'loot') return `Edit ${target.value.name}`;
   return `Edit ${target.value.name}`;
@@ -134,7 +138,7 @@ export function UpdateAssetsPanel() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'Asset could not be saved.');
       const normalized = normalizeUpdateAssetsPayload(payload);
-      if (normalized.classes.length || normalized.vendors.length || normalized.spells.length || normalized.lootItems.length || normalized.bestiary.length) {
+      if (normalized.classes.length || normalized.vendors.length || normalized.itemCatalog.length || normalized.spells.length || normalized.lootItems.length || normalized.bestiary.length) {
         setAssets(normalized);
       } else {
         await loadAssets();
@@ -214,7 +218,22 @@ export function UpdateAssetsPanel() {
           </Card>
 
           <Card>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Item Catalog</h3></div>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Global Item Catalog</h3></div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {assets.itemCatalog.map((item) => (
+                <AssetButton
+                  key={item.id}
+                  title={item.name}
+                  subtitle={`${item.rarity} · ${item.type} · step ${item.quantityStep}`}
+                  onClick={() => openEditor({ kind: 'item', value: item })}
+                />
+              ))}
+              {!assets.itemCatalog.length && <p className="text-sm text-[var(--muted)]">No catalog items loaded.</p>}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loot Generator Items</h3></div>
             <div className="grid gap-3">
               {lootByPool.map(({ pool, items }) => (
                 <details key={pool.id} className="rounded-2xl border border-[var(--line)] bg-black/15">
@@ -287,6 +306,34 @@ export function UpdateAssetsPanel() {
                   <NumberInput value={Number(draft.stockQuantity ?? 0)} onValueChange={(value) => updateDraft('stockQuantity', value)} />
                 </div>
                 <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.available)} onChange={(event) => updateDraft('available', event.target.checked)} /> Available</label>
+              </>
+            )}
+
+            {target.kind === 'item' && (
+              <>
+                <TextField value={String(draft.name ?? '')} onChange={(event) => updateDraft('name', event.target.value)} placeholder="Item name" />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <SelectField value={String(draft.type ?? 'misc')} onChange={(event) => updateDraft('type', event.target.value)}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+                  <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
+                  <TextField value={String(draft.category ?? '')} onChange={(event) => updateDraft('category', event.target.value)} placeholder="Category" />
+                  <TextField value={String(draft.material ?? '')} onChange={(event) => updateDraft('material', event.target.value)} placeholder="Material" />
+                  <NumberInput value={Number(draft.quantityStep ?? 1)} min={0.5} step={0.5} onValueChange={(value) => updateDraft('quantityStep', value)} />
+                  <NumberInput value={Number(draft.storageCapacity ?? 0)} min={0} onValueChange={(value) => updateDraft('storageCapacity', value)} />
+                </div>
+                <TextAreaField rows={3} value={Array.isArray(draft.properties) ? draft.properties.join('\n') : String(draft.properties ?? '')} onChange={(event) => updateDraft('properties', event.target.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))} placeholder="One property per line" />
+                <TextAreaField rows={3} value={JSON.stringify(draft.defaultModifiers ?? {}, null, 2)} onChange={(event) => {
+                  try {
+                    updateDraft('defaultModifiers', JSON.parse(event.target.value));
+                  } catch {
+                    updateDraft('defaultModifiers', draft.defaultModifiers ?? {});
+                  }
+                }} placeholder="Modifier JSON" />
+                <TextAreaField rows={3} value={String(draft.notes ?? '')} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Notes" />
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.stackable)} onChange={(event) => updateDraft('stackable', event.target.checked)} /> Stackable</label>
+                  <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.isTwoHanded)} onChange={(event) => updateDraft('isTwoHanded', event.target.checked)} /> Two-handed</label>
+                  <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.active)} onChange={(event) => updateDraft('active', event.target.checked)} /> Visible</label>
+                </div>
               </>
             )}
 
