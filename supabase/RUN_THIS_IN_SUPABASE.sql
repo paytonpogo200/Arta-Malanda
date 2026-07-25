@@ -3916,56 +3916,20 @@ on conflict (city_key) do nothing;
 
 insert into public.shop_vendors (city_key, vendor_key, name, facility, category, display_order)
 values
-  ('calostrynn', 'calostrynn-market-stall', 'Market Stall', 'Market', 'General Goods', 10),
   ('calostrynn', 'calostrynn-armory', 'Armory Quartermaster', 'Armory', 'Arms & Armor', 20),
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
-  ('calostrynn', 'calostrynn-library', 'Library Scribe', 'Library', 'Spells & Scrolls', 40),
   ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50)
 on conflict (vendor_key) do nothing;
 
-insert into public.market_products (
-  vendor_id,
-  product_key,
-  item_name,
-  description,
-  item_type,
-  rarity,
-  price_coin,
-  stock_quantity,
-  display_order
-)
-select
-  v.id,
-  seed.product_key,
-  seed.item_name,
-  seed.description,
-  public.normalize_item_type(seed.item_type::text),
-  seed.rarity::public.item_rarity,
-  seed.price_coin,
-  seed.stock_quantity,
-  seed.display_order
-from public.shop_vendors v
-join (
-  values
-    ('calostrynn-market-stall', 'travel-rations', 'Travel Rations', 'Simple preserved food for the road.', 'food', 'Common', 8, 50, 10),
-    ('calostrynn-market-stall', 'rope-bundle', 'Rope Bundle', 'Useful cordage for climbs, hauling, and quick fixes.', 'tool', 'Common', 12, 18, 20),
-    ('calostrynn-market-stall', 'waist-pouch', 'Waist Pouch', 'A small one-slot storage container.', 'storage', 'Common', 80, 8, 30),
-    ('calostrynn-armory', 'iron-sword', 'Iron Sword', 'A dependable blade from the city armory.', 'weapon', 'Common', 120, 8, 10),
-    ('calostrynn-armory', 'round-shield', 'Round Shield', 'A sturdy shield suited for patrol or travel.', 'shield', 'Common', 90, 7, 20),
-    ('calostrynn-armory', 'light-armor', 'Light Armor', 'Flexible protection that keeps a fighter moving.', 'armor', 'Common', 180, 5, 30),
-    ('calostrynn-library', 'blank-scroll', 'Blank Scroll', 'Prepared parchment for notes, maps, or magic work.', 'quest', 'Common', 15, 30, 10),
-    ('calostrynn-library', 'spark-cantrip', 'Spark Cantrip', 'A beginner spell page for controlled flame.', 'quest', 'Uncommon', 150, 3, 20),
-    ('calostrynn-blacksmith', 'repair-kit', 'Repair Kit', 'Basic tools for maintaining gear at camp.', 'tool', 'Common', 75, 9, 10),
-    ('calostrynn-blacksmith', 'iron-ore', 'Iron Ore', 'Raw ore ready for forge work.', 'ore', 'Common', 22, 35, 20)
-) as seed(vendor_key, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, display_order)
-on v.vendor_key = seed.vendor_key
-on conflict (product_key) do nothing;
+delete from public.shop_vendors
+where city_key = 'calostrynn'
+  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
 delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
 with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
-delete from public.market_products p using armory_vendor v where p.vendor_id = v.id;
+delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
 from public.shop_vendors v
@@ -3984,6 +3948,33 @@ join (values
   ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'mountain-rune', false, 120),
   ('blacksmith-void-rune', 'Void Rune', 'Cannot be used for enchantments yet.', 'rune', 'Mythical', 0, 0, 'Runes', 1, 'void-rune', false, 130)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    price_coin = excluded.price_coin,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    updated_at = now();
+
+-- Seed Armory scales as Armory-owned wares instead of borrowing Blacksmith product rows.
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
+from public.shop_vendors v
+join (values
+  ('armory-bronze-scale', 'Bronze Scale', 'Bronze: +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 1, 'bronze-scale', true, 10),
+  ('armory-iron-scale', 'Iron Scale', 'Iron: -1 Agility when used for armor.', 'material', 'Common', 400, 40, 'Material Scales', 1, 'iron-scale', true, 20),
+  ('armory-steel-scale', 'Steel Scale', 'Steel: +1 Vitality when used for shields or armor.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 1, 'steel-scale', true, 30),
+  ('armory-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 1, 'mythril-scale', true, 40),
+  ('armory-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 10, 'Material Scales', 1, 'vaylium-scale', true, 50),
+  ('armory-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 2, 'Material Scales', 1, 'dragonscale-scale', true, 60)
+) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-armory'
 on conflict (product_key) do update
 set vendor_id = excluded.vendor_id,
     item_name = excluded.item_name,
@@ -6338,32 +6329,6 @@ set name = excluded.name,
     details = excluded.details,
     rarity = excluded.rarity,
     display_order = excluded.display_order;
-
-insert into public.market_products (
-  vendor_id,
-  product_key,
-  item_name,
-  description,
-  item_type,
-  rarity,
-  price_coin,
-  stock_quantity,
-  display_order
-)
-select
-  v.id,
-  'spell-scroll-' || s.spell_key,
-  s.name || ' Spell',
-  s.summary,
-  'quest'::text,
-  s.rarity,
-  greatest(50, s.mana_cost * 12),
-  3,
-  100 + s.display_order
-from public.shop_vendors v
-join public.spell_catalog s on true
-where v.vendor_key = 'calostrynn-library'
-on conflict (product_key) do nothing;
 
 create or replace function public.spell_record_to_json(p_spell public.spell_catalog)
 returns jsonb

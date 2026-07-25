@@ -131,6 +131,7 @@ const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Myth
 const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const RUNE_SECTION_ALIASES = new Set(['runes', 'rune']);
+const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith']);
 const BREWERY_STRENGTHS = ['Lesser', 'Greater', 'Greatest'] as const;
 
 function numberFromUnknown(value: unknown, fallback = 0) {
@@ -297,9 +298,13 @@ function uniqueProductsByName(products: MarketProduct[]) {
   return Array.from(byName.values());
 }
 
-function sharedForgeMaterialProducts(vendors: ShopVendor[]) {
-  const blacksmith = vendors.find(isBlacksmithVendor);
-  const source = blacksmith ? materialProducts(blacksmith) : vendors.flatMap(materialProducts);
+function activeCityVendor(vendor: ShopVendor) {
+  return vendor.cityKey !== 'calostrynn' || CALOSTRYNN_ACTIVE_VENDOR_KEYS.has(vendor.key);
+}
+
+function forgeMaterialProducts(vendors: ShopVendor[], service: ForgeService) {
+  const vendor = vendors.find(service === 'armory' ? isArmoryVendor : isBlacksmithVendor);
+  const source = vendor ? materialProducts(vendor) : vendors.flatMap(materialProducts);
   return uniqueProductsByName(source)
     .filter((product) => FORGE_MATERIAL_ORDER.some((name) => name.toLowerCase() === product.name.toLowerCase()))
     .sort((a, b) => FORGE_MATERIAL_ORDER.findIndex((name) => name.toLowerCase() === a.name.toLowerCase()) - FORGE_MATERIAL_ORDER.findIndex((name) => name.toLowerCase() === b.name.toLowerCase()));
@@ -505,17 +510,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const calostrynn = payload.cities.find((city) => city.key === 'calostrynn') ?? payload.cities[0];
   const shoppers = useMemo(() => payload.characters.filter((character) => isDm || character.ownerUserId === profile.id), [isDm, payload.characters, profile.id]);
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
-  const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId) ?? null;
+  const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && activeCityVendor(vendor)) ?? null;
   const cityLocked = Boolean(calostrynn?.locked);
   const shopperInCity = selectedShopper?.locationName === (calostrynn?.name ?? 'Calostrynn');
   const canShop = Boolean(selectedShopper && calostrynn && !cityLocked && shopperInCity);
-  const forgeMaterials = useMemo(() => sharedForgeMaterialProducts(payload.vendors), [payload.vendors]);
+  const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
+  const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
   const forgeRunes = useMemo(() => sharedForgeRuneProducts(payload.vendors), [payload.vendors]);
+  const craftMaterials = craftModal?.service === 'armory' ? armoryMaterials : blacksmithMaterials;
   const canConfirmForge = useMemo(() => {
     if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
     const walletCoin = walletTotalCoin(craftWallet);
     if (craftModal.mode === 'craft') {
-      const plan = buildMaterialPlan(craftModal.recipe, forgeMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
+      const plan = buildMaterialPlan(craftModal.recipe, craftMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
       const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
       return plan.canCover && walletCoin >= totalCost;
     }
@@ -530,10 +537,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
     const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
     return walletCoin >= laborCost + rune.priceCoin * requiredRunes;
-  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeMaterials, forgeRunes, selectedShopper, selectedVendor]);
+  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftMaterials, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeRunes, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === calostrynn?.key)
+    .filter(activeCityVendor)
     .filter((vendor) => isDm || !vendor.hidden)
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [calostrynn?.key, isDm, payload.vendors]);
 
@@ -597,7 +605,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (!response.ok) throw new Error(body.error ?? fallback);
     const normalized = normalizeCitiesPayload(body);
     setPayload(normalized);
-    if (selectedVendorId && !normalized.vendors.some((vendor) => vendor.id === selectedVendorId)) setSelectedVendorId('');
+    if (selectedVendorId && !normalized.vendors.some((vendor) => vendor.id === selectedVendorId && activeCityVendor(vendor))) setSelectedVendorId('');
   }
 
   async function toggleCityLock() {
@@ -768,9 +776,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   function openCraftModal(next: CraftModalState) {
+    const materials = next.service === 'armory' ? armoryMaterials : blacksmithMaterials;
     setCraftModal(next);
     setCraftMaterialProductId(next.mode === 'craft'
-      ? (next.recipe.materialName ? materialProductByName(forgeMaterials, next.recipe.materialName)?.id : forgeMaterials[0]?.id) ?? ''
+      ? (next.recipe.materialName ? materialProductByName(materials, next.recipe.materialName)?.id : materials[0]?.id) ?? ''
       : '');
     setCraftRuneProductId(forgeRunes.find((product) => hasUsableStock(product))?.id ?? '');
     setCraftTargetItemId('');
@@ -847,7 +856,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : isArmoryVendor(selectedVendor) ? (
         <ArmoryPage
           vendor={selectedVendor}
-          sharedMaterials={forgeMaterials}
+          sharedMaterials={armoryMaterials}
           isDm={isDm}
           saving={saving}
           canShop={canShop}
@@ -923,7 +932,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 service={craftModal.service}
                 shopper={selectedShopper}
                 recipe={craftModal.recipe}
-                materials={forgeMaterials}
+                materials={craftMaterials}
                 inventory={craftInventory}
                 houseItems={craftHouseItems}
                 wallet={craftWallet}
