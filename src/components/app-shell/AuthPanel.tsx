@@ -65,7 +65,7 @@ export function AuthPanel() {
         <div className="grid min-h-[38rem] md:grid-cols-[1.08fr_0.92fr]">
           <div className="flex flex-col justify-between gap-8 p-6 sm:p-8">
             <div>
-              <p className="eyebrow mb-3">Ladders and Snakes Campaign Table</p>
+              <p className="eyebrow mb-3">Arta Malanda Campaign Table</p>
               <h1 className="fantasy-title text-4xl font-black tracking-[-0.04em] sm:text-6xl">Welcome! To the world of Arta Malanda.</h1>
               <p className="mt-5 max-w-xl text-base leading-7 text-[var(--muted)] sm:text-lg">
                 In a world gone bleak after the Dozen-Year War, what possibilities await?

@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Arta Malanda',
-  description: 'A campaign table for Ladders and Snakes.'
+  description: 'A campaign table for Arta Malanda.'
 };
 
 export const viewport: Viewport = {

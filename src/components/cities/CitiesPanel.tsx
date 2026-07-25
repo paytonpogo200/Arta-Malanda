@@ -1206,7 +1206,7 @@ function ArmoryPage(props: {
                   </span>
                   <span>
                     <span className="block font-black">{recipe.name}</span>
-                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} Â· ` : ''}{formatCoinValue(recipe.laborCoin)} labor</span>
+                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} - ` : ''}{formatCoinValue(recipe.laborCoin)} labor</span>
                     {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
                   </span>
                 </span>

@@ -285,5 +285,3 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     tokenColor: '#79895f'
   }
 ];
-
-export const DEFAULT_CLASS_TEMPLATE = CLASS_TEMPLATES[0];

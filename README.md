@@ -1,17 +1,8 @@
 # Arta Malanda
 
-Clean rebuild of the Ladders and Snakes campaign table.
+Campaign dashboard for the Arta Malanda table.
 
-This repo is intentionally separate from the live production app. The goal is to rebuild the core systems with a performance-first architecture while preserving the same fantasy/parchment identity.
-
-## First preview target
-
-- Auth shell
-- Dashboard shell
-- Character ledger
-- Character sheet
-- Inventory and loadout
-- Battlemap and combat roster
+The app uses Next.js, Supabase RPC functions, and a single rerunnable Supabase SQL runner. Keep schema, function, seed, import, and data-transition work in `supabase/RUN_THIS_IN_SUPABASE.sql`.
 
 ## Local setup
 

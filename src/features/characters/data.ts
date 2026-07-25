@@ -106,27 +106,3 @@ export function normalizeLedgerPayload(value: unknown): CharacterLedgerPayload {
     characters
   };
 }
-
-export function characterFromClassTemplate(template: ClassTemplate, ownerUserId: string | null, name: string, personalPassives = ''): Omit<Character, 'id'> {
-  return {
-    name,
-    kind: 'player',
-    ownerUserId,
-    classKey: template.key,
-    className: template.name,
-    level: 1,
-    maxHp: template.baseHp,
-    currentHp: template.baseHp,
-    maxMana: template.baseMana,
-    currentMana: template.baseMana,
-    magicResist: template.baseMagicResist,
-    inventorySlots: template.inventorySlots,
-    spellSlots: template.spellSlots,
-    attributes: template.attributes,
-    classPassives: template.passives,
-    personalPassives,
-    tokenColor: template.tokenColor,
-    locationName: 'Calostrynn',
-    previousOwnerName: undefined
-  };
-}
