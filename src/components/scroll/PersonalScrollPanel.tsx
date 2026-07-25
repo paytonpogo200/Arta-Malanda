@@ -11,6 +11,8 @@ type DrawTool = 'brush' | 'eraser';
 const CANVAS_WIDTH = 1200;
 const CANVAS_HEIGHT = 1600;
 const EMPTY_SCROLL = '<p><br></p>';
+const ALLOWED_SCROLL_TAGS = new Set(['B', 'BLOCKQUOTE', 'BR', 'DIV', 'EM', 'FONT', 'H2', 'H3', 'I', 'LI', 'OL', 'P', 'SPAN', 'STRONG', 'U', 'UL']);
+const ALLOWED_TEXT_ALIGN = new Set(['center', 'left', 'right']);
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -37,6 +39,37 @@ function ToolbarButton({ active, label, onClick, children }: { active?: boolean;
       {children}
     </button>
   );
+}
+
+function sanitizeScrollHtml(html: string) {
+  const template = document.createElement('template');
+  template.innerHTML = html || EMPTY_SCROLL;
+
+  function sanitizeChild(node: ChildNode) {
+    if (node.nodeType === Node.TEXT_NODE) return;
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      node.remove();
+      return;
+    }
+
+    const element = node as HTMLElement;
+    for (const child of Array.from(element.childNodes)) sanitizeChild(child);
+
+    if (!ALLOWED_SCROLL_TAGS.has(element.tagName)) {
+      element.replaceWith(...Array.from(element.childNodes));
+      return;
+    }
+
+    const color = element.style.color || element.getAttribute('color') || '';
+    const textAlign = element.style.textAlign || '';
+    for (const attribute of Array.from(element.attributes)) element.removeAttribute(attribute.name);
+    if (color && CSS.supports('color', color)) element.style.color = color;
+    if (ALLOWED_TEXT_ALIGN.has(textAlign)) element.style.textAlign = textAlign;
+  }
+
+  for (const child of Array.from(template.content.childNodes)) sanitizeChild(child);
+  const sanitized = template.innerHTML.trim();
+  return sanitized.length ? sanitized : EMPTY_SCROLL;
 }
 
 export function PersonalScrollPanel() {
@@ -92,6 +125,7 @@ export function PersonalScrollPanel() {
   const save = useCallback(async () => {
     try {
       setError('');
+      latestHtmlRef.current = sanitizeScrollHtml(latestHtmlRef.current);
       const payload = {
         contentHtml: latestHtmlRef.current || EMPTY_SCROLL,
         drawingDataUrl: latestDrawingRef.current
@@ -133,7 +167,7 @@ export function PersonalScrollPanel() {
         const scroll = normalizePersonalScroll(await response.json().catch(() => ({})));
         if (!alive) return;
 
-        const html = scroll.contentHtml || EMPTY_SCROLL;
+        const html = sanitizeScrollHtml(scroll.contentHtml || EMPTY_SCROLL);
         latestHtmlRef.current = html;
         latestDrawingRef.current = scroll.drawingDataUrl;
         if (editorRef.current) editorRef.current.innerHTML = html;
@@ -173,19 +207,19 @@ export function PersonalScrollPanel() {
   function runTextTool(action: () => void) {
     editorRef.current?.focus();
     action();
-    latestHtmlRef.current = editorRef.current?.innerHTML || EMPTY_SCROLL;
+    latestHtmlRef.current = sanitizeScrollHtml(editorRef.current?.innerHTML || EMPTY_SCROLL);
     queueSave();
   }
 
   function applyTextColor(color: string) {
     editorRef.current?.focus();
     document.execCommand('foreColor', false, color);
-    latestHtmlRef.current = editorRef.current?.innerHTML || EMPTY_SCROLL;
+    latestHtmlRef.current = sanitizeScrollHtml(editorRef.current?.innerHTML || EMPTY_SCROLL);
     queueSave();
   }
 
   function handleInput() {
-    latestHtmlRef.current = editorRef.current?.innerHTML || EMPTY_SCROLL;
+    latestHtmlRef.current = sanitizeScrollHtml(editorRef.current?.innerHTML || EMPTY_SCROLL);
     queueSave();
   }
 
