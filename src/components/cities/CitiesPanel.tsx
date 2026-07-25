@@ -394,6 +394,32 @@ function buildMaterialPlan(recipe: CraftRecipe, materials: MarketProduct[], mate
   };
 }
 
+type MaterialPlan = ReturnType<typeof buildMaterialPlan>;
+
+function MaterialRequirementCard({ plan }: { plan: MaterialPlan }) {
+  const product = plan.product;
+  if (!product) return null;
+
+  return (
+    <div className={`rounded-2xl border p-3 ${rarityClass(product.rarity)}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
+          <div className="min-w-0">
+            <p className="font-black">{product.name}</p>
+            <p className="mt-1 text-xs text-[var(--muted)]">{product.type} - {product.rarity}</p>
+            {product.description && <p className="mt-2 text-xs text-[var(--muted)]">{product.description}</p>}
+          </div>
+        </div>
+        <div className="shrink-0 text-right text-xs font-black text-[var(--brass)]">
+          <p>{formatCoinValue(product.priceCoin)} each</p>
+          <p className="mt-1 text-[var(--muted)]">stock {product.stockQuantity ?? 'unlimited'}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function breweryRequirements(strength: string) {
   if (strength === 'Greater') return { property: 25, stabilizer: 10 };
   if (strength === 'Greatest') return { property: 50, stabilizer: 25 };
@@ -1163,15 +1189,21 @@ function ArmoryPage(props: {
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => (
+            {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
+              const materialProduct = recipe.materialName ? materialProductByName(sharedMaterials, recipe.materialName) : null;
+              const recipeMaterialClass = materialProduct ? rarityClass(materialProduct.rarity) : 'border-[var(--line)] bg-black/15';
+              return (
               <button
                 key={recipe.key}
                 type="button"
                 onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe })}
-                className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
+                className={`rounded-2xl border p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99] ${recipeMaterialClass}`}
               >
                 <span className="flex items-start gap-2">
-                  <ItemIcon type="armor" />
+                  <span className="grid shrink-0 justify-items-center gap-1 text-[var(--brass)]">
+                    <ItemIcon type="armor" />
+                    {materialProduct && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--paper)]">{materialProduct.rarity}</span>}
+                  </span>
                   <span>
                     <span className="block font-black">{recipe.name}</span>
                     <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} Â· ` : ''}{formatCoinValue(recipe.laborCoin)} labor</span>
@@ -1179,7 +1211,8 @@ function ArmoryPage(props: {
                   </span>
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ))}
@@ -1520,7 +1553,7 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
         <p className="text-sm font-black">{recipe.name}</p>
         <p className="mt-1 text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} material scale required.` : 'No material scale required.'}</p>
       </SoftCard>
-      {recipe.materialQuantity > 0 && recipe.materialName && (
+      {recipe.materialQuantity > 0 && recipe.materialName && !plan.product && (
         <SoftCard>
           <p className="eyebrow">Material</p>
           <p className="font-black">{recipe.materialName}</p>
@@ -1536,6 +1569,7 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
           </SelectField>
         </label>
       )}
+      {recipe.materialQuantity > 0 && plan.product && <MaterialRequirementCard plan={plan} />}
       {recipe.materialQuantity > 0 && (
         <div className="grid gap-2 sm:grid-cols-4">
           <SoftCard><p className="eyebrow">Required</p><p className="font-black">{plan.required}</p></SoftCard>

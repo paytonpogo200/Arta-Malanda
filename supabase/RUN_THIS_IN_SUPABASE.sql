@@ -505,7 +505,6 @@ $$;
 
 
 
-
 grant execute on function public.profile_from_campaign_session(text) to anon, authenticated;
 grant execute on function public.character_record_to_json(public.characters) to anon, authenticated;
 
@@ -849,7 +848,6 @@ grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to
 
 -- Dashboard shell state
 -- Gives the app shell a lightweight, session-safe way to detect combat lock and notification count.
-
 
 
 
@@ -1420,6 +1418,23 @@ as $$
   end
 $$;
 
+create or replace function public.catalog_storage_capacity(p_item_name text)
+returns int
+language sql
+stable
+as $$
+  select case
+    when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 500
+    when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 12
+    when lower(coalesce(p_item_name, '')) like '%light duffle%' then 6
+    when lower(coalesce(p_item_name, '')) like '%back bag%' or lower(coalesce(p_item_name, '')) like '%backpack%' then 4
+    when lower(coalesce(p_item_name, '')) like '%waist pouch%' or lower(coalesce(p_item_name, '')) like '%pouch%' then 1
+    when lower(coalesce(p_item_name, '')) like '%satchel%' then 3
+    else 6
+  end
+$$;
+
+
 create or replace function public.assert_valid_item_quantity(p_item_name text, p_item_type text, p_quantity numeric)
 returns numeric
 language plpgsql
@@ -1469,8 +1484,9 @@ set search_path = public
 as $$
 declare
   v_id uuid;
+  v_item_name text := trim(coalesce(p_item_name, ''));
 begin
-  if length(trim(coalesce(v_item_name, ''))) = 0 then
+  if length(v_item_name) = 0 then
     raise exception 'Item name is required.';
   end if;
 
@@ -1492,7 +1508,7 @@ begin
     display_order
   )
   values (
-    public.catalog_key_for_name(p_item_name),
+    public.catalog_key_for_name(v_item_name),
     v_item_name,
     public.normalize_item_type(p_item_type),
     coalesce(nullif(p_rarity, ''), 'Common')::public.item_rarity,
@@ -2522,6 +2538,8 @@ begin
   return public.inventory_item_record_to_json(v_item);
 end;
 $$;
+
+drop function if exists public.drop_inventory_item_quantity(text, uuid, integer);
 
 create or replace function public.drop_inventory_item_quantity(
   p_session_token text,
@@ -3966,7 +3984,20 @@ join (values
   ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'mountain-rune', false, 120),
   ('blacksmith-void-rune', 'Void Rune', 'Cannot be used for enchantments yet.', 'rune', 'Mythical', 0, 0, 'Runes', 1, 'void-rune', false, 130)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
-on conflict (product_key) do nothing;
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    price_coin = excluded.price_coin,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    updated_at = now();
 
 -- Replace Brewery placeholder wares with source-backed finished potions and brewing supplies.
 with brewery_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-brewery')
@@ -4132,6 +4163,34 @@ begin
   set amount = excluded.amount;
 end;
 $$;
+
+alter table public.shop_vendors
+add column if not exists npc_name text not null default 'Shopkeeper';
+
+create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_vendor.id,
+    'cityKey', p_vendor.city_key,
+    'key', p_vendor.vendor_key,
+    'name', p_vendor.name,
+    'npcName', p_vendor.npc_name,
+    'facility', p_vendor.facility,
+    'category', p_vendor.category,
+    'hidden', p_vendor.is_hidden,
+    'order', p_vendor.display_order,
+    'products', (
+      select coalesce(jsonb_agg(public.market_product_record_to_json(p) order by p.display_order, p.item_name), '[]'::jsonb)
+      from public.market_products p
+      where p.vendor_id = p_vendor.id
+        and (p_is_dm or p.is_available)
+    )
+  );
+$$;
+
 
 create or replace function public.get_discovered_cities(p_session_token text)
 returns jsonb
@@ -4614,6 +4673,33 @@ as $$
   end
 $$;
 
+create or replace function public.carried_item_quantity_by_name(
+  p_character_id uuid,
+  p_item_name text
+)
+returns numeric
+language sql
+stable
+as $$
+  select coalesce(sum(i.quantity), 0)
+  from public.inventory_items i
+  where i.character_id = p_character_id
+    and i.loadout_slot is null
+    and i.is_storage = false
+    and lower(i.item_name) = lower(trim(p_item_name))
+    and (
+      i.parent_item_id is null
+      or exists (
+        select 1
+        from public.inventory_items storage
+        where storage.id = i.parent_item_id
+          and storage.character_id = p_character_id
+          and storage.is_storage = true
+      )
+    )
+$$;
+
+
 create or replace function public.accessible_item_quantity_by_name(
   p_character_id uuid,
   p_item_name text,
@@ -4732,31 +4818,6 @@ $$;
 
 drop function if exists public.blacksmith_material_modifiers(text, text);
 
-create or replace function public.carried_item_quantity_by_name(
-  p_character_id uuid,
-  p_item_name text
-)
-returns numeric
-language sql
-stable
-as $$
-  select coalesce(sum(i.quantity), 0)
-  from public.inventory_items i
-  where i.character_id = p_character_id
-    and i.loadout_slot is null
-    and i.is_storage = false
-    and lower(i.item_name) = lower(trim(p_item_name))
-    and (
-      i.parent_item_id is null
-      or exists (
-        select 1
-        from public.inventory_items storage
-        where storage.id = i.parent_item_id
-          and storage.character_id = p_character_id
-          and storage.is_storage = true
-      )
-    )
-$$;
 
 create or replace function public.add_forge_material_leftover(
   p_character_id uuid,
@@ -6103,32 +6164,7 @@ where lower(item_name) = 'dragonscale armor';
 
 -- Shop vendor controls for Discovered Cities.
 
-alter table public.shop_vendors
-add column if not exists npc_name text not null default 'Shopkeeper';
 
-create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
-returns jsonb
-language sql
-stable
-as $$
-  select jsonb_build_object(
-    'id', p_vendor.id,
-    'cityKey', p_vendor.city_key,
-    'key', p_vendor.vendor_key,
-    'name', p_vendor.name,
-    'npcName', p_vendor.npc_name,
-    'facility', p_vendor.facility,
-    'category', p_vendor.category,
-    'hidden', p_vendor.is_hidden,
-    'order', p_vendor.display_order,
-    'products', (
-      select coalesce(jsonb_agg(public.market_product_record_to_json(p) order by p.display_order, p.item_name), '[]'::jsonb)
-      from public.market_products p
-      where p.vendor_id = p_vendor.id
-        and (p_is_dm or p.is_available)
-    )
-  );
-$$;
 
 create or replace function public.update_shop_vendor(
   p_session_token text,
@@ -7768,21 +7804,6 @@ end;
 $$;
 
 
-create or replace function public.catalog_storage_capacity(p_item_name text)
-returns int
-language sql
-stable
-as $$
-  select case
-    when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 500
-    when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 12
-    when lower(coalesce(p_item_name, '')) like '%light duffle%' then 6
-    when lower(coalesce(p_item_name, '')) like '%back bag%' or lower(coalesce(p_item_name, '')) like '%backpack%' then 4
-    when lower(coalesce(p_item_name, '')) like '%waist pouch%' or lower(coalesce(p_item_name, '')) like '%pouch%' then 1
-    when lower(coalesce(p_item_name, '')) like '%satchel%' then 3
-    else 6
-  end
-$$;
 
 do $$
 declare
