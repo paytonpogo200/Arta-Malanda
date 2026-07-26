@@ -3602,7 +3602,7 @@ begin
         )
     ),
     'classes', (
-      select coalesce(jsonb_agg(public.class_template_record_to_json(t) order by t.display_order, t.name), '[]'::jsonb)
+      select coalesce(jsonb_agg(public.class_template_record_to_json(t) order by t.name), '[]'::jsonb)
       from public.class_templates t
     ),
     'inventoryItems', (
