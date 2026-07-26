@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Compass, Dice6 } from 'lucide-react';
+import { ChevronRight, Compass } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 
 export function ExplorationPanel() {
@@ -19,20 +19,23 @@ export function ExplorationPanel() {
         </div>
       </Card>
 
-      <Link
-        href="/dashboard/exploration/loot"
-        className="block rounded-3xl border border-[var(--line)] bg-black/20 p-4 text-[var(--paper)] transition hover:border-[var(--brass)] active:scale-[0.99]"
-      >
-        <span className="flex items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[var(--line)] bg-black/25 text-[var(--brass)]">
-            <Dice6 size={24} />
+      <Card className="overflow-hidden">
+        <Link
+          href="/dashboard/exploration/loot"
+          className="group block w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left text-[var(--paper)] transition hover:border-[var(--brass)]/70 active:scale-[0.99]"
+        >
+          <span className="flex items-start justify-between gap-3">
+            <span className="min-w-0">
+              <span className="eyebrow">Exploration Tool</span>
+              <span className="mt-1 block text-xl font-black leading-tight">Loot Generator</span>
+              <span className="mt-1 block text-xs font-bold text-[var(--muted)]">Workbook import, odds preview, and loot rolling</span>
+            </span>
+            <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+              <ChevronRight size={18} />
+            </span>
           </span>
-          <span>
-            <span className="block text-sm font-black uppercase tracking-wider text-[var(--brass)]">Loot Generator</span>
-            <span className="mt-1 block text-sm font-bold text-[var(--muted)]">Open the full loot workbook import, odds preview, and loot rolling tool.</span>
-          </span>
-        </span>
-      </Link>
+        </Link>
+      </Card>
     </div>
   );
 }

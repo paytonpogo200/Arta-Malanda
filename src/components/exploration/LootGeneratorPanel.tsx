@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Compass, Dice6, FileUp, Gift, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Compass, Dice6, FileUp, Gift, Loader2, RefreshCw } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -66,32 +66,43 @@ function ChoiceDisclosure({
   onChange: (value: ChoiceValue) => void;
   columns?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <details className="shop-section-disclosure">
-      <summary>
-        <span className="min-w-0">
-          <span className="eyebrow">{label}</span>
-          <span className="mt-1 block truncate text-xl font-black leading-tight">{String(value)}</span>
-          <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{options.length} options</span>
+    <Card className="overflow-hidden p-4 sm:p-4">
+      <button
+        type="button"
+        onClick={() => setExpanded((current) => !current)}
+        className="group w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left transition hover:border-[var(--brass)]/70"
+      >
+        <span className="flex items-start justify-between gap-3">
+          <span className="min-w-0">
+            <span className="eyebrow">{label}</span>
+            <span className="mt-1 block truncate text-xl font-black leading-tight">{String(value)}</span>
+            <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{options.length} options</span>
+          </span>
+          <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+            {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </span>
         </span>
-        <ChevronDown className="shop-section-chevron" size={18} />
-      </summary>
-      <div className={`shop-section-body grid gap-2 ${columns}`}>
-        {options.map((option) => {
-          const selected = String(option) === String(value);
-          return (
-            <button
-              key={String(option)}
-              type="button"
-              onClick={() => onChange(option)}
-              className={`rounded-xl border p-3 text-left text-sm font-black transition hover:border-[var(--brass)] ${selected ? 'border-[var(--brass)] bg-[#d1a85b1c] text-[var(--paper)]' : 'border-[var(--line)] bg-black/15 text-[var(--muted)]'}`}
-            >
-              {String(option)}
-            </button>
-          );
-        })}
-      </div>
-    </details>
+      </button>
+      {expanded && (
+        <div className={`mt-4 grid gap-2 ${columns}`}>
+          {options.map((option) => {
+            const selected = String(option) === String(value);
+            return (
+              <button
+                key={String(option)}
+                type="button"
+                onClick={() => onChange(option)}
+                className={`rounded-xl border p-3 text-left text-sm font-black transition hover:border-[var(--brass)] ${selected ? 'border-[var(--brass)] bg-[#d1a85b1c] text-[var(--paper)]' : 'border-[var(--line)] bg-black/15 text-[var(--muted)]'}`}
+              >
+                {String(option)}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Card>
   );
 }
 

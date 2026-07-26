@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Sparkles, Store, Unlock, Users, WandSparkles } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Sparkles, Store, Unlock, Users, WandSparkles } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -1212,26 +1212,48 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
   onEditProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
+  function toggleSection(section: string) {
+    setExpandedSections((current) => {
+      const next = new Set(current);
+      if (next.has(section)) next.delete(section);
+      else next.add(section);
+      return next;
+    });
+  }
+
   return (
     <div className="grid gap-3">
       {groupProducts(vendor.products).map(([section, products]) => {
         const spellType = spellTypeFromProductSection(section);
+        const expanded = expandedSections.has(section);
         return (
-          <details key={section} className="shop-section-disclosure">
-            <summary>
-              <span className="min-w-0">
-                <span className="eyebrow">Spell Category</span>
-                <span className="mt-1 block text-xl font-black leading-tight">{spellType ? `${spellType} Spells` : section}</span>
-                <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
-                  <span>{products.filter((product) => product.available).length}/{products.length} available</span>
+          <Card key={section} className="overflow-hidden">
+            <button
+              type="button"
+              onClick={() => toggleSection(section)}
+              className="group w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left transition hover:border-[var(--brass)]/70"
+            >
+              <span className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="eyebrow">Spell Category</span>
+                  <span className="mt-1 block text-xl font-black leading-tight">{spellType ? `${spellType} Spells` : section}</span>
+                  <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                    <span>{products.filter((product) => product.available).length}/{products.length} available</span>
+                    <span>{products.length} shown here</span>
+                  </span>
+                </span>
+                <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+                  {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 </span>
               </span>
-              <ChevronDown className="shop-section-chevron" size={18} />
-            </summary>
-            <div className="shop-section-body">
-              <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
-            </div>
-          </details>
+            </button>
+            {expanded && (
+              <div className="mt-4">
+                <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+              </div>
+            )}
+          </Card>
         );
       })}
     </div>

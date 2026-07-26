@@ -177,52 +177,6 @@ h3,
   background: linear-gradient(90deg, rgba(224, 166, 78, 0.6), transparent);
 }
 
-.shop-section-disclosure {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 1rem;
-  background:
-    linear-gradient(135deg, rgba(245, 180, 76, 0.16), rgba(10, 10, 8, 0.88) 48%, rgba(31, 120, 117, 0.14)),
-    rgba(8, 11, 10, 0.92);
-  box-shadow: 0 12px 28px rgba(3, 8, 7, 0.24), inset 0 1px rgba(255, 236, 199, 0.05);
-}
-
-.shop-section-disclosure > summary {
-  display: flex;
-  cursor: pointer;
-  list-style: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem;
-  transition: background 140ms ease, border-color 140ms ease;
-}
-
-.shop-section-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.shop-section-disclosure > summary:hover {
-  background: rgba(224, 166, 78, 0.08);
-  border-color: rgba(224, 166, 78, 0.7);
-}
-
-.shop-section-chevron {
-  flex-shrink: 0;
-  color: var(--brass);
-  transition: transform 160ms ease;
-}
-
-.shop-section-disclosure[open] .shop-section-chevron {
-  transform: rotate(180deg);
-}
-
-.shop-section-body {
-  border-top: 1px solid rgba(224, 166, 78, 0.2);
-  padding: 0.85rem;
-  background: rgba(5, 8, 7, 0.28);
-}
-
 .stat-bar {
   overflow: hidden;
   height: 0.48rem;
