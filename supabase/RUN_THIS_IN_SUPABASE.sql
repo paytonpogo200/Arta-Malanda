@@ -1556,6 +1556,20 @@ $$;
 do $$
 begin
   perform public.upsert_item_catalog_entry('Leather Armor', 'armor', 'Common', 'Armor', array['Starter armor', '-1 Vitality']::text[], 1, true, '{"vitality": -1}'::jsonb, 'Leather', false, 0, 'Starter armor. -1 Vitality while active.', true, 5);
+  perform public.upsert_item_catalog_entry('History Book', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A general history volume. Resolve its contents at the table.', true, 6);
+  perform public.upsert_item_catalog_entry('Alchemy Book', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'An alchemical study text. Resolve its contents at the table.', true, 7);
+  perform public.upsert_item_catalog_entry('Bestiary', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A creature reference volume. Resolve its contents at the table.', true, 8);
+  perform public.upsert_item_catalog_entry('Magical Research', 'quest', 'Rare', 'Books', array['Research voucher']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Choose a spell category at purchase to receive a rare magic spell book.', true, 9);
+  perform public.upsert_item_catalog_entry('Ember Magic Spell Book', 'quest', 'Rare', 'Books', array['Ember research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Ember magic spell book from library research.', true, 10);
+  perform public.upsert_item_catalog_entry('Frost Magic Spell Book', 'quest', 'Rare', 'Books', array['Frost research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Frost magic spell book from library research.', true, 11);
+  perform public.upsert_item_catalog_entry('Lightning Magic Spell Book', 'quest', 'Rare', 'Books', array['Lightning research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Lightning magic spell book from library research.', true, 12);
+  perform public.upsert_item_catalog_entry('Earth Magic Spell Book', 'quest', 'Rare', 'Books', array['Earth research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Earth magic spell book from library research.', true, 13);
+  perform public.upsert_item_catalog_entry('Wind Magic Spell Book', 'quest', 'Rare', 'Books', array['Wind research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Wind magic spell book from library research.', true, 14);
+  perform public.upsert_item_catalog_entry('Energy Magic Spell Book', 'quest', 'Rare', 'Books', array['Energy research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Energy magic spell book from library research.', true, 15);
+  perform public.upsert_item_catalog_entry('Defensive Support Magic Spell Book', 'quest', 'Rare', 'Books', array['Defensive Support research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Defensive Support magic spell book from library research.', true, 16);
+  perform public.upsert_item_catalog_entry('Offensive Support Magic Spell Book', 'quest', 'Rare', 'Books', array['Offensive Support research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Offensive Support magic spell book from library research.', true, 17);
+  perform public.upsert_item_catalog_entry('Enhancement Magic Spell Book', 'quest', 'Rare', 'Books', array['Enhancement research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Enhancement magic spell book from library research.', true, 18);
+  perform public.upsert_item_catalog_entry('Utility Magic Spell Book', 'quest', 'Rare', 'Books', array['Utility research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Utility magic spell book from library research.', true, 19);
   perform public.upsert_item_catalog_entry('Acer Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 10);
   perform public.upsert_item_catalog_entry('Aethercap', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 20);
   perform public.upsert_item_catalog_entry('Agilis', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Agility']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Agility property when used as an ingredient', true, 30);
@@ -3919,12 +3933,13 @@ values
   ('calostrynn', 'calostrynn-armory', 'Armory Quartermaster', 'Armory', 'Arms & Armor', 20),
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
   ('calostrynn', 'calostrynn-spells', 'Spell Registrar', 'Spell Shop', 'Spell Catalog', 40),
+  ('calostrynn', 'calostrynn-library', 'The Grand Calostrynn Library', 'Library', 'Books & Research', 45),
   ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50)
 on conflict (vendor_key) do nothing;
 
 delete from public.shop_vendors
 where city_key = 'calostrynn'
-  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-spells', 'calostrynn-blacksmith');
+  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-library', 'calostrynn-spells', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
@@ -4055,6 +4070,37 @@ join (values
 ) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, is_available, display_order)
 on v.vendor_key = 'calostrynn-brewery'
 on conflict (product_key) do nothing;
+
+with library_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-library')
+delete from public.market_products p
+using library_vendor v
+where p.vendor_id = v.id
+  and p.product_key not in ('library-history-book', 'library-alchemy-book', 'library-bestiary', 'library-magical-research');
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, 'quest', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, 'Books', 1, seed.catalog_item_key, true, seed.display_order
+from public.shop_vendors v
+join (values
+  ('library-history-book', 'History Book', 'A general history volume. Resolve its contents at the table.', 'Common', 100, null, 'history-book', 10),
+  ('library-alchemy-book', 'Alchemy Book', 'An alchemical study text. Resolve its contents at the table.', 'Common', 500, null, 'alchemy-book', 20),
+  ('library-bestiary', 'Bestiary', 'A creature reference volume. Resolve its contents at the table.', 'Common', 1000, null, 'bestiary', 30),
+  ('library-magical-research', 'Magical Research', 'Choose a spell category to receive a rare magic spell book for that category.', 'Rare', 2500, null, 'magical-research', 40)
+) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, catalog_item_key, display_order)
+on v.vendor_key = 'calostrynn-library'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    price_coin = excluded.price_coin,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    updated_at = now();
 
 create or replace function public.city_record_to_json(p_city public.cities)
 returns jsonb
@@ -4218,11 +4264,14 @@ begin
 end;
 $$;
 
+drop function if exists public.purchase_market_product(text, uuid, uuid, numeric);
+
 create or replace function public.purchase_market_product(
   p_session_token text,
   p_character_id uuid,
   p_product_id uuid,
-  p_quantity numeric default 1
+  p_quantity numeric default 1,
+  p_purchase_option text default null
 )
 returns jsonb
 language plpgsql
@@ -4253,6 +4302,7 @@ declare
   v_potion_strength text;
   v_potion_property text;
   v_potion_quality text;
+  v_research_type text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -4356,6 +4406,44 @@ begin
     end if;
 
     return public.get_discovered_cities(p_session_token);
+  end if;
+
+  if v_vendor.vendor_key = 'calostrynn-library' and v_product.product_key = 'library-magical-research' then
+    v_research_type := case lower(trim(coalesce(p_purchase_option, '')))
+      when 'ember' then 'Ember'
+      when 'frost' then 'Frost'
+      when 'lightning' then 'Lightning'
+      when 'earth' then 'Earth'
+      when 'wind' then 'Wind'
+      when 'energy' then 'Energy'
+      when 'defensive support' then 'Defensive Support'
+      when 'offensive support' then 'Offensive Support'
+      when 'enhancement' then 'Enhancement'
+      when 'enhancment' then 'Enhancement'
+      when 'utility' then 'Utility'
+      else null
+    end;
+
+    if v_research_type is null then
+      raise exception 'Choose a spell category to research.';
+    end if;
+
+    v_item_name := v_research_type || ' Magic Spell Book';
+    v_product.item_type := 'quest';
+    v_product.rarity := 'Rare'::public.item_rarity;
+    v_quantity := 1;
+
+    select * into v_catalog
+    from public.item_catalog
+    where item_key = public.catalog_key_for_name(v_item_name)
+    limit 1;
+
+    if v_catalog.id is not null then
+      v_modifiers := v_catalog.default_modifiers;
+      v_material := v_catalog.material;
+      v_is_two_handed := v_catalog.is_two_handed;
+      v_storage_capacity := v_catalog.storage_capacity;
+    end if;
   end if;
 
   if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
@@ -6049,7 +6137,7 @@ grant execute on function public.currency_coin_value(text) to anon, authenticate
 grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
 grant execute on function public.set_wallet_from_coin_value(uuid, int) to anon, authenticated;
 grant execute on function public.get_discovered_cities(text) to anon, authenticated;
-grant execute on function public.purchase_market_product(text, uuid, uuid, numeric) to anon, authenticated;
+grant execute on function public.purchase_market_product(text, uuid, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;

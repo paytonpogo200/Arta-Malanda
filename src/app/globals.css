@@ -177,6 +177,51 @@ h3,
   background: linear-gradient(90deg, rgba(224, 166, 78, 0.6), transparent);
 }
 
+.shop-section-disclosure {
+  overflow: hidden;
+  border: 1px solid rgba(224, 166, 78, 0.28);
+  border-radius: 1rem;
+  background:
+    linear-gradient(145deg, rgba(56, 31, 15, 0.95), rgba(29, 15, 7, 0.96)),
+    rgba(32, 17, 8, 0.95);
+  box-shadow: 0 12px 28px rgba(20, 7, 1, 0.24), inset 0 1px rgba(255, 236, 199, 0.05);
+}
+
+.shop-section-disclosure > summary {
+  display: flex;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.shop-section-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.shop-section-disclosure > summary:hover {
+  background: rgba(224, 166, 78, 0.08);
+}
+
+.shop-section-chevron {
+  flex-shrink: 0;
+  color: var(--brass);
+  transition: transform 160ms ease;
+}
+
+.shop-section-disclosure[open] .shop-section-chevron {
+  transform: rotate(180deg);
+}
+
+.shop-section-body {
+  border-top: 1px solid rgba(224, 166, 78, 0.2);
+  padding: 0.85rem;
+  background: rgba(15, 7, 3, 0.2);
+}
+
 .stat-bar {
   overflow: hidden;
   height: 0.48rem;

@@ -16,7 +16,8 @@ export async function POST(request: NextRequest) {
       p_session_token: token,
       p_character_id: String(body.characterId ?? ''),
       p_product_id: String(body.productId ?? ''),
-      p_quantity: Math.max(0.5, Number(body.quantity ?? 1))
+      p_quantity: Math.max(0.5, Number(body.quantity ?? 1)),
+      p_purchase_option: body.purchaseOption === null || body.purchaseOption === undefined ? null : String(body.purchaseOption)
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

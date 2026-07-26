@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Sparkles, Store, Unlock, Users, WandSparkles } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Sparkles, Store, Unlock, Users, WandSparkles } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -133,7 +133,8 @@ const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Myth
 const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const RUNE_SECTION_ALIASES = new Set(['runes', 'rune']);
-const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith', 'calostrynn-spells']);
+const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith', 'calostrynn-library', 'calostrynn-spells']);
+const MAGICAL_RESEARCH_TYPES = spellTypes;
 const BREWERY_STRENGTHS = ['Lesser', 'Greater', 'Greatest'] as const;
 
 function numberFromUnknown(value: unknown, fallback = 0) {
@@ -267,8 +268,27 @@ function isSpellVendor(vendor: ShopVendor) {
   return searchable.includes('spell');
 }
 
+function isLibraryVendor(vendor: ShopVendor) {
+  const searchable = `${vendor.key} ${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
+  return searchable.includes('library');
+}
+
 function isSpellProduct(product: MarketProduct) {
   return Boolean(spellTypeFromProductSection(product.section));
+}
+
+function isMagicalResearchProduct(product: MarketProduct) {
+  return product.key === 'library-magical-research' || product.name.toLowerCase() === 'magical research';
+}
+
+function isSinglePurchaseProduct(product: MarketProduct) {
+  return isSpellProduct(product) || isMagicalResearchProduct(product);
+}
+
+function purchaseActionLabel(product: MarketProduct) {
+  if (isSpellProduct(product)) return 'Learn';
+  if (isMagicalResearchProduct(product)) return 'Research';
+  return 'Buy';
 }
 
 function productCardClass(product: MarketProduct) {
@@ -513,6 +533,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [productDraft, setProductDraft] = useState<ProductDraft | null>(null);
   const [vendorDraft, setVendorDraft] = useState<VendorDraft | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [researchType, setResearchType] = useState(MAGICAL_RESEARCH_TYPES[0]);
   const [craftModal, setCraftModal] = useState<CraftModalState | null>(null);
   const [craftInventory, setCraftInventory] = useState<InventoryItem[]>([]);
   const [craftHouseItems, setCraftHouseItems] = useState<InventoryItem[]>([]);
@@ -711,11 +732,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setSaving(true);
     setError('');
     try {
-      const purchaseQuantity = isSpellProduct(selectedProduct) ? 1 : quantity;
+      const purchaseQuantity = isSinglePurchaseProduct(selectedProduct) ? 1 : quantity;
+      const purchaseOption = isMagicalResearchProduct(selectedProduct) ? researchType : null;
       await replaceFromResponse(await fetch('/api/cities/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId: selectedProduct.id, characterId: selectedShopper.id, quantity: purchaseQuantity })
+        body: JSON.stringify({ productId: selectedProduct.id, characterId: selectedShopper.id, quantity: purchaseQuantity, purchaseOption })
       }), 'Purchase failed.');
       setSelectedProduct(null);
       setQuantity(1);
@@ -917,6 +939,20 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onEditProduct={openProductEdit}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Spell visibility could not be changed.')}
         />
+      ) : isLibraryVendor(selectedVendor) ? (
+        <LibraryPage
+          vendor={selectedVendor}
+          isDm={isDm}
+          saving={saving}
+          canShop={canShop}
+          onSelectProduct={(product) => {
+            setSelectedProduct(product);
+            setQuantity(1);
+            if (isMagicalResearchProduct(product)) setResearchType(MAGICAL_RESEARCH_TYPES[0]);
+          }}
+          onEditProduct={openProductEdit}
+          onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Library stock could not be changed.')}
+        />
       ) : (
         <ShopPage
           vendor={selectedVendor}
@@ -944,7 +980,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 </div>
               </div>
             </div>
-            {isSpellProduct(selectedProduct) ? (
+            {isSinglePurchaseProduct(selectedProduct) ? (
               <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin)}</div>
             ) : (
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
@@ -952,9 +988,17 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin * quantity)}</div>
               </div>
             )}
+            {isMagicalResearchProduct(selectedProduct) && (
+              <label className="grid gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Research focus</span>
+                <SelectField value={researchType} onChange={(event) => setResearchType(event.target.value as typeof MAGICAL_RESEARCH_TYPES[number])}>
+                  {MAGICAL_RESEARCH_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </SelectField>
+              </label>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
-              <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {isSpellProduct(selectedProduct) ? 'Learn' : 'Buy'}</Button>
+              <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {purchaseActionLabel(selectedProduct)}</Button>
             </div>
           </div>
         </Modal>
@@ -1139,12 +1183,40 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
   return (
     <div className="grid gap-3">
       {groupProducts(vendor.products).map(([section, products]) => (
-        <details key={section} className="rounded-2xl border border-[var(--line)] bg-black/10">
-          <summary className="cursor-pointer list-none p-4 font-black uppercase tracking-wider text-[var(--brass)]">{section}</summary>
-          <div className="border-t border-[var(--line)] p-3">
+        <details key={section} className="shop-section-disclosure">
+          <summary>
+            <span className="min-w-0">
+              <span className="eyebrow">{section}</span>
+              <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{products.filter((product) => product.available).length} available</span>
+            </span>
+            <ChevronDown className="shop-section-chevron" size={18} />
+          </summary>
+          <div className="shop-section-body">
             <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
           </div>
         </details>
+      ))}
+    </div>
+  );
+}
+
+function LibraryPage(props: {
+  vendor: ShopVendor;
+  isDm: boolean;
+  saving: boolean;
+  canShop: boolean;
+  onSelectProduct: (product: MarketProduct) => void;
+  onEditProduct: (product: MarketProduct) => void;
+  onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
+}) {
+  const productGroups = groupProducts(props.vendor.products);
+  return (
+    <div className="grid gap-4">
+      {productGroups.map(([section, products]) => (
+        <Card key={section}>
+          <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
+          <ProductGrid {...props} products={products} />
+        </Card>
       ))}
     </div>
   );

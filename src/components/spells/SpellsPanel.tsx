@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField } from '@/components/ui/Field';
+import { SelectField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
 import { spellManaText, spellTypeClass } from '@/lib/utils/spells';
 import type { Character, CharacterSpell } from '@/lib/types';
@@ -77,6 +77,7 @@ export function SpellsPanel({
 }) {
   const [payload, setPayload] = useState<CharacterSpellsPayload>(EMPTY_SPELLS);
   const [grantSpellId, setGrantSpellId] = useState('');
+  const [grantSearch, setGrantSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -86,6 +87,11 @@ export function SpellsPanel({
   const inactiveSpells = useMemo(() => payload.spells.filter((entry) => !entry.active).sort((a, b) => a.spell.name.localeCompare(b.spell.name)), [payload.spells]);
   const learnedIds = useMemo(() => new Set(payload.spells.map((entry) => entry.spellId)), [payload.spells]);
   const grantOptions = useMemo(() => payload.catalog.filter((spell) => !learnedIds.has(spell.id)), [learnedIds, payload.catalog]);
+  const filteredGrantOptions = useMemo(() => {
+    const needle = grantSearch.trim().toLowerCase();
+    if (!needle) return grantOptions;
+    return grantOptions.filter((spell) => `${spell.name} ${spell.type} ${spell.school} ${spellManaText(spell)}`.toLowerCase().includes(needle));
+  }, [grantOptions, grantSearch]);
   const activeSlotCount = Math.max(0, character.spellSlots);
   const activeSlots = useMemo(() => new Map(activeSpells.filter((entry) => entry.slotIndex !== null).map((entry) => [entry.slotIndex, entry])), [activeSpells]);
   const unplacedActiveSpells = useMemo(() => activeSpells.filter((entry) => entry.slotIndex === null), [activeSpells]);
@@ -198,10 +204,13 @@ export function SpellsPanel({
         <div className="space-y-4">
           {canGrant && (
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
-                <option value="">Grant spell</option>
-                {grantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spellManaText(spell)}</option>)}
-              </SelectField>
+              <div className="grid gap-2">
+                <TextField value={grantSearch} onChange={(event) => setGrantSearch(event.target.value)} placeholder="Search spells by name, type, or school" />
+                <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
+                  <option value="">Grant spell</option>
+                  {filteredGrantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.type} · {spellManaText(spell)}</option>)}
+                </SelectField>
+              </div>
               <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>Grant</Button>
             </div>
           )}
