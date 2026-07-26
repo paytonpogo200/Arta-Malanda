@@ -260,13 +260,16 @@ export type ShopVendor = {
 };
 
 export type SpellSchool = 'arcane' | 'restoration' | 'nature' | 'alchemy' | 'rune' | 'shadow' | 'martial';
+export type SpellType = 'Ember' | 'Frost' | 'Lightning' | 'Earth' | 'Wind' | 'Energy' | 'Defensive Support' | 'Offensive Support' | 'Enhancement' | 'Utility';
 
 export type Spell = {
   id: string;
   key: string;
   name: string;
   school: SpellSchool;
+  type: SpellType;
   manaCost: number;
+  manaLabel: string;
   summary: string;
   details: string;
   rarity: ItemRarity;

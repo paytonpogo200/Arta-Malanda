@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowDown, ArrowUp, BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
-import { rarityClass } from '@/lib/utils/rarity';
+import { spellManaText, spellTypeClass } from '@/lib/utils/spells';
 import type { Character, CharacterSpell } from '@/lib/types';
 
 const EMPTY_SPELLS: CharacterSpellsPayload = {
@@ -19,29 +19,43 @@ function SpellCard({
   entry,
   canManage,
   activeBattle,
+  canActivate,
   onUse,
-  onToggle
+  onToggle,
+  onMove
 }: {
   entry: CharacterSpell;
   canManage: boolean;
   activeBattle: boolean;
+  canActivate: boolean;
   onUse: (entry: CharacterSpell) => void;
   onToggle: (entry: CharacterSpell, active: boolean) => void;
+  onMove: (entry: CharacterSpell, direction: -1 | 1) => void;
 }) {
   return (
-    <article className={`rounded-2xl border p-3 ${rarityClass(entry.spell.rarity)}`}>
+    <article className={`rounded-2xl border p-3 ${spellTypeClass(entry.spell.type)} ${entry.active ? '' : 'spell-card-inactive'}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-black">{entry.spell.name}</p>
-          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{entry.spell.school} · {entry.spell.manaCost} mana</p>
+          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{entry.spell.type} · {spellManaText(entry.spell)}</p>
         </div>
         <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
       </div>
       {entry.spell.summary && <p className="mt-2 text-sm leading-5 text-[var(--muted)]">{entry.spell.summary}</p>}
       {canManage && (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button variant="primary" className="px-3 py-2 text-xs" disabled={!entry.active} onClick={() => onUse(entry)}>Use spell</Button>
-          <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, !entry.active)}>{entry.active ? 'Dormant' : 'Activate'}</Button>
+        <div className="mt-3 grid gap-2">
+          {entry.active ? (
+            <>
+              <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => onUse(entry)}>Use spell</Button>
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, false)}>Bench</Button>
+                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle || entry.slotIndex === 0} onClick={() => onMove(entry, -1)} aria-label={`Move ${entry.spell.name} up`}><ArrowUp size={13} /></Button>
+                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onMove(entry, 1)} aria-label={`Move ${entry.spell.name} down`}><ArrowDown size={13} /></Button>
+              </div>
+            </>
+          ) : (
+            <Button variant="teal" className="px-3 py-2 text-xs" disabled={activeBattle || !canActivate} onClick={() => onToggle(entry, true)}>{canActivate ? 'Activate' : 'No open slot'}</Button>
+          )}
         </div>
       )}
     </article>
@@ -69,9 +83,13 @@ export function SpellsPanel({
 
   const activeBattle = payload.activeBattle || combatLocked;
   const activeSpells = useMemo(() => payload.spells.filter((entry) => entry.active).sort((a, b) => (a.slotIndex ?? 999) - (b.slotIndex ?? 999)), [payload.spells]);
-  const dormantSpells = useMemo(() => payload.spells.filter((entry) => !entry.active).sort((a, b) => a.spell.name.localeCompare(b.spell.name)), [payload.spells]);
+  const inactiveSpells = useMemo(() => payload.spells.filter((entry) => !entry.active).sort((a, b) => a.spell.name.localeCompare(b.spell.name)), [payload.spells]);
   const learnedIds = useMemo(() => new Set(payload.spells.map((entry) => entry.spellId)), [payload.spells]);
   const grantOptions = useMemo(() => payload.catalog.filter((spell) => !learnedIds.has(spell.id)), [learnedIds, payload.catalog]);
+  const activeSlotCount = Math.max(0, character.spellSlots);
+  const activeSlots = useMemo(() => new Map(activeSpells.filter((entry) => entry.slotIndex !== null).map((entry) => [entry.slotIndex, entry])), [activeSpells]);
+  const unplacedActiveSpells = useMemo(() => activeSpells.filter((entry) => entry.slotIndex === null), [activeSpells]);
+  const canActivateInactive = activeSpells.length < activeSlotCount;
 
   const loadSpells = useCallback(async () => {
     setLoading(true);
@@ -118,7 +136,7 @@ export function SpellsPanel({
     }
   }
 
-  async function toggleSpell(entry: CharacterSpell, active: boolean) {
+  async function patchSpell(entry: CharacterSpell, patch: { active?: boolean; slotIndex?: number }) {
     if (!canManage) return;
     setSaving(true);
     setError('');
@@ -126,13 +144,24 @@ export function SpellsPanel({
       await replaceFromResponse(await fetch(`/api/characters/spells/${entry.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ active })
+        body: JSON.stringify(patch)
       }), 'Spell could not be changed.');
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : 'Spell could not be changed.');
+    } catch (patchError) {
+      setError(patchError instanceof Error ? patchError.message : 'Spell could not be changed.');
     } finally {
       setSaving(false);
     }
+  }
+
+  function toggleSpell(entry: CharacterSpell, active: boolean) {
+    void patchSpell(entry, { active });
+  }
+
+  function moveSpell(entry: CharacterSpell, direction: -1 | 1) {
+    if (entry.slotIndex === null || activeSlotCount <= 0) return;
+    const targetSlot = Math.max(0, Math.min(activeSlotCount - 1, entry.slotIndex + direction));
+    if (targetSlot === entry.slotIndex) return;
+    void patchSpell(entry, { active: true, slotIndex: targetSlot });
   }
 
   async function useSpell(entry: CharacterSpell) {
@@ -171,7 +200,7 @@ export function SpellsPanel({
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
                 <option value="">Grant spell</option>
-                {grantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.manaCost} mana</option>)}
+                {grantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spellManaText(spell)}</option>)}
               </SelectField>
               <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>Grant</Button>
             </div>
@@ -180,10 +209,10 @@ export function SpellsPanel({
           <section>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Active slots {activeSpells.length}/{character.spellSlots}</h3></div>
             <div className="grid gap-2 sm:grid-cols-2">
-              {Array.from({ length: Math.max(character.spellSlots, activeSpells.length) }, (_, slot) => {
-                const entry = activeSpells.find((spell) => spell.slotIndex === slot) ?? activeSpells[slot];
+              {Array.from({ length: Math.max(activeSlotCount, activeSpells.length) }, (_, slot) => {
+                const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
                 return entry ? (
-                  <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} onUse={useSpell} onToggle={toggleSpell} />
+                  <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onMove={moveSpell} />
                 ) : (
                   <div key={slot} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
                 );
@@ -191,11 +220,11 @@ export function SpellsPanel({
             </div>
           </section>
 
-          {dormantSpells.length > 0 && (
+          {inactiveSpells.length > 0 && (
             <details className="rounded-2xl border border-[var(--line)] bg-black/10">
-              <summary className="cursor-pointer list-none p-3 font-black">Dormant spells · {dormantSpells.length}</summary>
+              <summary className="cursor-pointer list-none p-3 font-black">Inactive spells · {inactiveSpells.length}</summary>
               <div className="grid gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-                {dormantSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} onUse={useSpell} onToggle={toggleSpell} />)}
+                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onMove={moveSpell} />)}
               </div>
             </details>
           )}

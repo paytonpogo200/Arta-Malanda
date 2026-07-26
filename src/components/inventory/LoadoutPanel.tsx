@@ -6,6 +6,7 @@ import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { acceptsLoadoutItem } from '@/features/inventory/data';
 import { itemHasEnhancementVisual, modifierEntries, modifierText, modifierToneClass, spellForEnchantment } from '@/features/inventory/itemDetails';
 import { rarityClass } from '@/lib/utils/rarity';
+import { spellManaText } from '@/lib/utils/spells';
 import type { InventoryItem, LoadoutSlot, Spell } from '@/lib/types';
 
 const slots: { key: LoadoutSlot; label: string; icon: typeof Sword }[] = [
@@ -77,7 +78,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                     <span className="block text-sm font-black leading-4">{item.name}</span>
                     {item.enchantment && (
                       <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">
-                        {enchantmentSpell?.name ?? item.enchantment}{enchantmentSpell ? ` · ${enchantmentSpell.manaCost} mana` : ''}
+                        {enchantmentSpell?.name ?? item.enchantment}{enchantmentSpell ? ` · ${spellManaText(enchantmentSpell)}` : ''}
                       </span>
                     )}
                     {modifiers.length > 0 && (

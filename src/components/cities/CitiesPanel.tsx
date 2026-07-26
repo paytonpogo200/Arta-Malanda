@@ -12,6 +12,7 @@ import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/f
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
+import { spellTypeClass, spellTypeFromProductSection, spellTypes } from '@/lib/utils/spells';
 import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
 
 const EMPTY_PAYLOAD: CitiesPayload = { characters: [], cities: [], vendors: [] };
@@ -119,6 +120,7 @@ const BLACKSMITH_RECIPES: CraftRecipe[] = [
 ];
 
 const BLACKSMITH_SERVICE_SECTIONS = ['Material Scales', 'Light Weapons', 'Medium Weapons', 'Heavy Weapons', 'Magecraft Commissions', 'Shield Creation', 'Mythril Services', 'Runes'];
+const SPELL_SERVICE_SECTIONS = spellTypes.map((type) => `${type} Spells`);
 const ARMORY_RECIPES: CraftRecipe[] = [
   { key: 'leather-armor', section: 'Armor Creation', name: 'Leather Armor', type: 'armor', laborCoin: 0, materialQuantity: 0, note: '-1 Vitality' },
   { key: 'iron-armor', section: 'Armor Creation', name: 'Iron Armor', type: 'armor', laborCoin: 500, materialQuantity: 3, materialName: 'Iron Scale', note: '-1 Agility' },
@@ -131,7 +133,7 @@ const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Myth
 const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const RUNE_SECTION_ALIASES = new Set(['runes', 'rune']);
-const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith']);
+const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith', 'calostrynn-spells']);
 const BREWERY_STRENGTHS = ['Lesser', 'Greater', 'Greatest'] as const;
 
 function numberFromUnknown(value: unknown, fallback = 0) {
@@ -260,6 +262,20 @@ function isBreweryVendor(vendor: ShopVendor) {
   return searchable.includes('brewery');
 }
 
+function isSpellVendor(vendor: ShopVendor) {
+  const searchable = `${vendor.key} ${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
+  return searchable.includes('spell');
+}
+
+function isSpellProduct(product: MarketProduct) {
+  return Boolean(spellTypeFromProductSection(product.section));
+}
+
+function productCardClass(product: MarketProduct) {
+  const spellType = spellTypeFromProductSection(product.section);
+  return spellType ? spellTypeClass(spellType) : rarityClass(product.rarity);
+}
+
 function productSection(product: MarketProduct) {
   return product.section || product.type || 'Wares';
 }
@@ -277,6 +293,9 @@ function groupProducts(products: MarketProduct[]) {
     const sectionA = BLACKSMITH_SERVICE_SECTIONS.indexOf(a);
     const sectionB = BLACKSMITH_SERVICE_SECTIONS.indexOf(b);
     if (sectionA >= 0 || sectionB >= 0) return (sectionA < 0 ? 99 : sectionA) - (sectionB < 0 ? 99 : sectionB);
+    const spellSectionA = SPELL_SERVICE_SECTIONS.indexOf(a);
+    const spellSectionB = SPELL_SERVICE_SECTIONS.indexOf(b);
+    if (spellSectionA >= 0 || spellSectionB >= 0) return (spellSectionA < 0 ? 99 : spellSectionA) - (spellSectionB < 0 ? 99 : spellSectionB);
     return a.localeCompare(b);
   });
 }
@@ -692,10 +711,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setSaving(true);
     setError('');
     try {
+      const purchaseQuantity = isSpellProduct(selectedProduct) ? 1 : quantity;
       await replaceFromResponse(await fetch('/api/cities/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId: selectedProduct.id, characterId: selectedShopper.id, quantity })
+        body: JSON.stringify({ productId: selectedProduct.id, characterId: selectedShopper.id, quantity: purchaseQuantity })
       }), 'Purchase failed.');
       setSelectedProduct(null);
       setQuantity(1);
@@ -884,6 +904,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onCitiesChanged={setPayload}
           setError={setError}
         />
+      ) : isSpellVendor(selectedVendor) ? (
+        <SpellShopPage
+          vendor={selectedVendor}
+          isDm={isDm}
+          saving={saving}
+          canShop={canShop}
+          onSelectProduct={(product) => {
+            setSelectedProduct(product);
+            setQuantity(1);
+          }}
+          onEditProduct={openProductEdit}
+          onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Spell visibility could not be changed.')}
+        />
       ) : (
         <ShopPage
           vendor={selectedVendor}
@@ -902,22 +935,26 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       {selectedProduct && (
         <Modal title={selectedProduct.name} onClose={() => setSelectedProduct(null)}>
           <div className="space-y-4">
-            <div className={`rounded-2xl border p-4 ${rarityClass(selectedProduct.rarity)}`}>
+            <div className={`rounded-2xl border p-4 ${productCardClass(selectedProduct)}`}>
               <div className="flex items-center gap-3">
                 <span className="text-[var(--brass)]"><ItemIcon type={selectedProduct.type} size={22} /></span>
                 <div>
-                  <p className="font-black">{selectedProduct.rarity} {selectedProduct.type}</p>
+                  <p className="font-black">{isSpellProduct(selectedProduct) ? selectedProduct.section.replace(/\s+Spells$/i, '') : `${selectedProduct.rarity} ${selectedProduct.type}`}</p>
                   <p className="text-sm text-[var(--muted)]">{selectedProduct.description}</p>
                 </div>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-              <NumberInput min={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} step={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} max={selectedProduct.stockQuantity ?? 999999} value={quantity} onValueChange={setQuantity} />
-              <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin * quantity)}</div>
-            </div>
+            {isSpellProduct(selectedProduct) ? (
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin)}</div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                <NumberInput min={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} step={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} max={selectedProduct.stockQuantity ?? 999999} value={quantity} onValueChange={setQuantity} />
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin * quantity)}</div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
-              <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> Buy</Button>
+              <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {isSpellProduct(selectedProduct) ? 'Learn' : 'Buy'}</Button>
             </div>
           </div>
         </Modal>
@@ -1085,6 +1122,29 @@ function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduc
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
           <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
         </Card>
+      ))}
+    </div>
+  );
+}
+
+function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct }: {
+  vendor: ShopVendor;
+  isDm: boolean;
+  saving: boolean;
+  canShop: boolean;
+  onSelectProduct: (product: MarketProduct) => void;
+  onEditProduct: (product: MarketProduct) => void;
+  onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      {groupProducts(vendor.products).map(([section, products]) => (
+        <details key={section} className="rounded-2xl border border-[var(--line)] bg-black/10">
+          <summary className="cursor-pointer list-none p-4 font-black uppercase tracking-wider text-[var(--brass)]">{section}</summary>
+          <div className="border-t border-[var(--line)] p-3">
+            <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+          </div>
+        </details>
       ))}
     </div>
   );
@@ -1507,14 +1567,14 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             onClick={() => {
               if (!disabled && canShop) onSelectProduct(product);
             }}
-            className={`relative rounded-2xl border p-3 text-left transition active:scale-[0.99] ${rarityClass(product.rarity)} ${disabled ? 'opacity-45' : ''}`}
+            className={`relative rounded-2xl border p-3 text-left transition active:scale-[0.99] ${productCardClass(product)} ${disabled ? 'opacity-45' : ''}`}
           >
             <span className="mb-2 flex items-start justify-between gap-3">
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
                   <span className="block truncate font-black">{product.name}</span>
-                  <span className="block text-xs text-[var(--muted)]">{product.type} · {product.rarity}</span>
+                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} · ${product.rarity}`}</span>
                 </span>
               </span>
               {isDm && (

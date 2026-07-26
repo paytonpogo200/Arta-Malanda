@@ -873,21 +873,21 @@ insert into public.class_templates (
   token_color
 )
 values
-  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intellegent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and overexhaderations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
-  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are increadibly durible mages, known for their legendary support in combat and on the battlefield. They are extremely formitable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 11, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
-  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as oposed to utility. Their resourcefulness is often a great contrabution to many sucessful expeditions.$am$, 100, 75, 8, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
+  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intelligent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and exaggerations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
+  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are incredibly durable mages, known for their legendary support in combat and on the battlefield. They are extremely formidable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 11, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
+  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as opposed to utility. Their resourcefulness is often a great contribution to many successful expeditions.$am$, 100, 75, 8, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
   ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', $am$Armor-clad warriors are amazing front liners. They are incredibly hard to take down and provide an amazing presence on the battlefield. What they lack in quickness, they make up for in annoying defensive utility. They are often seen as scary or mad due to their nature on the battlefield, or at least thats what they say. Hasn't been one in ages.$am$, 165, 50, 9, 10, 1, '{"strength":2,"accuracy":0,"intelligence":-3,"vitality":3,"recovery":0,"mana_regen":0,"charisma":-1,"wisdom_cunning":-2,"perception":-1,"alchemy":1,"stealth":-3,"agility":-3}'::jsonb, jsonb_build_array($am$Has the ability _Distribution_, which will direct 50% of a target's damage to yourself$am$, 'Does not pay armor labor, only materials. Armor-clad cannot receive extra defensive bonuses from shields'), '#9a6e52'),
-  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', $am$Beastmasters are incredibly rare, but invaluable as an asset. Many have never been much on the battlefield themselves, but their way with the animals and beasts of the land is marvelling. They say a couple hundred years ago, an elvish beastmaster once tamed a dragon, and one must wonder if it was the childs story we all were told, or if there is even a smidgent of truth hidden within.$am$, 90, 50, 8, 20, 1, '{"strength":-3,"accuracy":1,"intelligence":0,"vitality":0,"recovery":1,"mana_regen":0,"charisma":3,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":0,"agility":1}'::jsonb, jsonb_build_array($am$Has the Spell "Tame" (doesn't take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal's wild score. If the resulting number is positive, the animal/beast is tamed, but health isn't restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.$am$, 'All Attacks from a Beast master will only ever bring an animal or beast to 1hp, never killing it', 'Will always crit against animals and beasts', 'Can bring 20 wild score worth of beasts per mission. Each beast operates independently of the beastmaster with its own initiative and turns.'), '#77875a'),
-  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', $am$Blacksmiths are highly valued assets in the realm, in all kindoms. Their utility and knack for anything with their hands is to be much admired. There are many kinds of blacksmiths, but the great runesmith Argon "The Hammer" Tyborgarian has been showing the realm just how versitile runes and magic can be in tools and armor, forming a new study within the craft as we speak.$am$, 125, 50, 8, 18, 3, '{"strength":2,"accuracy":0,"intelligence":0,"vitality":1,"recovery":0,"mana_regen":0,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":-1,"agility":-1}'::jsonb, jsonb_build_array($am$Doesn't need to pay for smithing labor, only materials$am$, 'Has the ability to create weapons away from a forge with a properly made fire', 'Once per combat, enhance a melee weapon of choice with +1 strength. Ends after combat/scene'), '#b28b45'),
-  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', $am$Knights are talented swords men and combat experts, and pair well with horses. Well liked knights have been known to have been shown favor even when purchacing one and have a larger political sway. They are your classic all around attack type with a nice amount of sustainability.$am$, 125, 25, 8, 14, 2, '{"strength":1,"accuracy":1,"intelligence":-1,"vitality":1,"recovery":0,"mana_regen":-2,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('+1 Strength while on a Horse.', 'Every hit received, roll for a parry, 18-20 will grant a 100% reduction of damage. 15-17 will grant a 50% (rounding up) reduction', 'Rally the troops: Once per combat, choose a target for the entire party to all attack at once; as long as this attack hits, all others will as well.'), '#a05e5a'),
-  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', $am$Mages are the hot shots of Calostrynn, their pride and joy. They pack a punch, much like the rangers, but what the rangers have in range and recon, the mages more than make up for in versitility. With enough knowledge, there is nearly a spell for almost all occasions.$am$, 70, 100, 10, 10, 10, '{"strength":-3,"accuracy":0,"intelligence":3,"vitality":-3,"recovery":0,"mana_regen":1,"charisma":1,"wisdom_cunning":2,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Regain 10 Mana for every enemy killed with a spell'), '#567a7f'),
-  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', $am$Mendrunners are a unique lot. They specialize in botany and natural remedies, resenting magic and its simple life style. They are increadibly nimble and many have once been or sometimes become rogues. Little is known about them though due to their lack of number.$am$, 85, 0, 7, 20, 0, '{"strength":-1,"accuracy":1,"intelligence":-5,"vitality":0,"recovery":3,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":4,"stealth":1,"agility":3}'::jsonb, jsonb_build_array('Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.', 'Is immune to poison and Illness'), '#6b8f68'),
+  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', $am$Beastmasters are incredibly rare, but invaluable as an asset. Many have never been much on the battlefield themselves, but their way with the animals and beasts of the land is marvelling. They say a couple hundred years ago, an elvish beastmaster once tamed a dragon, and one must wonder if it was the child's story we all were told, or if there is even a smidgen of truth hidden within.$am$, 90, 50, 8, 20, 1, '{"strength":-3,"accuracy":1,"intelligence":0,"vitality":0,"recovery":1,"mana_regen":0,"charisma":3,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":0,"agility":1}'::jsonb, jsonb_build_array($am$Has the Spell "Tame" (doesn't take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal's wild score. If the resulting number is positive, the animal/beast is tamed, but health isn't restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.$am$, 'All Attacks from a Beast master will only ever bring an animal or beast to 1hp, never killing it', 'Will always crit against animals and beasts', 'Can bring 20 wild score worth of beasts per mission. Each beast operates independently of the beastmaster with its own initiative and turns.'), '#77875a'),
+  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', $am$Blacksmiths are highly valued assets in the realm, in all kingdoms. Their utility and knack for anything with their hands is to be much admired. There are many kinds of blacksmiths, but the great runesmith Argon "The Hammer" Tyborgarian has been showing the realm just how versatile runes and magic can be in tools and armor, forming a new study within the craft as we speak.$am$, 125, 50, 8, 18, 3, '{"strength":2,"accuracy":0,"intelligence":0,"vitality":1,"recovery":0,"mana_regen":0,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":-1,"agility":-1}'::jsonb, jsonb_build_array($am$Doesn't need to pay for smithing labor, only materials$am$, 'Has the ability to create weapons away from a forge with a properly made fire', 'Once per combat, enhance a melee weapon of choice with +1 strength. Ends after combat/scene'), '#b28b45'),
+  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', $am$Knights are talented swordsmen and combat experts, and pair well with horses. Well liked knights have been known to have been shown favor even when purchasing one and have a larger political sway. They are your classic all around attack type with a nice amount of sustainability.$am$, 125, 25, 8, 14, 2, '{"strength":1,"accuracy":1,"intelligence":-1,"vitality":1,"recovery":0,"mana_regen":-2,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('+1 Strength while on a Horse.', 'Every hit received, roll for a parry, 18-20 will grant a 100% reduction of damage. 15-17 will grant a 50% (rounding up) reduction', 'Rally the troops: Once per combat, choose a target for the entire party to all attack at once; as long as this attack hits, all others will as well.'), '#a05e5a'),
+  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', $am$Mages are the hot shots of Calostrynn, their pride and joy. They pack a punch, much like the rangers, but what the rangers have in range and recon, the mages more than make up for in versatility. With enough knowledge, there is nearly a spell for almost all occasions.$am$, 70, 100, 10, 10, 10, '{"strength":-3,"accuracy":0,"intelligence":3,"vitality":-3,"recovery":0,"mana_regen":1,"charisma":1,"wisdom_cunning":2,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Regain 10 Mana for every enemy killed with a spell'), '#567a7f'),
+  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', $am$Mendrunners are a unique lot. They specialize in botany and natural remedies, resenting magic and its simple lifestyle. They are incredibly nimble and many have once been or sometimes become rogues. Little is known about them though due to their lack of number.$am$, 85, 0, 7, 20, 0, '{"strength":-1,"accuracy":1,"intelligence":-5,"vitality":0,"recovery":3,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":4,"stealth":1,"agility":3}'::jsonb, jsonb_build_array('Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.', 'Is immune to poison and Illness'), '#6b8f68'),
   ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', $am$The Muscle is notorious for their large frame and small brains. They specialize on sustain and being...well, the muscle of a group. When paired with a sage or apothecary, these hulkish freaks of nature are unstoppable.$am$, 150, 40, 7, 10, 1, '{"strength":3,"accuracy":-2,"intelligence":-3,"vitality":1,"recovery":2,"mana_regen":0,"charisma":-2,"wisdom_cunning":-3,"perception":-1,"alchemy":-2,"stealth":-2,"agility":-2}'::jsonb, jsonb_build_array('When The Muscle kills an enemy, gain 1 d6 for ensuing damage rolls. Resets after each combat/scene ends. Max of 5 d6'), '#9f6540'),
-  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', $am$Ranged class is known for being a backline attack type. They can pack a punch and provide great support form range, and can even act as very nice recon, but are very vulnerable alone in most situations. A master archer especially has been the sole reason for many concussions to wars, a much under appreciated craft, given their grand role in previous wars.$am$, 90, 50, 10, 15, 1, '{"strength":-2,"accuracy":2,"intelligence":1,"vitality":-2,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":1,"agility":1}'::jsonb, jsonb_build_array('Can tame birds', '3 times per combat, shoot 3 arrows in one draw. Must roll for accuracy for each arrow.', 'Allowed to buy and craft element or effect-tipped arrows'), '#7c8a49'),
-  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', $am$Rogues are shifty and cunning. They might not be stong in groups but are amazing duelests and specialize in catching enemies off guard. Their reputation preceeds them, and not always in the best of ways, but they are always more than nice outside and within the castle walls.$am$, 90, 50, 7, 16, 3, '{"strength":-1,"accuracy":0,"intelligence":0,"vitality":-1,"recovery":0,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":1,"stealth":3,"agility":2}'::jsonb, jsonb_build_array('Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.', 'May use Agility instead of Strength for any attack that procs *Backstab*'), '#6b617e'),
+  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', $am$Ranged class is known for being a backline attack type. They can pack a punch and provide great support from range, and can even act as very nice recon, but are very vulnerable alone in most situations. A master archer especially has been the sole reason for many conclusions to wars, a much under appreciated craft, given their grand role in previous wars.$am$, 90, 50, 10, 15, 1, '{"strength":-2,"accuracy":2,"intelligence":1,"vitality":-2,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":1,"agility":1}'::jsonb, jsonb_build_array('Can tame birds', '3 times per combat, shoot 3 arrows in one draw. Must roll for accuracy for each arrow.', 'Allowed to buy and craft element or effect-tipped arrows'), '#7c8a49'),
+  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', $am$Rogues are shifty and cunning. They might not be strong in groups but are amazing duelists and specialize in catching enemies off guard. Their reputation precedes them, and not always in the best of ways, but they are always more than nice outside and within the castle walls.$am$, 90, 50, 7, 16, 3, '{"strength":-1,"accuracy":0,"intelligence":0,"vitality":-1,"recovery":0,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":1,"stealth":3,"agility":2}'::jsonb, jsonb_build_array('Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.', 'May use Agility instead of Strength for any attack that procs *Backstab*'), '#6b617e'),
   ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', $am$Sages are loved and appreciated by all. In a world of war and selfish interest, they walk a path of selflessness, aiding others in their prosperity and support on the battlefield. Those who have mastered their craft are known to have boundless mana and spell casting.$am$, 70, 100, 12, 12, 5, '{"strength":-2,"accuracy":-2,"intelligence":-5,"vitality":-2,"recovery":3,"mana_regen":2,"charisma":2,"wisdom_cunning":4,"perception":0,"alchemy":0,"stealth":0,"agility":2}'::jsonb, jsonb_build_array('Healing and enhancement spells use _Recovery_ instead of Intelligence when using magic rolls', 'Heals also heal an additional ally for half (rounding up) of the heals amount. Can be used on the same target'), '#7581a0'),
   ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', $am$Talismanists are experts at using weapons and armor forced with runes, and almost exclusively use weapons that hold spells or magical properties within them. This new class of warriors only recently came about, given the studies and smithsmanship from Argon "The Hammer" Tyborgarian.$am$, 125, 100, 10, 10, 0, '{"strength":1,"accuracy":1,"intelligence":1,"vitality":1,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":-2,"agility":0}'::jsonb, jsonb_build_array('Inherits 3 random low-level runes.', 'Requires only 3 runes to force spells into weapons as opposed to 5, with each rune beyond that increasing the chance of a stronger spell.', 'Each spell-infused weapon on hand can cast its spell twice per combat'), '#926d9f'),
-  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', $am$Wardens are your classic Jack-of-all trades mast of none. They bring great all around helpfulness and can be plug and play in most settings. Wardens are known for their survival skills and cunning, but are shunned for a lack of a profitable or secure occupation.$am$, 110, 75, 9, 20, 3, '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":-2,"wisdom_cunning":3,"perception":2,"alchemy":1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.', 'Gains a +2 modifier of choice in a single category where the party has no bonuses'), '#79895f')
+  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', $am$Wardens are your classic Jack-of-all trades master of none. They bring great all around helpfulness and can be plug and play in most settings. Wardens are known for their survival skills and cunning, but are shunned for a lack of a profitable or secure occupation.$am$, 110, 75, 9, 20, 3, '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":-2,"wisdom_cunning":3,"perception":2,"alchemy":1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.', 'Gains a +2 modifier of choice in a single category where the party has no bonuses'), '#79895f')
 on conflict (class_key) do update
 set
   name = excluded.name,
@@ -3918,12 +3918,13 @@ insert into public.shop_vendors (city_key, vendor_key, name, facility, category,
 values
   ('calostrynn', 'calostrynn-armory', 'Armory Quartermaster', 'Armory', 'Arms & Armor', 20),
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
+  ('calostrynn', 'calostrynn-spells', 'Spell Registrar', 'Spell Shop', 'Spell Catalog', 40),
   ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50)
 on conflict (vendor_key) do nothing;
 
 delete from public.shop_vendors
 where city_key = 'calostrynn'
-  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith');
+  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-spells', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
@@ -4235,6 +4236,7 @@ declare
   v_product public.market_products%rowtype;
   v_vendor public.shop_vendors%rowtype;
   v_catalog public.item_catalog%rowtype;
+  v_spell public.spell_catalog%rowtype;
   v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_cost int;
   v_wallet int;
@@ -4306,6 +4308,54 @@ begin
 
   if v_character.location_name <> v_city.name then
     raise exception 'That character is not in %.', v_city.name;
+  end if;
+
+  if v_vendor.vendor_key = 'calostrynn-spells' then
+    select * into v_spell
+    from public.spell_catalog
+    where spell_key = coalesce(nullif(v_product.catalog_item_key, ''), public.catalog_key_for_name(v_product.item_name))
+      and is_available
+    limit 1;
+
+    if v_spell.id is null then
+      raise exception 'Spell is not available.';
+    end if;
+
+    if exists (
+      select 1
+      from public.character_spells cs
+      where cs.character_id = v_character.id
+        and cs.spell_id = v_spell.id
+    ) then
+      raise exception '% already knows %.', v_character.name, v_spell.name;
+    end if;
+
+    v_quantity := 1;
+
+    if v_product.stock_quantity is not null and v_product.stock_quantity < 1 then
+      raise exception 'Not enough stock.';
+    end if;
+
+    v_cost := v_product.price_coin;
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then
+      raise exception 'Not enough currency.';
+    end if;
+
+    v_slot := public.find_first_free_spell_slot(v_character.id, v_character.spell_slots);
+
+    insert into public.character_spells (character_id, spell_id, is_active, slot_index)
+    values (v_character.id, v_spell.id, v_slot is not null, v_slot);
+
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+
+    if v_product.stock_quantity is not null then
+      update public.market_products
+      set stock_quantity = greatest(0, stock_quantity - 1)
+      where id = v_product.id;
+    end if;
+
+    return public.get_discovered_cities(p_session_token);
   end if;
 
   if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
@@ -5010,7 +5060,7 @@ begin
   v_options := case v_key
     when 'ember' then array['Emberbolt', 'Scorch', 'Flame Ring', 'Solar Flare', 'Radiance', 'Fireball', 'Sear']
     when 'frost' then array['Frostbite', 'Ice Shard', 'Hypothermia', 'Ice Wall', 'Ice Cube', 'Christmas Tree', 'Absolute Zero']
-    when 'lightning' then array['Sparkshot', 'Static Charge', 'Arc Shot', 'Defibulate', 'Electric Explosion', 'Thunder Crash', 'Lightning Chain']
+    when 'lightning' then array['Sparkshot', 'Static Charge', 'Arc Shot', 'Defibrillate', 'Electric Explosion', 'Thunder Crash', 'Lightning Chain']
     when 'earth' then array['Stone Fist', 'Quicksand', 'Earthen Spikes', 'Earthquake']
     when 'wind' then array['Wind Cutter', 'Mighty Gust', 'Wind Be With Me', 'Gale Burst']
     else null
@@ -6249,86 +6299,171 @@ create trigger character_spells_touch_updated_at
 before update on public.character_spells
 for each row execute function public.touch_updated_at();
 
-insert into public.spell_catalog (spell_key, name, school, mana_cost, summary, details, rarity, display_order)
+alter table public.spell_catalog
+  add column if not exists spell_type text not null default 'Utility',
+  add column if not exists mana_label text not null default '',
+  add column if not exists price_coin int not null default 0 check (price_coin >= 0);
+
+alter table public.spell_catalog
+  drop constraint if exists spell_catalog_spell_type_valid,
+  add constraint spell_catalog_spell_type_valid check (spell_type in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility'));
+
+create table if not exists public.app_checkpoints (
+  checkpoint_key text primary key,
+  applied_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if exists (select 1 from public.spell_catalog where spell_key = 'defibulate')
+    and not exists (select 1 from public.spell_catalog where spell_key = 'defibrillate')
+  then
+    update public.spell_catalog
+    set spell_key = 'defibrillate',
+        name = 'Defibrillate'
+    where spell_key = 'defibulate';
+  elsif exists (select 1 from public.spell_catalog where spell_key = 'defibulate') then
+    delete from public.spell_catalog where spell_key = 'defibulate';
+  end if;
+
+  if not exists (select 1 from public.app_checkpoints where checkpoint_key = 'clear-owned-spells-official-catalog-2026-07-25') then
+    delete from public.character_spells;
+    insert into public.app_checkpoints (checkpoint_key) values ('clear-owned-spells-official-catalog-2026-07-25');
+  end if;
+end;
+$$;
+
+insert into public.spell_catalog (spell_key, name, school, spell_type, mana_cost, mana_label, summary, details, rarity, is_available, display_order, price_coin)
 values
-  ('emberbolt', 'Emberbolt', 'arcane', 8, 'Deals 15 fire damage', 'Deals 15 fire damage', 'Common', 10),
-  ('scorch', 'Scorch', 'arcane', 12, 'Deals 10 burning damage for 3 turns', 'Deals 10 burning damage for 3 turns', 'Uncommon', 20),
-  ('flame-ring', 'Flame Ring', 'arcane', 18, 'Deals 22 fire damage to all tiles touching you', 'Deals 22 fire damage to all tiles touching you', 'Uncommon', 30),
-  ('solar-flare', 'Solar Flare', 'arcane', 18, 'Blinds opponent for 1 turn', 'Blinds opponent for 1 turn', 'Uncommon', 40),
-  ('radiance', 'Radiance', 'arcane', 45, 'Blinds 3 closest opponents for 1 turn', 'Blinds 3 closest opponents for 1 turn', 'Legendary', 50),
-  ('fireball', 'Fireball', 'arcane', 30, 'Deals 30 fire damage in a 3x3 area', 'Deals 30 fire damage in a 3x3 area', 'Epic', 60),
-  ('sear', 'Sear', 'arcane', 35, 'Deals an AOE burn in a 3x3 area, 10 fire damage per turn for 5 turns', 'Deals an AOE burn in a 3x3 area, 10 fire damage per turn for 5 turns', 'Epic', 70),
-  ('frostbite', 'Frostbite', 'arcane', 10, 'Deals 12 ice damage and slow target', 'Deals 12 ice damage and slow target', 'Common', 80),
-  ('ice-shard', 'Ice Shard', 'arcane', 11, 'Deals 20 piercing ice damage', 'Deals 20 piercing ice damage', 'Common', 90),
-  ('hypothermia', 'Hypothermia', 'arcane', 18, 'Prevents movement and dashes for 1 turn', 'Prevents movement and dashes for 1 turn', 'Uncommon', 100),
-  ('ice-wall', 'Ice Wall', 'arcane', 25, 'Creates a 3x1 defensive ice barrier with 60 HP', 'Creates a 3x1 defensive ice barrier with 60 HP', 'Rare', 110),
-  ('ice-cube', 'Ice Cube', 'arcane', 22, 'Skips a chosen enemies turn', 'Skips a chosen enemies turn', 'Rare', 120),
-  ('christmas-tree', 'Christmas Tree', 'arcane', 25, 'Places a ward that deals 15 Ice damage per turn in its radius for 3 turns', 'Places a ward that deals 15 Ice damage per turn in its radius for 3 turns', 'Rare', 130),
-  ('absolute-zero', 'Absolute Zero', 'arcane', 45, 'Prevents the movement and dashes of all enemies and allies in a radius of 2 movements', 'Prevents the movement and dashes of all enemies and allies in a radius of 2 movements', 'Legendary', 140),
-  ('sparkshot', 'Sparkshot', 'arcane', 9, 'Deals 14 lightning damage', 'Deals 14 lightning damage', 'Common', 150),
-  ('static-charge', 'Static Charge', 'arcane', 20, 'Deals 26 lightning damage to 1 enemy, 13 each to 2 enemies, or 9 each to 3 enemies', 'Deals 26 lightning damage to 1 enemy, 13 each to 2 enemies, or 9 each to 3 enemies', 'Rare', 160),
-  ('arc-shot', 'Arc Shot', 'arcane', 32, 'Deals 35 lightning damage to 3 close enemies', 'Deals 35 lightning damage to 3 close enemies', 'Epic', 170),
-  ('defibulate', 'Defibulate', 'arcane', 10, 'Bring an unconscious Ally or Enemy back to 1 hp', 'Bring an unconscious Ally or Enemy back to 1 hp', 'Common', 180),
-  ('electric-explosion', 'Electric Explosion', 'arcane', 20, 'Deal 15 Lightning damage to all allies and enemies within one movement', 'Deal 15 Lightning damage to all allies and enemies within one movement', 'Rare', 190),
-  ('thunder-crash', 'Thunder Crash', 'arcane', 38, 'Deals 50 lightning damage in a small radius around the player', 'Deals 50 lightning damage in a small radius around the player', 'Epic', 200),
-  ('lightning-chain', 'Lightning Chain', 'arcane', 38, 'Deal 10 Lightning damage jumping from person to person in a chain, only stopping if it hits 10 enemies or is unable to reach next target (2 movements)', 'Deal 10 Lightning damage jumping from person to person in a chain, only stopping if it hits 10 enemies or is unable to reach next target (2 movements)', 'Epic', 210),
-  ('stone-fist', 'Stone Fist', 'nature', 12, 'Deals 18 physical damage', 'Deals 18 physical damage', 'Uncommon', 220),
-  ('quicksand', 'Quicksand', 'nature', 15, 'Turn the earth around the player in to Quicksand that will slow that enemy, must have natural earth. Prevents movements for 2 turns', 'Turn the earth around the player in to Quicksand that will slow that enemy, must have natural earth. Prevents movements for 2 turns', 'Uncommon', 230),
-  ('earthen-spikes', 'Earthen Spikes', 'nature', 26, 'Deals 40 physical damage', 'Deals 40 physical damage', 'Rare', 240),
-  ('earthquake', 'Earthquake', 'nature', 30, 'Everyone rerolls for initiative', 'Everyone rerolls for initiative', 'Epic', 250),
-  ('wind-cutter', 'Wind Cutter', 'nature', 10, 'Deals 16 wind damage', 'Deals 16 wind damage', 'Common', 260),
-  ('mighty-gust', 'Mighty Gust', 'nature', 15, 'Pushes a person one movement', 'Pushes a person one movement', 'Uncommon', 270),
-  ('wind-be-with-me', 'Wind Be With Me', 'nature', 0, 'Be allowed to dash and attack in the same turn', 'Be allowed to dash and attack in the same turn', 'Uncommon', 275),
-  ('gale-burst', 'Gale Burst', 'nature', 24, 'Pushes enemies back one movement while dealing 28 damage', 'Pushes enemies back one movement while dealing 28 damage', 'Rare', 280),
-  ('pulse', 'Pulse', 'arcane', 15, 'Deals 18 damage around the caster', 'Deals 18 damage around the caster', 'Uncommon', 290),
-  ('energy-shield', 'Energy Shield', 'arcane', 15, 'Sheild absorbs 25 damage', 'Sheild absorbs 25 damage', 'Uncommon', 300),
-  ('mend-wounds', 'Mend Wounds', 'restoration', 12, 'Heal a single target 25 HP', 'Heal a single target 25 HP', 'Uncommon', 310),
-  ('greater-mend', 'Greater Mend', 'restoration', 28, 'Heals 75 HP', 'Heals 75 HP', 'Rare', 320),
-  ('antivenom', 'Antivenom', 'restoration', 10, 'Removes poison from a single target', 'Removes poison from a single target', 'Common', 330),
-  ('fortify', 'Fortify', 'restoration', 16, '+2 Vitality for 4 turns', '+2 Vitality for 4 turns', 'Uncommon', 340),
-  ('iron-skin', 'Iron Skin', 'restoration', 25, '+4 Vitality for next 5 turns', '+4 Vitality for next 5 turns', 'Rare', 350),
-  ('shield', 'Shield', 'restoration', 10, 'Give a +5 vitality to an opponent for the next three times they get attacked', 'Give a +5 vitality to an opponent for the next three times they get attacked', 'Common', 360),
-  ('cleanse', 'Cleanse', 'restoration', 50, 'Removes all debuffs from all party members', 'Removes all debuffs from all party members', 'Legendary', 370),
-  ('revitalize', 'Revitalize', 'restoration', 10, 'Removes all slows and binds for a single target', 'Removes all slows and binds for a single target', 'Common', 380),
-  ('golden-boy', 'Golden Boy', 'restoration', 40, 'Everyone on the battlefield heals twice as much for 3 rounds', 'Everyone on the battlefield heals twice as much for 3 rounds', 'Legendary', 390),
-  ('insurance', 'Insurance', 'restoration', 45, 'Caster gives the entire party except themselves a buff that when applied and a player drops below half health, the buff is expended and the player regains 25 HP. This is applied after the damage takes place and can act as a resuraction in that regard. If the player is already below half health, heals them for 10 HP', 'Caster gives the entire party except themselves a buff that when applied and a player drops below half health, the buff is expended and the player regains 25 HP. This is applied after the damage takes place and can act as a resuraction in that regard. If the player is already below half health, heals them for 10 HP', 'Legendary', 400),
-  ('counter-attack', 'Counter Attack', 'restoration', 30, 'Gives a single target the counterattack buff for 2 turns. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Gives a single target the counterattack buff for 2 turns. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Epic', 410),
-  ('retaliation', 'Retaliation', 'restoration', 45, 'Gives the entire party the counterattack buff for 1 turn. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Gives the entire party the counterattack buff for 1 turn. Whenever damaged with this buff, hit back (only auto attacks, no spells or abilities). Counterattacks will always hit and never crit', 'Legendary', 420),
-  ('internal-bleeding', 'Internal Bleeding', 'restoration', 25, 'Prevent a target from healing for 3 turns', 'Prevent a target from healing for 3 turns', 'Rare', 430),
-  ('strip', 'Strip', 'restoration', 30, 'Removes all buffs or potion effects from a target', 'Removes all buffs or potion effects from a target', 'Epic', 440),
-  ('demoralize', 'Demoralize', 'restoration', 55, 'Removes all buffs or potion effects from all enemies', 'Removes all buffs or potion effects from all enemies', 'Legendary', 450),
-  ('weaken', 'Weaken', 'restoration', 28, 'Lowers a targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Lowers a targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Rare', 460),
-  ('cripple', 'Cripple', 'restoration', 50, 'Lowers a targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Lowers a targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Legendary', 470),
-  ('enfeeblement', 'Enfeeblement', 'restoration', 60, 'Lowers all targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Lowers all targets Strength, Accuracy, and Intellegence by 3 for 2 turns', 'Legendary', 480),
-  ('dreadfall', 'Dreadfall', 'restoration', 90, 'Lowers all targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Lowers all targets Strength, Accuracy, and Intellegence by 5 for 3 turns', 'Legendary', 490),
-  ('whats-mine-is-yours', 'Whats mine is yours', 'restoration', 30, 'Swaps any active effects with any target', 'Swaps any active effects with any target', 'Epic', 500),
-  ('judas', 'Judas', 'restoration', 65, 'Chose an enemy to attack their ally. This attack will always crit.', 'Chose an enemy to attack their ally. This attack will always crit.', 'Legendary', 510),
-  ('jump-him', 'Jump Him', 'restoration', 70, 'Everyone attacks a target of choice. This action doesn''t affect the turn order, nor expends their turn or movement', 'Everyone attacks a target of choice. This action doesn''t affect the turn order, nor expends their turn or movement', 'Legendary', 520),
-  ('follow-the-leader', 'Follow the Leader', 'restoration', 45, 'For 2 rounds, party rolls one extra dice, you roll one less', 'For 2 rounds, party rolls one extra dice, you roll one less', 'Legendary', 530),
-  ('bloodthirsty', 'Bloodthirsty', 'restoration', 30, 'Will cause a teammate of your choice to follow an enemy of your choice for 3 rounds. The teammate will follow the enemy with every movement. This also counts for dashes and doesn''t cost a movement for the teammate.', 'Will cause a teammate of your choice to follow an enemy of your choice for 3 rounds. The teammate will follow the enemy with every movement. This also counts for dashes and doesn''t cost a movement for the teammate.', 'Epic', 540),
-  ('swiftness', 'Swiftness', 'rune', 14, '+1 speed for 5 turns', '+1 speed for 5 turns', 'Uncommon', 550),
-  ('clarity', 'Clarity', 'rune', 10, '+1 Accuracy and Perception for 5 turns', '+1 Accuracy and Perception for 5 turns', 'Common', 560),
-  ('mana-surge', 'Mana Surge', 'rune', 18, 'recieve 5 restored mana at the begining of each turn for 5 turns', 'recieve 5 restored mana at the begining of each turn for 5 turns', 'Uncommon', 570),
-  ('guided-strike', 'Guided Strike', 'rune', 10, '+2 Accuracy for next attack', '+2 Accuracy for next attack', 'Common', 580),
-  ('stabilize', 'Stabilize', 'rune', 10, 'Prevent a target from dying for 2 of targets turns (once per target)', 'Prevent a target from dying for 2 of targets turns (once per target)', 'Common', 590),
-  ('light-orb', 'Light Orb', 'arcane', 3, 'Floating light source', 'Floating light source', 'Common', 600),
-  ('warmth', 'Warmth', 'arcane', 5, 'Protects from cold for 1 day', 'Protects from cold for 1 day', 'Common', 610),
-  ('cooling', 'Cooling', 'arcane', 5, 'Protects from heat for 1 day', 'Protects from heat for 1 day', 'Common', 620),
-  ('levitation', 'Levitation', 'arcane', 15, 'Levitates a light to mild load, alive or not', 'Levitates a light to mild load, alive or not', 'Uncommon', 630),
-  ('seal', 'Seal', 'arcane', 12, 'Locks a container or door', 'Locks a container or door 18 Callor', 'Uncommon', 640),
-  ('magecraft-detection', 'Magecraft detection', 'arcane', 6, 'Detects all near magical energy', 'Detects all near magical energy', 'Common', 650),
-  ('purify-water', 'Purify Water', 'arcane', 5, 'Cleans water', 'Cleans water', 'Common', 660),
-  ('silent-step', 'Silent Step', 'arcane', 14, '+2 stealth for 5 turns (+3 stealth if not in combat)', '+2 stealth for 5 turns (+3 stealth if not in combat)', 'Uncommon', 670),
-  ('taunt', 'Taunt', 'arcane', 20, 'Up to 3 enemies must target you on their next turn if they can reasonably do so and bosses may resist with a roll', 'Up to 3 enemies must target you on their next turn if they can reasonably do so and bosses may resist with a roll', 'Rare', 680),
-  ('entangle', 'Entangle', 'arcane', 35, 'For 1 round of turns, redirect half of all damage done to your party to yourself', 'For 1 round of turns, redirect half of all damage done to your party to yourself Pure Chaos - Mana decided by 3d20 Next attack will be a random spell Equilibrium - Free Trades any amount of health/Mana for any amount of Health/Mana 1 to 1. Can be used up to 3 times per combat, or up to 100 gained HP AND Mana combined per combat. power of friendship', 'Epic', 690)
+  ('emberbolt', 'Emberbolt', 'arcane', 'Ember', 8, '8 mana', '', '', 'Common', true, 1000, 600),
+  ('scorch', 'Scorch', 'arcane', 'Ember', 12, '12 mana', '', '', 'Common', true, 1001, 800),
+  ('flame-ring', 'Flame Ring', 'arcane', 'Ember', 18, '18 mana', '', '', 'Common', true, 1002, 2500),
+  ('solar-flare', 'Solar Flare', 'arcane', 'Ember', 18, '18 mana', '', '', 'Common', true, 1003, 3000),
+  ('radiance', 'Radiance', 'arcane', 'Ember', 45, '45 mana', '', '', 'Common', true, 1004, 10000),
+  ('fireball', 'Fireball', 'arcane', 'Ember', 30, '30 mana', '', '', 'Common', true, 1005, 6500),
+  ('sear', 'Sear', 'arcane', 'Ember', 35, '35 mana', '', '', 'Common', true, 1006, 9000),
+  ('frostbite', 'Frostbite', 'arcane', 'Frost', 10, '10 mana', '', '', 'Common', true, 2007, 1000),
+  ('ice-shard', 'Ice Shard', 'arcane', 'Frost', 11, '11 mana', '', '', 'Common', true, 2008, 1100),
+  ('hypothermia', 'Hypothermia', 'arcane', 'Frost', 18, '18 mana', '', '', 'Common', true, 2009, 2400),
+  ('ice-wall', 'Ice Wall', 'arcane', 'Frost', 25, '25 mana', '', '', 'Common', true, 2010, 4500),
+  ('ice-cube', 'Ice Cube', 'arcane', 'Frost', 22, '22 mana', '', '', 'Common', true, 2011, 4800),
+  ('christmas-tree', 'Christmas Tree', 'arcane', 'Frost', 25, '25 mana', '', '', 'Common', true, 2012, 7500),
+  ('absolute-zero', 'Absolute Zero', 'arcane', 'Frost', 45, '45 mana', '', '', 'Common', true, 2013, 10000),
+  ('sparkshot', 'Sparkshot', 'arcane', 'Lightning', 9, '9 mana', '', '', 'Common', true, 3014, 600),
+  ('static-charge', 'Static Charge', 'arcane', 'Lightning', 20, '20 mana', '', '', 'Common', true, 3015, 2800),
+  ('arc-shot', 'Arc Shot', 'arcane', 'Lightning', 32, '32 mana', '', '', 'Common', true, 3016, 6000),
+  ('defibrillate', 'Defibrillate', 'arcane', 'Lightning', 10, '10 mana', '', '', 'Common', true, 3017, 5000),
+  ('electric-explosion', 'Electric Explosion', 'arcane', 'Lightning', 20, '20 mana', '', '', 'Common', true, 3018, 1800),
+  ('thunder-crash', 'Thunder Crash', 'arcane', 'Lightning', 38, '38 mana', '', '', 'Common', true, 3019, 8500),
+  ('lightning-chain', 'Lightning Chain', 'arcane', 'Lightning', 38, '38 mana', '', '', 'Common', true, 3020, 10000),
+  ('stone-fist', 'Stone Fist', 'nature', 'Earth', 12, '12 mana', '', '', 'Common', true, 4021, 900),
+  ('quicksand', 'Quicksand', 'nature', 'Earth', 15, '15 mana', '', '', 'Common', true, 4022, 3000),
+  ('earthen-spikes', 'Earthen Spikes', 'nature', 'Earth', 26, '26 mana', '', '', 'Common', true, 4023, 4000),
+  ('earthquake', 'Earthquake', 'nature', 'Earth', 30, '30 mana', '', '', 'Common', true, 4024, 5000),
+  ('wind-cutter', 'Wind Cutter', 'nature', 'Wind', 10, '10 mana', '', '', 'Common', true, 5025, 800),
+  ('mighty-gust', 'Mighty Gust', 'nature', 'Wind', 15, '15 mana', '', '', 'Common', true, 5026, 2000),
+  ('wind-be-with-me', 'Wind Be With Me', 'nature', 'Wind', 25, '25 mana', '', '', 'Common', true, 5027, 2500),
+  ('gale-burst', 'Gale Burst', 'nature', 'Wind', 24, '24 mana', '', '', 'Common', true, 5028, 3500),
+  ('pulse', 'Pulse', 'arcane', 'Energy', 15, '15 mana', '', '', 'Common', true, 6029, 1600),
+  ('energy-shield', 'Energy Shield', 'arcane', 'Energy', 15, '15 mana', '', '', 'Common', true, 6030, 2400),
+  ('mend-wounds', 'Mend Wounds', 'restoration', 'Defensive Support', 12, '12 mana', '', '', 'Common', true, 7031, 2000),
+  ('greater-mend', 'Greater Mend', 'restoration', 'Defensive Support', 28, '28 mana', '', '', 'Common', true, 7032, 5500),
+  ('antivenom', 'Antivenom', 'restoration', 'Defensive Support', 10, '10 mana', '', '', 'Common', true, 7033, 1200),
+  ('fortify', 'Fortify', 'restoration', 'Defensive Support', 16, '16 mana', '', '', 'Common', true, 7034, 3000),
+  ('iron-skin', 'Iron Skin', 'restoration', 'Defensive Support', 25, '25 mana', '', '', 'Common', true, 7035, 6000),
+  ('shield', 'Shield', 'restoration', 'Defensive Support', 10, '10 mana', '', '', 'Common', true, 7036, 8000),
+  ('cleanse', 'Cleanse', 'restoration', 'Defensive Support', 50, '50 mana', '', '', 'Common', true, 7037, 12000),
+  ('revitalize', 'Revitalize', 'restoration', 'Defensive Support', 10, '10 mana', '', '', 'Common', true, 7038, 2500),
+  ('golden-boy', 'Golden Boy', 'restoration', 'Defensive Support', 40, '40 mana', '', '', 'Common', true, 7039, 7500),
+  ('insurance', 'Insurance', 'restoration', 'Defensive Support', 45, '45 mana', '', '', 'Common', true, 7040, 10000),
+  ('counter-attack', 'Counter Attack', 'restoration', 'Defensive Support', 30, '30 mana', '', '', 'Common', true, 7041, 5000),
+  ('retaliation', 'Retaliation', 'restoration', 'Defensive Support', 45, '45 mana', '', '', 'Common', true, 7042, 7500),
+  ('internal-bleeding', 'Internal Bleeding', 'shadow', 'Offensive Support', 25, '25 mana', '', '', 'Common', true, 8043, 4500),
+  ('strip', 'Strip', 'shadow', 'Offensive Support', 30, '30 mana', '', '', 'Common', true, 8044, 5500),
+  ('demoralize', 'Demoralize', 'shadow', 'Offensive Support', 55, '55 mana', '', '', 'Common', true, 8045, 10000),
+  ('weaken', 'Weaken', 'shadow', 'Offensive Support', 28, '28 mana', '', '', 'Common', true, 8046, 5000),
+  ('cripple', 'Cripple', 'shadow', 'Offensive Support', 50, '50 mana', '', '', 'Common', true, 8047, 9000),
+  ('enfeeblement', 'Enfeeblement', 'shadow', 'Offensive Support', 60, '60 mana', '', '', 'Common', true, 8048, 11000),
+  ('dreadfall', 'Dreadfall', 'shadow', 'Offensive Support', 90, '90 mana', '', '', 'Common', true, 8049, 15000),
+  ('whats-mine-is-yours', 'What''s Mine Is Yours', 'shadow', 'Offensive Support', 30, '30 mana', '', '', 'Common', true, 8050, 10000),
+  ('judas', 'Judas', 'shadow', 'Offensive Support', 65, '65 mana', '', '', 'Common', true, 8051, 11000),
+  ('jump-him', 'Jump Him', 'shadow', 'Offensive Support', 70, '70 mana', '', '', 'Common', true, 8052, 12500),
+  ('follow-the-leader', 'Follow the Leader', 'shadow', 'Offensive Support', 45, '45 mana', '', '', 'Common', true, 8053, 8000),
+  ('bloodthirsty', 'Bloodthirsty', 'shadow', 'Offensive Support', 30, '30 mana', '', '', 'Common', true, 8054, 6000),
+  ('swiftness', 'Swiftness', 'rune', 'Enhancement', 14, '14 mana', '', '', 'Common', true, 9055, 2200),
+  ('clarity', 'Clarity', 'rune', 'Enhancement', 10, '10 mana', '', '', 'Common', true, 9056, 1400),
+  ('mana-surge', 'Mana Surge', 'rune', 'Enhancement', 18, '18 mana', '', '', 'Common', true, 9057, 4500),
+  ('guided-strike', 'Guided Strike', 'rune', 'Enhancement', 10, '10 mana', '', '', 'Common', true, 9058, 1200),
+  ('stabilize', 'Stabilize', 'rune', 'Enhancement', 10, '10 mana', '', '', 'Common', true, 9059, 9000),
+  ('light-orb', 'Light Orb', 'arcane', 'Utility', 3, '3 mana', '', '', 'Common', true, 10060, 200),
+  ('warmth', 'Warmth', 'arcane', 'Utility', 5, '5 mana', '', '', 'Common', true, 10061, 500),
+  ('cooling', 'Cooling', 'arcane', 'Utility', 5, '5 mana', '', '', 'Common', true, 10062, 500),
+  ('levitation', 'Levitation', 'arcane', 'Utility', 15, '15 mana', '', '', 'Common', true, 10063, 3500),
+  ('seal', 'Seal', 'arcane', 'Utility', 12, '12 mana', '', '', 'Common', true, 10064, 1800),
+  ('magecraft-detection', 'Magecraft Detection', 'arcane', 'Utility', 6, '6 mana', '', '', 'Common', true, 10065, 2500),
+  ('purify-water', 'Purify Water', 'arcane', 'Utility', 5, '5 mana', '', '', 'Common', true, 10066, 400),
+  ('silent-step', 'Silent Step', 'arcane', 'Utility', 14, '14 mana', '', '', 'Common', true, 10067, 3500),
+  ('taunt', 'Taunt', 'arcane', 'Utility', 20, '20 mana', '', '', 'Common', true, 10068, 4500),
+  ('entangle', 'Entangle', 'arcane', 'Utility', 35, '35 mana', '', '', 'Common', true, 10069, 10000),
+  ('pure-chaos', 'Pure Chaos', 'arcane', 'Utility', 0, 'Mana decided by 3d20', 'Mana decided by 3d20. The next attack will be a random spell.', 'Mana decided by 3d20. The next attack will be a random spell.', 'Common', true, 10070, 10000),
+  ('equilibrium', 'Equilibrium', 'arcane', 'Utility', 0, 'Free', 'Freely trade health and mana one-for-one, within table limits.', 'Freely trade health and mana one-for-one, within table limits.', 'Common', true, 10071, 10000),
+  ('preparation', 'Preparation', 'arcane', 'Utility', 0, 'Free', '', '', 'Common', true, 10072, 10000)
 on conflict (spell_key) do update
 set name = excluded.name,
     school = excluded.school,
+    spell_type = excluded.spell_type,
     mana_cost = excluded.mana_cost,
-    summary = excluded.summary,
-    details = excluded.details,
+    mana_label = excluded.mana_label,
+    summary = case when excluded.summary <> '' then excluded.summary else public.spell_catalog.summary end,
+    details = case when excluded.details <> '' then excluded.details else public.spell_catalog.details end,
+    rarity = public.spell_catalog.rarity,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    price_coin = excluded.price_coin;
+
+update public.spell_catalog
+set summary = replace(replace(replace(replace(replace(replace(summary, 'Sheild', 'Shield'), 'Intellegence', 'Intelligence'), 'recieve', 'receive'), 'begining', 'beginning'), 'resuraction', 'resurrection'), 'Chose', 'Choose'),
+    details = replace(replace(replace(replace(replace(replace(details, 'Sheild', 'Shield'), 'Intellegence', 'Intelligence'), 'recieve', 'receive'), 'begining', 'beginning'), 'resuraction', 'resurrection'), 'Chose', 'Choose')
+where spell_key in ('emberbolt', 'scorch', 'flame-ring', 'solar-flare', 'radiance', 'fireball', 'sear', 'frostbite', 'ice-shard', 'hypothermia', 'ice-wall', 'ice-cube', 'christmas-tree', 'absolute-zero', 'sparkshot', 'static-charge', 'arc-shot', 'defibrillate', 'electric-explosion', 'thunder-crash', 'lightning-chain', 'stone-fist', 'quicksand', 'earthen-spikes', 'earthquake', 'wind-cutter', 'mighty-gust', 'wind-be-with-me', 'gale-burst', 'pulse', 'energy-shield', 'mend-wounds', 'greater-mend', 'antivenom', 'fortify', 'iron-skin', 'shield', 'cleanse', 'revitalize', 'golden-boy', 'insurance', 'counter-attack', 'retaliation', 'internal-bleeding', 'strip', 'demoralize', 'weaken', 'cripple', 'enfeeblement', 'dreadfall', 'whats-mine-is-yours', 'judas', 'jump-him', 'follow-the-leader', 'bloodthirsty', 'swiftness', 'clarity', 'mana-surge', 'guided-strike', 'stabilize', 'light-orb', 'warmth', 'cooling', 'levitation', 'seal', 'magecraft-detection', 'purify-water', 'silent-step', 'taunt', 'entangle', 'pure-chaos', 'equilibrium', 'preparation');
+
+with spell_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-spells')
+delete from public.market_products p
+using spell_vendor v
+where p.vendor_id = v.id
+  and p.product_key not in ('spell-emberbolt', 'spell-scorch', 'spell-flame-ring', 'spell-solar-flare', 'spell-radiance', 'spell-fireball', 'spell-sear', 'spell-frostbite', 'spell-ice-shard', 'spell-hypothermia', 'spell-ice-wall', 'spell-ice-cube', 'spell-christmas-tree', 'spell-absolute-zero', 'spell-sparkshot', 'spell-static-charge', 'spell-arc-shot', 'spell-defibrillate', 'spell-electric-explosion', 'spell-thunder-crash', 'spell-lightning-chain', 'spell-stone-fist', 'spell-quicksand', 'spell-earthen-spikes', 'spell-earthquake', 'spell-wind-cutter', 'spell-mighty-gust', 'spell-wind-be-with-me', 'spell-gale-burst', 'spell-pulse', 'spell-energy-shield', 'spell-mend-wounds', 'spell-greater-mend', 'spell-antivenom', 'spell-fortify', 'spell-iron-skin', 'spell-shield', 'spell-cleanse', 'spell-revitalize', 'spell-golden-boy', 'spell-insurance', 'spell-counter-attack', 'spell-retaliation', 'spell-internal-bleeding', 'spell-strip', 'spell-demoralize', 'spell-weaken', 'spell-cripple', 'spell-enfeeblement', 'spell-dreadfall', 'spell-whats-mine-is-yours', 'spell-judas', 'spell-jump-him', 'spell-follow-the-leader', 'spell-bloodthirsty', 'spell-swiftness', 'spell-clarity', 'spell-mana-surge', 'spell-guided-strike', 'spell-stabilize', 'spell-light-orb', 'spell-warmth', 'spell-cooling', 'spell-levitation', 'spell-seal', 'spell-magecraft-detection', 'spell-purify-water', 'spell-silent-step', 'spell-taunt', 'spell-entangle', 'spell-pure-chaos', 'spell-equilibrium', 'spell-preparation');
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select
+  v.id,
+  'spell-' || s.spell_key,
+  s.name,
+  coalesce(nullif(s.summary, ''), s.spell_type || ' spell - ' || s.mana_label),
+  'quest',
+  s.rarity,
+  s.price_coin,
+  null,
+  s.spell_type || ' Spells',
+  1,
+  s.spell_key,
+  s.is_available,
+  s.display_order
+from public.shop_vendors v
+join public.spell_catalog s on s.spell_key in ('emberbolt', 'scorch', 'flame-ring', 'solar-flare', 'radiance', 'fireball', 'sear', 'frostbite', 'ice-shard', 'hypothermia', 'ice-wall', 'ice-cube', 'christmas-tree', 'absolute-zero', 'sparkshot', 'static-charge', 'arc-shot', 'defibrillate', 'electric-explosion', 'thunder-crash', 'lightning-chain', 'stone-fist', 'quicksand', 'earthen-spikes', 'earthquake', 'wind-cutter', 'mighty-gust', 'wind-be-with-me', 'gale-burst', 'pulse', 'energy-shield', 'mend-wounds', 'greater-mend', 'antivenom', 'fortify', 'iron-skin', 'shield', 'cleanse', 'revitalize', 'golden-boy', 'insurance', 'counter-attack', 'retaliation', 'internal-bleeding', 'strip', 'demoralize', 'weaken', 'cripple', 'enfeeblement', 'dreadfall', 'whats-mine-is-yours', 'judas', 'jump-him', 'follow-the-leader', 'bloodthirsty', 'swiftness', 'clarity', 'mana-surge', 'guided-strike', 'stabilize', 'light-orb', 'warmth', 'cooling', 'levitation', 'seal', 'magecraft-detection', 'purify-water', 'silent-step', 'taunt', 'entangle', 'pure-chaos', 'equilibrium', 'preparation')
+where v.vendor_key = 'calostrynn-spells'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
     rarity = excluded.rarity,
-    display_order = excluded.display_order;
+    price_coin = excluded.price_coin,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    updated_at = now();
 
 create or replace function public.spell_record_to_json(p_spell public.spell_catalog)
 returns jsonb
@@ -6340,7 +6475,9 @@ as $$
     'key', p_spell.spell_key,
     'name', p_spell.name,
     'school', p_spell.school,
+    'type', p_spell.spell_type,
     'manaCost', p_spell.mana_cost,
+    'manaLabel', p_spell.mana_label,
     'summary', p_spell.summary,
     'details', p_spell.details,
     'rarity', p_spell.rarity
@@ -6493,6 +6630,7 @@ declare
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_active boolean;
   v_slot int;
+  v_conflict public.character_spells%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -6522,15 +6660,29 @@ begin
     raise exception 'No active spell slot is available.';
   end if;
 
-  if exists (
-    select 1
-    from public.character_spells cs
-    where cs.character_id = v_entry.character_id
-      and cs.is_active
-      and cs.slot_index = v_slot
-      and cs.id <> v_entry.id
-  ) then
-    raise exception 'That spell slot is already occupied.';
+  select * into v_conflict
+  from public.character_spells cs
+  where cs.character_id = v_entry.character_id
+    and cs.is_active
+    and cs.slot_index = v_slot
+    and cs.id <> v_entry.id
+  limit 1;
+
+  if v_conflict.id is not null then
+    if v_entry.is_active and v_entry.slot_index is not null then
+      update public.character_spells
+      set slot_index = null
+      where id = v_entry.id;
+
+      update public.character_spells
+      set slot_index = v_entry.slot_index
+      where id = v_conflict.id;
+    else
+      update public.character_spells
+      set is_active = false,
+          slot_index = null
+      where id = v_conflict.id;
+    end if;
   end if;
 
   update public.character_spells
@@ -7433,7 +7585,18 @@ begin
   set
     name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
     school = case when v_patch ? 'school' then coalesce(nullif(v_patch->>'school', ''), school) else school end,
+    spell_type = case
+      when v_patch ? 'type' and v_patch->>'type' in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility') then v_patch->>'type'
+      else spell_type
+    end,
     mana_cost = case when v_patch ? 'manaCost' then greatest(0, (v_patch->>'manaCost')::int) else mana_cost end,
+    mana_label = case
+      when v_patch ? 'manaLabel' then coalesce(
+        nullif(trim(v_patch->>'manaLabel'), ''),
+        (case when v_patch ? 'manaCost' then greatest(0, (v_patch->>'manaCost')::int) else mana_cost end)::text || ' mana'
+      )
+      else mana_label
+    end,
     summary = case when v_patch ? 'summary' then coalesce(v_patch->>'summary', '') else summary end,
     details = case when v_patch ? 'details' then coalesce(v_patch->>'details', '') else details end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,

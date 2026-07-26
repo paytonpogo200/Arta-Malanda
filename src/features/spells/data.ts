@@ -1,4 +1,5 @@
 import type { CharacterSpell, ItemRarity, Spell, SpellSchool } from '@/lib/types';
+import { normalizeSpellType, spellTypes } from '@/lib/utils/spells';
 
 export type CharacterSpellsPayload = {
   catalog: Spell[];
@@ -7,6 +8,7 @@ export type CharacterSpellsPayload = {
 };
 
 export const SPELL_SCHOOLS: SpellSchool[] = ['arcane', 'restoration', 'nature', 'alchemy', 'rune', 'shadow', 'martial'];
+export const SPELL_TYPES = spellTypes;
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
 
 function numberFrom(value: unknown, fallback = 0) {
@@ -29,7 +31,9 @@ export function normalizeSpell(value: unknown): Spell {
     key: String(source.key ?? ''),
     name: String(source.name ?? 'Unknown Spell'),
     school: normalizeSchool(source.school),
+    type: normalizeSpellType(String(source.type ?? source.spellType ?? 'Utility')),
     manaCost: Math.max(0, numberFrom(source.manaCost, 0)),
+    manaLabel: String(source.manaLabel ?? ''),
     summary: String(source.summary ?? ''),
     details: String(source.details ?? ''),
     rarity: normalizeRarity(source.rarity)

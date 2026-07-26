@@ -9,9 +9,10 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeUpdateAssetsPayload, type UpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
-import { SPELL_SCHOOLS } from '@/features/spells/data';
+import { SPELL_SCHOOLS, SPELL_TYPES } from '@/features/spells/data';
 import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type BestiaryEntity, type ClassTemplate, type ItemCatalogEntry, type ItemRarity, type LootItem, type MarketProduct, type Spell } from '@/lib/types';
 import { rarityOptions } from '@/lib/utils/rarity';
+import { spellManaText } from '@/lib/utils/spells';
 
 type EditorTarget =
   | { kind: 'class'; value: ClassTemplate }
@@ -210,7 +211,7 @@ export function UpdateAssetsPanel() {
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Spells</h3></div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {assets.spells.map((entry) => (
-                <AssetButton key={entry.id} title={entry.name} subtitle={`${entry.school} · ${entry.manaCost} mana · ${entry.rarity}`} onClick={() => openEditor({ kind: 'spell', value: entry })} />
+                <AssetButton key={entry.id} title={entry.name} subtitle={`${entry.type} · ${spellManaText(entry)} · ${entry.rarity}`} onClick={() => openEditor({ kind: 'spell', value: entry })} />
               ))}
             </div>
           </Card>
@@ -338,11 +339,13 @@ export function UpdateAssetsPanel() {
             {target.kind === 'spell' && (
               <>
                 <TextField value={String(draft.name ?? '')} onChange={(event) => updateDraft('name', event.target.value)} placeholder="Spell name" />
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <SelectField value={String(draft.type ?? 'Utility')} onChange={(event) => updateDraft('type', event.target.value)}>{SPELL_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                   <SelectField value={String(draft.school ?? 'arcane')} onChange={(event) => updateDraft('school', event.target.value)}>{SPELL_SCHOOLS.map((school) => <option key={school} value={school}>{school}</option>)}</SelectField>
                   <NumberInput value={Number(draft.manaCost ?? 0)} onValueChange={(value) => updateDraft('manaCost', value)} />
                   <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                 </div>
+                <TextField value={String(draft.manaLabel ?? '')} onChange={(event) => updateDraft('manaLabel', event.target.value)} placeholder="Mana label" />
                 <TextAreaField rows={3} value={String(draft.summary ?? '')} onChange={(event) => updateDraft('summary', event.target.value)} placeholder="Summary" />
                 <TextAreaField rows={5} value={String(draft.details ?? '')} onChange={(event) => updateDraft('details', event.target.value)} placeholder="Details" />
               </>

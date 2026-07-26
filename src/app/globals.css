@@ -222,6 +222,7 @@ h3,
 }
 
 .rarity-card,
+.spell-type-card,
 .inventory-slot {
   position: relative;
   isolation: isolate;
@@ -237,6 +238,22 @@ h3,
 .rarity-uncommon { border-color: #76d0a5; background: linear-gradient(145deg, rgba(42, 133, 88, .34), rgba(20, 43, 28, .92)); }
 .rarity-rare { border-color: #70baff; background: linear-gradient(145deg, rgba(38, 105, 176, .38), rgba(19, 33, 63, .94)); }
 .rarity-epic { border-color: #c68cff; background: linear-gradient(145deg, rgba(126, 67, 174, .42), rgba(45, 20, 66, .94)); }
+
+.spell-type-ember { border-color: #fb923c; background: linear-gradient(145deg, rgba(249, 115, 22, .36), rgba(58, 24, 8, .94)); }
+.spell-type-frost { border-color: #67e8f9; background: linear-gradient(145deg, rgba(34, 211, 238, .34), rgba(7, 42, 55, .94)); }
+.spell-type-lightning { border-color: #fde047; background: linear-gradient(145deg, rgba(250, 204, 21, .36), rgba(62, 51, 7, .94)); }
+.spell-type-earth { border-color: #c4a16a; background: linear-gradient(145deg, rgba(169, 123, 63, .38), rgba(54, 36, 18, .94)); }
+.spell-type-wind { border-color: #f8fafc; background: linear-gradient(145deg, rgba(248, 250, 252, .3), rgba(50, 56, 61, .9)); }
+.spell-type-energy { border-color: #86efac; background: linear-gradient(145deg, rgba(134, 239, 172, .34), rgba(14, 57, 35, .94)); }
+.spell-type-defensive-support { border-color: #f87171; background: linear-gradient(145deg, rgba(239, 68, 68, .35), rgba(61, 16, 16, .94)); }
+.spell-type-offensive-support { border-color: #15803d; background: linear-gradient(145deg, rgba(22, 101, 52, .46), rgba(5, 46, 22, .96)); }
+.spell-type-enhancement { border-color: #f9a8d4; background: linear-gradient(145deg, rgba(244, 114, 182, .35), rgba(70, 18, 48, .94)); }
+.spell-type-utility { border-color: #c084fc; background: linear-gradient(145deg, rgba(147, 51, 234, .36), rgba(48, 20, 78, .94)); }
+
+.spell-card-inactive {
+  filter: grayscale(.85);
+  opacity: .55;
+}
 
 .rarity-legendary {
   border-color: #ffd166;
@@ -349,6 +366,7 @@ h3,
 }
 
 .inventory-slot > *,
+.spell-type-card > *,
 .rarity-card > * {
   position: relative;
   z-index: 1;

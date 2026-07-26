@@ -24,6 +24,7 @@ import {
   spellForEnchantment
 } from '@/features/inventory/itemDetails';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
+import { spellManaText } from '@/lib/utils/spells';
 import type { Character, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, LoadoutModifierKey, LoadoutModifiers, LoadoutSlot, Spell, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
@@ -597,7 +598,7 @@ export function InventoryPanel({
             <SelectField value={draft.enchantment} disabled={draft.enhancementCount > 0} onChange={(event) => updateDraftEnchantment(event.target.value)}>
               <option value="">No enchantment</option>
               {hasCurrentCustomSpell && <option value={draft.enchantment}>{draft.enchantment}</option>}
-              {sortedSpells.map((spell) => <option key={spell.id} value={spell.name}>{spell.name} · {spell.manaCost} mana</option>)}
+              {sortedSpells.map((spell) => <option key={spell.id} value={spell.name}>{spell.name} · {spellManaText(spell)}</option>)}
             </SelectField>
             {draft.enhancementCount > 0 && <p className="text-xs font-black text-[var(--red)]">Remove enhancements before adding an enchantment.</p>}
           </div>
@@ -765,7 +766,7 @@ export function InventoryPanel({
                         <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Enchantment: {modalSpell?.name ?? modal.item.enchantment}</p>
                         {modalSpell ? (
                           <div className="mt-1 space-y-1 text-xs leading-5 text-[var(--paper)]">
-                            <p><span className="font-black">Mana:</span> {modalSpell.manaCost}</p>
+                            <p><span className="font-black">Mana:</span> {spellManaText(modalSpell)}</p>
                             <p>{modalSpell.details || modalSpell.summary || 'No spell description entered yet.'}</p>
                           </div>
                         ) : (
