@@ -3601,6 +3601,22 @@ begin
             and c.character_id = ch.id
         )
     ),
+    'classes', (
+      select coalesce(jsonb_agg(public.class_template_record_to_json(t) order by t.display_order, t.name), '[]'::jsonb)
+      from public.class_templates t
+    ),
+    'inventoryItems', (
+      select coalesce(jsonb_agg(public.inventory_item_record_to_json(i) order by i.character_id, i.loadout_slot, i.item_name), '[]'::jsonb)
+      from public.inventory_items i
+      where i.loadout_slot is not null
+        and exists (
+          select 1
+          from public.combatants c
+          where v_battle.id is not null
+            and c.battle_id = v_battle.id
+            and c.character_id = i.character_id
+        )
+    ),
     'bestiary', (
       select coalesce(jsonb_agg(public.bestiary_entity_record_to_json(e) order by e.category, e.display_order, e.name), '[]'::jsonb)
       from public.bestiary_entities e

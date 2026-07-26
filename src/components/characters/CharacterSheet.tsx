@@ -11,8 +11,8 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
-import { armorDefenseBase } from '@/features/characters/stats';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type AttributeKey, type Character, type ClassTemplate, type InventoryItem, type LoadoutModifiers, type Profile } from '@/lib/types';
+import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
 type CharacterSheetProps = {
@@ -35,21 +35,6 @@ function labelClasses(value: number) {
 function ownerLabel(profile: CampaignProfile | undefined) {
   if (!profile) return 'Unassigned';
   return profile.displayName || profile.username || 'Player';
-}
-
-function modifierNumber(modifiers: LoadoutModifiers, key: keyof LoadoutModifiers) {
-  const value = Number(modifiers[key] ?? 0);
-  return Number.isFinite(value) ? value : 0;
-}
-
-function loadoutModifierTotal(items: InventoryItem[], keys: Array<keyof LoadoutModifiers>) {
-  return items
-    .filter((item) => item.loadoutSlot)
-    .reduce((total, item) => total + keys.reduce((sum, key) => sum + modifierNumber(item.modifiers, key), 0), 0);
-}
-
-function activeAttributeValue(character: Character, items: InventoryItem[], key: AttributeKey) {
-  return (character.attributes[key] ?? 0) + loadoutModifierTotal(items, [key]);
 }
 
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
@@ -76,15 +61,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
     value: activeAttributeValue(character, inventoryItems, key)
   })), [character, inventoryItems]);
 
-  const sheetStats = useMemo(() => {
-    const vitality = activeAttributeValue(character, inventoryItems, 'vitality');
-    const hasActiveArmor = inventoryItems.some((item) => item.loadoutSlot === 'armor' && item.type === 'armor');
-    const defense = (hasActiveArmor ? armorDefenseBase(classTemplate?.armor) : 0) + vitality + loadoutModifierTotal(inventoryItems, ['armor', 'shield', 'defense', 'defence']);
-    const magicResist = character.magicResist + loadoutModifierTotal(inventoryItems, ['magic_resist', 'magicResist', 'magicResistance']);
-    const maxHp = Math.max(0, character.maxHp + loadoutModifierTotal(inventoryItems, ['health', 'hp', 'maxHp', 'max_hp']));
-    const maxMana = Math.max(0, character.maxMana + loadoutModifierTotal(inventoryItems, ['mana', 'maxMana', 'max_mana']));
-    return { defense, magicResist, maxHp, maxMana };
-  }, [character, classTemplate?.armor, inventoryItems]);
+  const sheetStats = useMemo(() => calculateCharacterSheetStats(character, inventoryItems, classTemplate), [character, classTemplate, inventoryItems]);
 
   async function save(event: FormEvent) {
     event.preventDefault();

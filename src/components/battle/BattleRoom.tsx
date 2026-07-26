@@ -10,8 +10,9 @@ import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import { SelectField } from '@/components/ui/Field';
+import { calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/battle/data';
-import type { Character, Combatant, Profile } from '@/lib/types';
+import type { Character, Combatant, InventoryItem, Profile } from '@/lib/types';
 
 type TokenView = Combatant & { character: Character | undefined };
 
@@ -20,6 +21,8 @@ const EMPTY_ROOM: BattleRoomPayload = {
   combatants: [],
   terrain: [],
   characters: [],
+  classes: [],
+  inventoryItems: [],
   bestiary: []
 };
 
@@ -34,6 +37,15 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const isDm = profile.role === 'dm';
 
   const characterById = useMemo(() => new Map(room.characters.map((character) => [character.id, character])), [room.characters]);
+  const classByKey = useMemo(() => new Map(room.classes.map((template) => [template.key, template])), [room.classes]);
+  const loadoutItemsByCharacterId = useMemo(() => {
+    const grouped = new Map<string, InventoryItem[]>();
+    room.inventoryItems.forEach((item) => {
+      if (!item.loadoutSlot) return;
+      grouped.set(item.characterId, [...(grouped.get(item.characterId) ?? []), item]);
+    });
+    return grouped;
+  }, [room.inventoryItems]);
   const tokens = useMemo<TokenView[]>(() => room.combatants.map((combatant) => ({
     ...combatant,
     character: characterById.get(combatant.characterId)
@@ -305,6 +317,8 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         <div className="grid gap-2 sm:grid-cols-2">
           {tokens.map((entry) => {
             const character = entry.character;
+            const loadoutItems = character ? loadoutItemsByCharacterId.get(character.id) ?? [] : [];
+            const sheetStats = character ? calculateCharacterSheetStats(character, loadoutItems, classByKey.get(character.classKey)) : null;
             return (
               <article key={entry.id} className={`rounded-xl border p-3 transition ${selectedCombatantId === entry.id ? 'border-[var(--brass)] bg-[#d1a85b0b]' : 'border-[var(--line)] bg-black/10'}`}>
                 <button type="button" onClick={() => setSelectedCombatantId((current) => current === entry.id ? null : entry.id)} className="w-full text-left">
@@ -313,11 +327,22 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                       <span className="truncate font-black">{character?.name ?? 'Unknown'}</span>
                       <span className="shrink-0 rounded-md border border-[var(--line)] bg-black/25 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{character?.className ?? 'Adventurer'}</span>
                     </span>
-                    <span className="rounded-md bg-black/30 px-2 py-1 text-[10px] font-black text-[var(--brass)]">INIT {entry.initiative ?? '—'}</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <ResourceBar label="HP" tone="hp" current={entry.currentHp} max={character?.maxHp ?? 1} />
-                    <ResourceBar label="Mana" tone="mana" current={entry.currentMana} max={character?.maxMana ?? 1} />
+                  <div className="grid gap-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <ResourceBar label="HP" tone="hp" current={entry.currentHp} max={sheetStats?.maxHp ?? character?.maxHp ?? 1} />
+                      <ResourceBar label="Mana" tone="mana" current={entry.currentMana} max={sheetStats?.maxMana ?? character?.maxMana ?? 1} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <span className="rounded-xl border border-[var(--line)] bg-black/15 p-2">
+                        <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Defense</span>
+                        <span className="mt-1 block text-lg font-black text-[var(--paper)]">{sheetStats?.defense ?? 0}</span>
+                      </span>
+                      <span className="rounded-xl border border-[var(--line)] bg-black/15 p-2">
+                        <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Magic Resist</span>
+                        <span className="mt-1 block text-lg font-black text-[var(--paper)]">{sheetStats?.magicResist ?? character?.magicResist ?? 0}</span>
+                      </span>
+                    </div>
                   </div>
                 </button>
                 {isDm && (

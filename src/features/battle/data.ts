@@ -1,12 +1,15 @@
-import { normalizeCharacter } from '@/features/characters/data';
+import { normalizeCharacter, normalizeClassTemplate } from '@/features/characters/data';
+import { normalizeInventoryItem } from '@/features/inventory/data';
 import { normalizeBestiaryEntity } from '@/features/bestiary/data';
-import type { Battle, BattleTerrain, BestiaryEntity, Character, Combatant } from '@/lib/types';
+import type { Battle, BattleTerrain, BestiaryEntity, Character, ClassTemplate, Combatant, InventoryItem } from '@/lib/types';
 
 export type BattleRoomPayload = {
   battle: Battle | null;
   combatants: Combatant[];
   terrain: BattleTerrain[];
   characters: Character[];
+  classes: ClassTemplate[];
+  inventoryItems: InventoryItem[];
   bestiary: BestiaryEntity[];
 };
 
@@ -63,6 +66,8 @@ export function normalizeBattleRoomPayload(value: unknown): BattleRoomPayload {
     combatants: Array.isArray(source.combatants) ? source.combatants.map(normalizeCombatant).filter((entry) => entry.id) : [],
     terrain: Array.isArray(source.terrain) ? source.terrain.map(normalizeBattleTerrain).filter((entry) => entry.id) : [],
     characters: Array.isArray(source.characters) ? source.characters.map(normalizeCharacter).filter((entry) => entry.id) : [],
+    classes: Array.isArray(source.classes) ? source.classes.map(normalizeClassTemplate).filter((entry) => entry.key) : [],
+    inventoryItems: Array.isArray(source.inventoryItems) ? source.inventoryItems.map(normalizeInventoryItem).filter((entry) => entry.id) : [],
     bestiary: Array.isArray(source.bestiary) ? source.bestiary.map(normalizeBestiaryEntity).filter((entry) => entry.id) : []
   };
 }

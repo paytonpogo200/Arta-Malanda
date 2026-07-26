@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { LocateFixed, Minus, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
@@ -89,10 +89,13 @@ export function BattleMap({
   const tokensRef = useRef(tokens);
   const dragRef = useRef<{ id: number; x: number; y: number; baseX: number; baseY: number; moved: boolean } | null>(null);
   const paintRef = useRef<{ id: number; cells: Map<string, Cell> } | null>(null);
+  const suppressClickRef = useRef(false);
+  const moveHandledRef = useRef(false);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const [zoom, setZoom] = useState(STARTING_ZOOM);
   const [mode, setMode] = useState<'move' | 'border'>('move');
+  const [paintPreviewCells, setPaintPreviewCells] = useState<Cell[]>([]);
   const [undoStack, setUndoStack] = useState<TerrainAction[]>([]);
   const [redoStack, setRedoStack] = useState<TerrainAction[]>([]);
 
@@ -153,7 +156,7 @@ export function BattleMap({
     return () => window.cancelAnimationFrame(frame);
   }, [battle.id, centerView, tokens.length]);
 
-  function cellFromPointer(event: PointerEvent<HTMLDivElement>) {
+  function cellFromPointer(event: Pick<PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>, 'clientX' | 'clientY'>) {
     const rect = viewportRef.current?.getBoundingClientRect();
     if (!rect) return null;
     const pan = panRef.current;
@@ -169,6 +172,29 @@ export function BattleMap({
     if (!paint || !cell) return;
     if (occupiedKeys.has(`${cell.x}:${cell.y}`)) return;
     paint.cells.set(`${cell.x}:${cell.y}`, cell);
+    setPaintPreviewCells([...paint.cells.values()]);
+  }
+
+  function moveSelectedToCell(cell: Cell | null) {
+    const selected = tokensRef.current.find((token) => token.id === selectedId);
+    if (!isDm || mode !== 'move' || !selected || !cell) return false;
+    const key = `${cell.x}:${cell.y}`;
+    if (terrainKeys.has(key)) return false;
+    if (tokensRef.current.some((token) => token.id !== selected.id && token.x === cell.x && token.y === cell.y)) return false;
+    if (selected.x === cell.x && selected.y === cell.y) return false;
+    onMove(selected.id, cell.x, cell.y);
+    return true;
+  }
+
+  function clickMap(event: MouseEvent<HTMLDivElement>) {
+    if (suppressClickRef.current || moveHandledRef.current) {
+      suppressClickRef.current = false;
+      moveHandledRef.current = false;
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-token]')) return;
+    const cell = cellFromPointer(event);
+    void moveSelectedToCell(cell);
   }
 
   function pointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -177,6 +203,7 @@ export function BattleMap({
 
     if (isDm && mode === 'border') {
       paintRef.current = { id: event.pointerId, cells: new Map() };
+      setPaintPreviewCells([]);
       collectPaintCell(event);
       return;
     }
@@ -227,15 +254,15 @@ export function BattleMap({
         onTerrainAdd(cells);
       }
       paintRef.current = null;
+      setPaintPreviewCells([]);
       return;
     }
 
     const drag = dragRef.current;
     if (!drag || drag.id !== event.pointerId) return;
-    const selected = tokens.find((token) => token.id === selectedId);
-    if (!drag.moved && isDm && selected) {
-      const cell = cellFromPointer(event);
-      if (cell && !terrainKeys.has(`${cell.x}:${cell.y}`) && !tokens.some((token) => token.id !== selected.id && token.x === cell.x && token.y === cell.y)) onMove(selected.id, cell.x, cell.y);
+    suppressClickRef.current = drag.moved;
+    if (!drag.moved) {
+      moveHandledRef.current = moveSelectedToCell(cellFromPointer(event));
     }
     dragRef.current = null;
   }
@@ -295,11 +322,18 @@ export function BattleMap({
         }}
       >
         <div ref={mapRef} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ transform: `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${zoom})` }}>
-          <div className="map-grid-bg relative rounded-lg" style={{ width: size.width, height: size.height, backgroundSize: `${CELL_SIZE}px ${CELL_SIZE}px` }}>
+          <div className="map-grid-bg relative rounded-lg" style={{ width: size.width, height: size.height, backgroundSize: `${CELL_SIZE}px ${CELL_SIZE}px` }} onClick={clickMap}>
             {terrain.map((cell) => (
               <span
                 key={cell.id}
                 className="absolute rounded-md border border-[#d1a85b55] bg-[#704225]"
+                style={{ left: cell.x * CELL_SIZE + 4, top: cell.y * CELL_SIZE + 4, width: CELL_SIZE - 8, height: CELL_SIZE - 8 }}
+              />
+            ))}
+            {paintPreviewCells.map((cell) => (
+              <span
+                key={`${cell.x}:${cell.y}`}
+                className="pointer-events-none absolute rounded-md border border-[#f2c879] bg-[#9a5a2f]/80 shadow-[0_0_14px_rgba(209,168,91,0.28)]"
                 style={{ left: cell.x * CELL_SIZE + 4, top: cell.y * CELL_SIZE + 4, width: CELL_SIZE - 8, height: CELL_SIZE - 8 }}
               />
             ))}
@@ -310,7 +344,7 @@ export function BattleMap({
         </div>
         <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex justify-center">
           <div className="rounded-full border border-white/10 bg-[#0d1110dc] px-4 py-2 text-center text-[11px] font-bold text-[var(--muted)]">
-            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move · tap token again to cancel' : 'Drag to pan · pinch or Ctrl-wheel to zoom'}
+            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move; tap token again to cancel' : 'Drag to pan; pinch or Ctrl-wheel to zoom'}
           </div>
         </div>
       </div>
