@@ -626,6 +626,40 @@ as $$
   )
 $$;
 
+create or replace function public.bestiary_stat_number(p_stats jsonb, p_keys text[])
+returns int
+language plpgsql
+immutable
+set search_path = public, extensions
+as $$
+declare
+  v_normalized_keys text[];
+  v_key text;
+  v_value text;
+  v_number text;
+begin
+  select array_agg(lower(regexp_replace(entry, '[^a-z0-9]+', '', 'g')))
+  into v_normalized_keys
+  from unnest(coalesce(p_keys, array[]::text[])) as requested(entry);
+
+  if v_normalized_keys is null or array_length(v_normalized_keys, 1) is null then
+    return 0;
+  end if;
+
+  for v_key, v_value in select key, value from jsonb_each_text(coalesce(p_stats, '{}'::jsonb))
+  loop
+    if lower(regexp_replace(v_key, '[^a-z0-9]+', '', 'g')) = any(v_normalized_keys) then
+      v_number := substring(coalesce(v_value, '') from '-?[0-9]+[.]?[0-9]*');
+      if v_number is not null then
+        return round(v_number::numeric)::int;
+      end if;
+    end if;
+  end loop;
+
+  return 0;
+end;
+$$;
+
 create or replace function public.get_bestiary(p_session_token text)
 returns jsonb
 language plpgsql
@@ -754,6 +788,7 @@ $$;
 
 grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
 grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
+grant execute on function public.bestiary_stat_number(jsonb, text[]) to anon, authenticated;
 grant execute on function public.get_bestiary(text) to anon, authenticated;
 grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
@@ -3933,6 +3968,9 @@ declare
   v_slot int := 0;
   v_x int;
   v_y int;
+  v_armor_hide int := 0;
+  v_vitality int := 0;
+  v_magic_resist int := 0;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -3955,6 +3993,10 @@ begin
 
   if v_y >= v_battle.grid_height then raise exception 'No open battlefield cell is available.'; end if;
 
+  v_armor_hide := public.bestiary_stat_number(v_entity.stats, array['Armor / Hide', 'Armor', 'Hide']);
+  v_vitality := public.bestiary_stat_number(v_entity.stats, array['Vitality']);
+  v_magic_resist := public.bestiary_stat_number(v_entity.stats, array['Magic Resistance', 'Magic Resist', 'Magic Res']);
+
   insert into public.characters (
     owner_user_id, name, kind, class_key, class_name, level, max_hp, current_hp, max_mana, current_mana,
     magic_resist, inventory_slots, spell_slots, attributes, class_passives, personal_passives, token_color, location_name
@@ -3970,10 +4012,23 @@ begin
     greatest(1, v_entity.hp),
     greatest(0, v_entity.mana),
     greatest(0, v_entity.mana),
+    greatest(0, v_magic_resist),
     0,
     0,
-    0,
-    '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":0,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb,
+    jsonb_build_object(
+      'strength', 0,
+      'accuracy', 0,
+      'intelligence', 0,
+      'vitality', greatest(0, v_armor_hide + v_vitality),
+      'recovery', 0,
+      'mana_regen', 0,
+      'charisma', 0,
+      'wisdom_cunning', 0,
+      'perception', 0,
+      'alchemy', 0,
+      'stealth', 0,
+      'agility', 0
+    ),
     jsonb_build_array(coalesce(nullif(v_entity.summary, ''), v_entity.temperament)),
     v_entity.details,
     '#7f514d',

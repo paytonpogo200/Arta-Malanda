@@ -1214,20 +1214,26 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
 }) {
   return (
     <div className="grid gap-3">
-      {groupProducts(vendor.products).map(([section, products]) => (
-        <details key={section} className="shop-section-disclosure">
-          <summary>
-            <span className="min-w-0">
-              <span className="eyebrow">{section}</span>
-              <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{products.filter((product) => product.available).length} available</span>
-            </span>
-            <ChevronDown className="shop-section-chevron" size={18} />
-          </summary>
-          <div className="shop-section-body">
-            <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
-          </div>
-        </details>
-      ))}
+      {groupProducts(vendor.products).map(([section, products]) => {
+        const spellType = spellTypeFromProductSection(section);
+        return (
+          <details key={section} className="shop-section-disclosure">
+            <summary>
+              <span className="min-w-0">
+                <span className="eyebrow">Spell Category</span>
+                <span className="mt-1 block text-xl font-black leading-tight">{spellType ? `${spellType} Spells` : section}</span>
+                <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                  <span>{products.filter((product) => product.available).length}/{products.length} available</span>
+                </span>
+              </span>
+              <ChevronDown className="shop-section-chevron" size={18} />
+            </summary>
+            <div className="shop-section-body">
+              <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+            </div>
+          </details>
+        );
+      })}
     </div>
   );
 }

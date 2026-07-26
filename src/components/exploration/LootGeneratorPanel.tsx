@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Compass, Dice6, FileUp, Gift, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, Compass, Dice6, FileUp, Gift, Loader2, RefreshCw } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -32,8 +32,10 @@ type AwardDraft = {
   quantity: number;
 };
 
+type ChoiceValue = string | number;
+
 function formatMultiplier(value: number) {
-  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`;
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}x`;
 }
 
 function formatChance(value: number) {
@@ -49,6 +51,48 @@ function findRarity(rarities: LootRarityMath[], rarity: LootRarityMath['rarity']
     weight: 0,
     chance: 0
   };
+}
+
+function ChoiceDisclosure({
+  label,
+  value,
+  options,
+  onChange,
+  columns = 'sm:grid-cols-2'
+}: {
+  label: string;
+  value: ChoiceValue;
+  options: ChoiceValue[];
+  onChange: (value: ChoiceValue) => void;
+  columns?: string;
+}) {
+  return (
+    <details className="shop-section-disclosure">
+      <summary>
+        <span className="min-w-0">
+          <span className="eyebrow">{label}</span>
+          <span className="mt-1 block truncate text-xl font-black leading-tight">{String(value)}</span>
+          <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{options.length} options</span>
+        </span>
+        <ChevronDown className="shop-section-chevron" size={18} />
+      </summary>
+      <div className={`shop-section-body grid gap-2 ${columns}`}>
+        {options.map((option) => {
+          const selected = String(option) === String(value);
+          return (
+            <button
+              key={String(option)}
+              type="button"
+              onClick={() => onChange(option)}
+              className={`rounded-xl border p-3 text-left text-sm font-black transition hover:border-[var(--brass)] ${selected ? 'border-[var(--brass)] bg-[#d1a85b1c] text-[var(--paper)]' : 'border-[var(--line)] bg-black/15 text-[var(--muted)]'}`}
+            >
+              {String(option)}
+            </button>
+          );
+        })}
+      </div>
+    </details>
+  );
 }
 
 export function LootGeneratorPanel() {
@@ -232,22 +276,14 @@ export function LootGeneratorPanel() {
 
       <Card>
         <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Loot Generator</h3></div>
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_7rem_1fr_1fr_1fr_auto]">
-          <SelectField value={biome} onChange={(event) => setBiome(event.target.value)}>
-            {payload.settings.biomes.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
-          </SelectField>
-          <SelectField value={difficulty} onChange={(event) => setDifficulty(Number(event.target.value))}>
-            {payload.settings.difficulties.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
-          </SelectField>
-          <SelectField value={poolSize} onChange={(event) => setPoolSize(event.target.value)}>
-            {payload.settings.poolSizes.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
-          </SelectField>
-          <SelectField value={roomType} onChange={(event) => setRoomType(event.target.value)}>
-            {payload.settings.roomTypes.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
-          </SelectField>
-          <SelectField value={luckPotion} onChange={(event) => setLuckPotion(event.target.value)}>
-            {payload.settings.luckPotionOptions.map((entry) => <option key={entry} value={entry}>{entry}</option>)}
-          </SelectField>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <ChoiceDisclosure label="Biome" value={biome} options={payload.settings.biomes} onChange={(value) => setBiome(String(value))} />
+          <ChoiceDisclosure label="Difficulty" value={difficulty} options={payload.settings.difficulties} onChange={(value) => setDifficulty(Number(value))} columns="grid-cols-3" />
+          <ChoiceDisclosure label="Pool Size" value={poolSize} options={payload.settings.poolSizes} onChange={(value) => setPoolSize(String(value))} />
+          <ChoiceDisclosure label="Room Type" value={roomType} options={payload.settings.roomTypes} onChange={(value) => setRoomType(String(value))} />
+          <ChoiceDisclosure label="Luck Potion" value={luckPotion} options={payload.settings.luckPotionOptions} onChange={(value) => setLuckPotion(String(value))} />
+        </div>
+        <div className="mt-3 flex justify-end">
           <Button variant="primary" disabled={saving || !payload.items.length} onClick={generateLoot}><Dice6 className="mr-2 inline" size={15} /> Generate {rollCount}</Button>
         </div>
         <div className="mt-3 space-y-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
@@ -302,7 +338,7 @@ export function LootGeneratorPanel() {
                     <span className="rounded-xl border border-[var(--line)] bg-black/20 p-2 text-[var(--brass)]"><ItemIcon type={drop.type} size={18} /></span>
                     <span className="min-w-0 flex-1">
                       <span className="block break-words font-black">#{drop.rollNumber} {drop.name}</span>
-                      <span className="mt-1 block text-xs uppercase tracking-wide text-[var(--muted)]">{drop.rarity} · {drop.type} · {drop.remaining}/{drop.quantity} left</span>
+                      <span className="mt-1 block text-xs uppercase tracking-wide text-[var(--muted)]">{drop.rarity}; {drop.type}; {drop.remaining}/{drop.quantity} left</span>
                     </span>
                   </div>
                   {drop.remaining > 0 ? (

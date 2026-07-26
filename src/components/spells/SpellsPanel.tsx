@@ -1,13 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
-import { BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { BookOpen, ChevronDown, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField, TextField } from '@/components/ui/Field';
+import { TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
-import { spellManaText, spellTypeClass } from '@/lib/utils/spells';
-import type { Character, CharacterSpell } from '@/lib/types';
+import { spellManaText, spellTypeClass, spellTypes } from '@/lib/utils/spells';
+import type { Character, CharacterSpell, Spell } from '@/lib/types';
 
 const EMPTY_SPELLS: CharacterSpellsPayload = {
   catalog: [],
@@ -43,7 +43,7 @@ function SpellCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-black">{entry.spell.name}</p>
-          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{entry.spell.type} · {spellManaText(entry.spell)}</p>
+          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{entry.spell.type}; {spellManaText(entry.spell)}</p>
         </div>
         <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
       </div>
@@ -61,6 +61,28 @@ function SpellCard({
         </div>
       )}
     </article>
+  );
+}
+
+function GrantSpellButton({
+  spell,
+  selected,
+  onSelect
+}: {
+  spell: Spell;
+  selected: boolean;
+  onSelect: (spellId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(spell.id)}
+      className={`rounded-2xl border p-3 text-left transition hover:scale-[1.01] ${spellTypeClass(spell.type)} ${selected ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#100907]' : ''}`}
+    >
+      <span className="block text-base font-black leading-tight">{spell.name}</span>
+      <span className="mt-1 block text-xs font-black uppercase tracking-wide text-[var(--muted)]">{spell.type}; {spellManaText(spell)}</span>
+      {spell.summary && <span className="mt-2 block max-h-10 overflow-hidden text-sm leading-5 text-[var(--muted)]">{spell.summary}</span>}
+    </button>
   );
 }
 
@@ -94,6 +116,13 @@ export function SpellsPanel({
     if (!needle) return grantOptions;
     return grantOptions.filter((spell) => `${spell.name} ${spell.type} ${spell.school} ${spellManaText(spell)}`.toLowerCase().includes(needle));
   }, [grantOptions, grantSearch]);
+  const grantGroups = useMemo(() => spellTypes
+    .map((type) => ({
+      type,
+      spells: filteredGrantOptions.filter((spell) => spell.type === type).sort((a, b) => a.name.localeCompare(b.name))
+    }))
+    .filter((group) => group.spells.length), [filteredGrantOptions]);
+  const selectedGrantSpell = useMemo(() => grantOptions.find((spell) => spell.id === grantSpellId) ?? null, [grantOptions, grantSpellId]);
   const activeSlotCount = Math.max(0, character.spellSlots);
   const activeSlots = useMemo(() => new Map(activeSpells.filter((entry) => entry.slotIndex !== null).map((entry) => [entry.slotIndex, entry])), [activeSpells]);
   const unplacedActiveSpells = useMemo(() => activeSpells.filter((entry) => entry.slotIndex === null), [activeSpells]);
@@ -228,15 +257,31 @@ export function SpellsPanel({
       ) : (
         <div className="space-y-4">
           {canGrant && (
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <div className="grid gap-2">
+            <div className="grid gap-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                 <TextField value={grantSearch} onChange={(event) => setGrantSearch(event.target.value)} placeholder="Search spells by name, type, or school" />
-                <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
-                  <option value="">Grant spell</option>
-                  {filteredGrantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.type} · {spellManaText(spell)}</option>)}
-                </SelectField>
+                <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant'}</Button>
               </div>
-              <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>Grant</Button>
+              <div className="grid gap-3">
+                {grantGroups.map(({ type, spells }) => (
+                  <details key={type} className="shop-section-disclosure">
+                    <summary>
+                      <span className="min-w-0">
+                        <span className="eyebrow">Spell Category</span>
+                        <span className="mt-1 block text-xl font-black leading-tight">{type} Spells</span>
+                        <span className="mt-1 block text-xs font-bold text-[var(--muted)]">
+                          {spells.length} available{selectedGrantSpell?.type === type ? `; selected ${selectedGrantSpell.name}` : ''}
+                        </span>
+                      </span>
+                      <ChevronDown className="shop-section-chevron" size={18} />
+                    </summary>
+                    <div className="shop-section-body grid gap-2 sm:grid-cols-2">
+                      {spells.map((spell) => <GrantSpellButton key={spell.id} spell={spell} selected={spell.id === grantSpellId} onSelect={setGrantSpellId} />)}
+                    </div>
+                  </details>
+                ))}
+                {!grantGroups.length && <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No spells match that search.</div>}
+              </div>
             </div>
           )}
 
@@ -257,7 +302,7 @@ export function SpellsPanel({
           </section>
 
           <details className="rounded-2xl border border-[var(--line)] bg-black/10">
-            <summary className="cursor-pointer list-none p-3 font-black">Inactive spells · {inactiveSpells.length}</summary>
+            <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
             <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
               {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
               {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
