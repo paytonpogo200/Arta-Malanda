@@ -50,9 +50,15 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     ...combatant,
     character: characterById.get(combatant.characterId)
   })), [characterById, room.combatants]);
+  const orderedTokens = useMemo(() => [...tokens].sort((a, b) => {
+    const initiativeA = a.initiative ?? -1;
+    const initiativeB = b.initiative ?? -1;
+    if (initiativeA !== initiativeB) return initiativeB - initiativeA;
+    return (a.character?.name ?? '').localeCompare(b.character?.name ?? '');
+  }), [tokens]);
   const selectedCombatant = room.combatants.find((entry) => entry.id === selectedCombatantId) ?? null;
   const selectedCharacter = selectedCombatant ? characterById.get(selectedCombatant.characterId) ?? null : null;
-  const myCombatants = tokens.filter((entry) => entry.character?.ownerUserId === profile.id);
+  const myCombatants = orderedTokens.filter((entry) => entry.character?.ownerUserId === profile.id);
   const bestiaryOptions = useMemo(() => room.bestiary.filter((entry) => entry.unlocked || isDm).sort((a, b) => a.name.localeCompare(b.name)), [isDm, room.bestiary]);
 
   const loadRoom = useCallback(async () => {
@@ -153,6 +159,13 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       setRoom((current) => ({ ...current, combatants: previous }));
       setError(updateError instanceof Error ? updateError.message : 'Combatant could not be changed.');
     }
+  }
+
+  function updateLocalCombatant(combatantId: string, patch: Partial<Combatant>) {
+    setRoom((current) => ({
+      ...current,
+      combatants: current.combatants.map((combatant) => combatant.id === combatantId ? { ...combatant, ...patch } : combatant)
+    }));
   }
 
   async function replaceRoomFromResponse(response: Response, fallback: string) {
@@ -285,11 +298,11 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       {error && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
       <BattleMap
         battle={room.battle}
-        tokens={tokens}
+        tokens={orderedTokens}
         terrain={room.terrain}
         profile={profile}
         selectedId={selectedCombatantId}
-        onSelect={(id) => setSelectedCombatantId((current) => current === id ? null : id)}
+        onSelect={setSelectedCombatantId}
         onMove={(id, x, y) => {
           const combatant = room.combatants.find((entry) => entry.id === id);
           if (combatant) void updateCombatant(combatant, { x, y });
@@ -315,7 +328,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
           )}
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          {tokens.map((entry) => {
+          {orderedTokens.map((entry) => {
             const character = entry.character;
             const loadoutItems = character ? loadoutItemsByCharacterId.get(character.id) ?? [] : [];
             const sheetStats = character ? calculateCharacterSheetStats(character, loadoutItems, classByKey.get(character.classKey)) : null;
@@ -343,6 +356,10 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                         <span className="mt-1 block text-lg font-black text-[var(--paper)]">{sheetStats?.magicResist ?? character?.magicResist ?? 0}</span>
                       </span>
                     </div>
+                    <span className="rounded-xl border border-[var(--line)] bg-black/15 p-2">
+                      <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Initiative</span>
+                      <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.initiative ?? 'Unset'}</span>
+                    </span>
                   </div>
                 </button>
                 {isDm && (
@@ -376,12 +393,15 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                 canManage
                 canGrant={false}
                 combatLocked
-                onManaChanged={(currentMana) => setRoom((current) => ({
-                  ...current,
-                  combatants: current.combatants.map((combatant) => combatant.id === entry.id ? { ...combatant, currentMana } : combatant)
-                }))}
+                activeOnly
+                onManaChanged={(currentMana) => updateLocalCombatant(entry.id, { currentMana })}
               />
-              <InventoryPanel character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }} canManage canAdd={false} />
+              <InventoryPanel
+                character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }}
+                canManage
+                canAdd={false}
+                onResourceChanged={(patch) => updateLocalCombatant(entry.id, patch)}
+              />
             </div>
           ))}
         </div>

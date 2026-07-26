@@ -29,6 +29,7 @@ const BattleToken = memo(function BattleToken({
   return (
     <button
       data-token
+      data-token-id={token.id}
       onClick={(event) => {
         event.stopPropagation();
         onSelect(token.id);
@@ -198,6 +199,13 @@ export function BattleMap({
   }
 
   function pointerDown(event: PointerEvent<HTMLDivElement>) {
+    const tokenElement = (event.target as HTMLElement).closest<HTMLElement>('[data-token-id]');
+    if (mode === 'move' && tokenElement?.dataset.tokenId) {
+      event.preventDefault();
+      onSelect(tokenElement.dataset.tokenId);
+      return;
+    }
+
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture(event.pointerId);
 
@@ -344,7 +352,7 @@ export function BattleMap({
         </div>
         <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex justify-center">
           <div className="rounded-full border border-white/10 bg-[#0d1110dc] px-4 py-2 text-center text-[11px] font-bold text-[var(--muted)]">
-            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move; tap token again to cancel' : 'Drag to pan; pinch or Ctrl-wheel to zoom'}
+            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move the selected token' : 'Drag to pan; pinch or Ctrl-wheel to zoom'}
           </div>
         </div>
       </div>

@@ -91,12 +91,14 @@ export function SpellsPanel({
   canManage,
   canGrant,
   combatLocked = false,
+  activeOnly = false,
   onManaChanged
 }: {
   character: Character;
   canManage: boolean;
   canGrant: boolean;
   combatLocked?: boolean;
+  activeOnly?: boolean;
   onManaChanged?: (currentMana: number) => void;
 }) {
   const [payload, setPayload] = useState<CharacterSpellsPayload>(EMPTY_SPELLS);
@@ -310,28 +312,37 @@ export function SpellsPanel({
           )}
 
           <section>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Active slots {activeSpells.length}/{character.spellSlots}</h3></div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {Array.from({ length: Math.max(activeSlotCount, activeSpells.length) }, (_, slot) => {
-                const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
-                return entry ? (
-                  <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
-                    <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />
-                  </div>
-                ) : (
-                  <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
-                );
-              })}
-            </div>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{activeOnly ? 'Active spells' : 'Active slots'} {activeSpells.length}/{character.spellSlots}</h3></div>
+            {activeOnly ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
+                {!activeSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
+              </div>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {Array.from({ length: Math.max(activeSlotCount, activeSpells.length) }, (_, slot) => {
+                  const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
+                  return entry ? (
+                    <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
+                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />
+                    </div>
+                  ) : (
+                    <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
-          <details className="rounded-2xl border border-[var(--line)] bg-black/10">
-            <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
-            <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-              {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
-              {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
-            </div>
-          </details>
+          {!activeOnly && (
+            <details className="rounded-2xl border border-[var(--line)] bg-black/10">
+              <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
+              <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
+                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
+                {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
+              </div>
+            </details>
+          )}
 
           {activeBattle && <p className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Spell swapping is locked during combat.</p>}
         </div>

@@ -3613,7 +3613,7 @@ begin
   return jsonb_build_object(
     'battle', public.battle_record_to_json(v_battle),
     'combatants', (
-      select coalesce(jsonb_agg(public.combatant_record_to_json(c) order by c.created_at, c.id), '[]'::jsonb)
+      select coalesce(jsonb_agg(public.combatant_record_to_json(c) order by c.initiative desc nulls last, c.created_at, c.id), '[]'::jsonb)
       from public.combatants c
       where v_battle.id is not null
         and c.battle_id = v_battle.id
@@ -3965,7 +3965,6 @@ declare
   v_battle public.battles%rowtype;
   v_entity public.bestiary_entities%rowtype;
   v_character public.characters%rowtype;
-  v_slot int := 0;
   v_x int;
   v_y int;
   v_armor_hide int := 0;
@@ -3982,16 +3981,23 @@ begin
   select * into v_entity from public.bestiary_entities where id = p_entity_id;
   if v_entity.id is null then raise exception 'Bestiary entry not found.'; end if;
 
-  loop
-    v_x := v_slot % v_battle.grid_width;
-    v_y := floor(v_slot::numeric / v_battle.grid_width)::int;
-    exit when v_y >= v_battle.grid_height;
-    exit when not exists (select 1 from public.combatants c where c.battle_id = v_battle.id and c.x = v_x and c.y = v_y)
-      and not exists (select 1 from public.battle_terrain t where t.battle_id = v_battle.id and t.x = v_x and t.y = v_y and t.terrain_type = 'blocked');
-    v_slot := v_slot + 1;
-  end loop;
+  select candidate.x, candidate.y
+  into v_x, v_y
+  from (
+    select gx.x, gy.y
+    from generate_series(0, v_battle.grid_width - 1) as gx(x)
+    cross join generate_series(0, v_battle.grid_height - 1) as gy(y)
+  ) candidate
+  where not exists (select 1 from public.combatants c where c.battle_id = v_battle.id and c.x = candidate.x and c.y = candidate.y)
+    and not exists (select 1 from public.battle_terrain t where t.battle_id = v_battle.id and t.x = candidate.x and t.y = candidate.y and t.terrain_type = 'blocked')
+  order by
+    ((candidate.x - ((v_battle.grid_width - 1) / 2.0)) * (candidate.x - ((v_battle.grid_width - 1) / 2.0)))
+    + ((candidate.y - ((v_battle.grid_height - 1) / 2.0)) * (candidate.y - ((v_battle.grid_height - 1) / 2.0))),
+    candidate.y,
+    candidate.x
+  limit 1;
 
-  if v_y >= v_battle.grid_height then raise exception 'No open battlefield cell is available.'; end if;
+  if v_x is null or v_y is null then raise exception 'No open battlefield cell is available.'; end if;
 
   v_armor_hide := public.bestiary_stat_number(v_entity.stats, array['Armor / Hide', 'Armor', 'Hide']);
   v_vitality := public.bestiary_stat_number(v_entity.stats, array['Vitality']);
