@@ -1,15 +1,17 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LocateFixed, Minus, Plus } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { LocateFixed, Minus, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
-import type { Battle, Character, Combatant, Profile } from '@/lib/types';
+import type { Battle, BattleTerrain, Character, Combatant, Profile } from '@/lib/types';
 
 const CELL_SIZE = 76;
 const STARTING_ZOOM = 0.82;
 
 type TokenView = Combatant & { character: Character | undefined };
+type Cell = { x: number; y: number };
+type TerrainAction = { action: 'add' | 'remove'; cells: Cell[] };
 
 const BattleToken = memo(function BattleToken({
   token,
@@ -60,17 +62,25 @@ const BattleToken = memo(function BattleToken({
 export function BattleMap({
   battle,
   tokens,
+  terrain,
   profile,
   selectedId,
   onSelect,
-  onMove
+  onMove,
+  onTerrainAdd,
+  onTerrainRemove,
+  onTerrainClear
 }: {
   battle: Battle;
   tokens: TokenView[];
+  terrain: BattleTerrain[];
   profile: Profile;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, y: number) => void;
+  onTerrainAdd: (cells: Cell[]) => void;
+  onTerrainRemove: (cells: Cell[]) => void;
+  onTerrainClear: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
@@ -78,12 +88,18 @@ export function BattleMap({
   const zoomRef = useRef(STARTING_ZOOM);
   const tokensRef = useRef(tokens);
   const dragRef = useRef<{ id: number; x: number; y: number; baseX: number; baseY: number; moved: boolean } | null>(null);
+  const paintRef = useRef<{ id: number; cells: Map<string, Cell> } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const [zoom, setZoom] = useState(STARTING_ZOOM);
+  const [mode, setMode] = useState<'move' | 'border'>('move');
+  const [undoStack, setUndoStack] = useState<TerrainAction[]>([]);
+  const [redoStack, setRedoStack] = useState<TerrainAction[]>([]);
 
   const size = useMemo(() => ({ width: battle.gridWidth * CELL_SIZE, height: battle.gridHeight * CELL_SIZE }), [battle.gridWidth, battle.gridHeight]);
   const isDm = profile.role === 'dm';
+  const terrainKeys = useMemo(() => new Set(terrain.map((cell) => `${cell.x}:${cell.y}`)), [terrain]);
+  const occupiedKeys = useMemo(() => new Set(tokens.map((token) => `${token.x}:${token.y}`)), [tokens]);
   tokensRef.current = tokens;
 
   function applyTransform() {
@@ -93,7 +109,7 @@ export function BattleMap({
   }
 
   function setZoomValue(next: number) {
-    zoomRef.current = clamp(next, 0.42, 2);
+    zoomRef.current = clamp(next, 0.05, 2);
     setZoom(zoomRef.current);
     applyTransform();
   }
@@ -118,14 +134,53 @@ export function BattleMap({
     applyTransform();
   }, [battle.gridHeight, battle.gridWidth]);
 
+  const fitWholeMap = useCallback(() => {
+    const viewport = viewportRef.current;
+    const viewportWidth = viewport?.clientWidth ?? 900;
+    const viewportHeight = viewport?.clientHeight ?? 520;
+    const nextZoom = clamp(Math.min((viewportWidth - 32) / size.width, (viewportHeight - 32) / size.height), 0.05, 1.2);
+    zoomRef.current = nextZoom;
+    setZoom(nextZoom);
+    panRef.current = {
+      x: (viewportWidth - size.width * nextZoom) / 2,
+      y: (viewportHeight - size.height * nextZoom) / 2
+    };
+    applyTransform();
+  }, [size.height, size.width]);
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => centerView());
     return () => window.cancelAnimationFrame(frame);
   }, [battle.id, centerView, tokens.length]);
 
-  function pointerDown(event: React.PointerEvent<HTMLDivElement>) {
+  function cellFromPointer(event: PointerEvent<HTMLDivElement>) {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const pan = panRef.current;
+    const x = Math.floor((event.clientX - rect.left - pan.x) / zoomRef.current / CELL_SIZE);
+    const y = Math.floor((event.clientY - rect.top - pan.y) / zoomRef.current / CELL_SIZE);
+    if (x < 0 || x >= battle.gridWidth || y < 0 || y >= battle.gridHeight) return null;
+    return { x, y };
+  }
+
+  function collectPaintCell(event: PointerEvent<HTMLDivElement>) {
+    const paint = paintRef.current;
+    const cell = cellFromPointer(event);
+    if (!paint || !cell) return;
+    if (occupiedKeys.has(`${cell.x}:${cell.y}`)) return;
+    paint.cells.set(`${cell.x}:${cell.y}`, cell);
+  }
+
+  function pointerDown(event: PointerEvent<HTMLDivElement>) {
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture(event.pointerId);
+
+    if (isDm && mode === 'border') {
+      paintRef.current = { id: event.pointerId, cells: new Map() };
+      collectPaintCell(event);
+      return;
+    }
+
     if (pointersRef.current.size === 2) {
       const points = [...pointersRef.current.values()];
       pinchRef.current = { distance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y), zoom: zoomRef.current };
@@ -136,7 +191,12 @@ export function BattleMap({
     dragRef.current = { id: event.pointerId, x: event.clientX, y: event.clientY, baseX: panRef.current.x, baseY: panRef.current.y, moved: false };
   }
 
-  function pointerMove(event: React.PointerEvent<HTMLDivElement>) {
+  function pointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (paintRef.current?.id === event.pointerId) {
+      collectPaintCell(event);
+      return;
+    }
+
     if (pointersRef.current.has(event.pointerId)) pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointersRef.current.size === 2 && pinchRef.current) {
       const points = [...pointersRef.current.values()];
@@ -154,30 +214,66 @@ export function BattleMap({
     applyTransform();
   }
 
-  function pointerUp(event: React.PointerEvent<HTMLDivElement>) {
+  function pointerUp(event: PointerEvent<HTMLDivElement>) {
     pointersRef.current.delete(event.pointerId);
     pinchRef.current = null;
+
+    const paint = paintRef.current;
+    if (paint?.id === event.pointerId) {
+      const cells = [...paint.cells.values()].filter((cell) => !terrainKeys.has(`${cell.x}:${cell.y}`));
+      if (cells.length) {
+        setUndoStack((current) => [...current, { action: 'add', cells }]);
+        setRedoStack([]);
+        onTerrainAdd(cells);
+      }
+      paintRef.current = null;
+      return;
+    }
+
     const drag = dragRef.current;
     if (!drag || drag.id !== event.pointerId) return;
     const selected = tokens.find((token) => token.id === selectedId);
-    if (!drag.moved && isDm && selected && viewportRef.current) {
-      const rect = viewportRef.current.getBoundingClientRect();
-      const pan = panRef.current;
-      const x = Math.floor((event.clientX - rect.left - pan.x) / zoomRef.current / CELL_SIZE);
-      const y = Math.floor((event.clientY - rect.top - pan.y) / zoomRef.current / CELL_SIZE);
-      if (x >= 0 && x < battle.gridWidth && y >= 0 && y < battle.gridHeight) onMove(selected.id, x, y);
+    if (!drag.moved && isDm && selected) {
+      const cell = cellFromPointer(event);
+      if (cell && !terrainKeys.has(`${cell.x}:${cell.y}`) && !tokens.some((token) => token.id !== selected.id && token.x === cell.x && token.y === cell.y)) onMove(selected.id, cell.x, cell.y);
     }
     dragRef.current = null;
   }
 
+  function undoTerrain() {
+    const entry = undoStack.at(-1);
+    if (!entry) return;
+    setUndoStack((current) => current.slice(0, -1));
+    setRedoStack((current) => [...current, entry]);
+    if (entry.action === 'add') onTerrainRemove(entry.cells);
+    else onTerrainAdd(entry.cells);
+  }
+
+  function redoTerrain() {
+    const entry = redoStack.at(-1);
+    if (!entry) return;
+    setRedoStack((current) => current.slice(0, -1));
+    setUndoStack((current) => [...current, entry]);
+    if (entry.action === 'add') onTerrainAdd(entry.cells);
+    else onTerrainRemove(entry.cells);
+  }
+
   return (
     <section className="surface overflow-hidden rounded-2xl">
-      <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] p-3">
         <div>
           <p className="eyebrow">Live encounter</p>
           <h2 className="font-black">Battlefield</h2>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {isDm && (
+            <>
+              <Button variant={mode === 'border' ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => { setMode((current) => current === 'border' ? 'move' : 'border'); fitWholeMap(); }}><Square className="mr-2 inline" size={14} /> Border</Button>
+              <Button className="p-2.5" onClick={undoTerrain} disabled={!undoStack.length} aria-label="Undo terrain"><RotateCcw size={16} /></Button>
+              <Button className="p-2.5" onClick={redoTerrain} disabled={!redoStack.length} aria-label="Redo terrain"><RotateCw size={16} /></Button>
+              <Button variant="danger" className="p-2.5" onClick={() => { setUndoStack((current) => [...current, { action: 'remove', cells: terrain.map((cell) => ({ x: cell.x, y: cell.y })) }]); setRedoStack([]); onTerrainClear(); }} disabled={!terrain.length} aria-label="Delete all terrain"><Trash2 size={16} /></Button>
+            </>
+          )}
           <Button className="p-2.5" onClick={() => setZoomValue(zoomRef.current - 0.12)} aria-label="Zoom out"><Minus size={16} /></Button>
           <span className="flex min-w-12 items-center justify-center text-xs font-black text-[var(--muted)]">{Math.round(zoom * 100)}%</span>
           <Button className="p-2.5" onClick={() => setZoomValue(zoomRef.current + 0.12)} aria-label="Zoom in"><Plus size={16} /></Button>
@@ -200,6 +296,13 @@ export function BattleMap({
       >
         <div ref={mapRef} className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ transform: `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${zoom})` }}>
           <div className="map-grid-bg relative rounded-lg" style={{ width: size.width, height: size.height, backgroundSize: `${CELL_SIZE}px ${CELL_SIZE}px` }}>
+            {terrain.map((cell) => (
+              <span
+                key={cell.id}
+                className="absolute rounded-md border border-[#d1a85b55] bg-[#704225]"
+                style={{ left: cell.x * CELL_SIZE + 4, top: cell.y * CELL_SIZE + 4, width: CELL_SIZE - 8, height: CELL_SIZE - 8 }}
+              />
+            ))}
             {tokens.map((token) => (
               <BattleToken key={token.id} token={token} selected={token.id === selectedId} mine={token.character?.ownerUserId === profile.id} onSelect={onSelect} />
             ))}
@@ -207,7 +310,7 @@ export function BattleMap({
         </div>
         <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex justify-center">
           <div className="rounded-full border border-white/10 bg-[#0d1110dc] px-4 py-2 text-center text-[11px] font-bold text-[var(--muted)]">
-            {isDm && selectedId ? 'Tap a square to move · tap token again to cancel' : 'Drag to pan · pinch or Ctrl-wheel to zoom'}
+            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move · tap token again to cancel' : 'Drag to pan · pinch or Ctrl-wheel to zoom'}
           </div>
         </div>
       </div>

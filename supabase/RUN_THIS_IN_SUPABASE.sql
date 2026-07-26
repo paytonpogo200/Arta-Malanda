@@ -190,6 +190,16 @@ create table if not exists public.combatants (
   unique (battle_id, character_id)
 );
 
+create table if not exists public.battle_terrain (
+  id uuid primary key default gen_random_uuid(),
+  battle_id uuid not null references public.battles(id) on delete cascade,
+  x int not null check (x >= 0),
+  y int not null check (y >= 0),
+  terrain_type text not null default 'blocked',
+  created_at timestamptz not null default now(),
+  unique (battle_id, x, y)
+);
+
 create index if not exists profiles_username_idx on public.profiles(username);
 create index if not exists app_sessions_profile_idx on public.app_sessions(profile_id);
 create index if not exists app_sessions_valid_idx on public.app_sessions(token_hash, expires_at) where revoked_at is null;
@@ -197,6 +207,7 @@ create index if not exists characters_owner_idx on public.characters(owner_user_
 create index if not exists inventory_character_idx on public.inventory_items(character_id);
 create index if not exists inventory_parent_idx on public.inventory_items(parent_item_id);
 create index if not exists combatants_battle_idx on public.combatants(battle_id);
+create index if not exists battle_terrain_battle_idx on public.battle_terrain(battle_id);
 
 create or replace function public.touch_updated_at()
 returns trigger
@@ -414,6 +425,7 @@ alter table public.characters enable row level security;
 alter table public.inventory_items enable row level security;
 alter table public.battles enable row level security;
 alter table public.combatants enable row level security;
+alter table public.battle_terrain enable row level security;
 
 revoke all on table public.profiles from anon, authenticated;
 revoke all on table public.dm_lock from anon, authenticated;
@@ -423,6 +435,7 @@ revoke all on table public.characters from anon, authenticated;
 revoke all on table public.inventory_items from anon, authenticated;
 revoke all on table public.battles from anon, authenticated;
 revoke all on table public.combatants from anon, authenticated;
+revoke all on table public.battle_terrain from anon, authenticated;
 
 grant usage on schema public to anon, authenticated;
 grant execute on function public.create_campaign_account(text, text, text, boolean) to anon, authenticated;
@@ -3527,6 +3540,20 @@ as $$
   )
 $$;
 
+create or replace function public.battle_terrain_record_to_json(p_terrain public.battle_terrain)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_terrain.id,
+    'battleId', p_terrain.battle_id,
+    'x', p_terrain.x,
+    'y', p_terrain.y,
+    'type', p_terrain.terrain_type
+  )
+$$;
+
 create or replace function public.get_battle_room(p_session_token text)
 returns jsonb
 language plpgsql
@@ -3556,6 +3583,12 @@ begin
       where v_battle.id is not null
         and c.battle_id = v_battle.id
     ),
+    'terrain', (
+      select coalesce(jsonb_agg(public.battle_terrain_record_to_json(t) order by t.y, t.x), '[]'::jsonb)
+      from public.battle_terrain t
+      where v_battle.id is not null
+        and t.battle_id = v_battle.id
+    ),
     'characters', (
       select coalesce(jsonb_agg(public.character_record_to_json(ch) order by ch.kind, ch.name), '[]'::jsonb)
       from public.characters ch
@@ -3567,6 +3600,11 @@ begin
             and c.battle_id = v_battle.id
             and c.character_id = ch.id
         )
+    ),
+    'bestiary', (
+      select coalesce(jsonb_agg(public.bestiary_entity_record_to_json(e) order by e.category, e.display_order, e.name), '[]'::jsonb)
+      from public.bestiary_entities e
+      where e.is_unlocked or v_profile.role = 'dm'::public.user_role
     )
   );
 end;
@@ -3701,6 +3739,28 @@ begin
     raise exception 'Token position is outside the battlemap.';
   end if;
 
+  if exists (
+    select 1
+    from public.battle_terrain t
+    where t.battle_id = v_battle.id
+      and t.x = v_x
+      and t.y = v_y
+      and t.terrain_type = 'blocked'
+  ) then
+    raise exception 'That cell is blocked.';
+  end if;
+
+  if exists (
+    select 1
+    from public.combatants c
+    where c.battle_id = v_battle.id
+      and c.id <> p_combatant_id
+      and c.x = v_x
+      and c.y = v_y
+  ) then
+    raise exception 'That cell is already occupied.';
+  end if;
+
   v_initiative := case
     when v_patch ? 'initiative' and nullif(v_patch->>'initiative', '') is not null then greatest(1, least(20, (v_patch->>'initiative')::int))
     when v_patch ? 'initiative' then null
@@ -3764,6 +3824,154 @@ begin
 end;
 $$;
 
+create or replace function public.set_battle_terrain(
+  p_session_token text,
+  p_cells jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+  v_cell jsonb;
+  v_x int;
+  v_y int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can change terrain.'; end if;
+
+  select * into v_battle from public.battles where status = 'active'::public.battle_status order by created_at desc limit 1;
+  if v_battle.id is null then raise exception 'No active encounter.'; end if;
+
+  for v_cell in select value from jsonb_array_elements(coalesce(p_cells, '[]'::jsonb)) loop
+    v_x := (v_cell->>'x')::int;
+    v_y := (v_cell->>'y')::int;
+    if v_x >= 0 and v_x < v_battle.grid_width and v_y >= 0 and v_y < v_battle.grid_height
+      and not exists (select 1 from public.combatants c where c.battle_id = v_battle.id and c.x = v_x and c.y = v_y)
+    then
+      insert into public.battle_terrain (battle_id, x, y, terrain_type)
+      values (v_battle.id, v_x, v_y, 'blocked')
+      on conflict (battle_id, x, y) do update set terrain_type = 'blocked';
+    end if;
+  end loop;
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+create or replace function public.clear_battle_terrain(
+  p_session_token text,
+  p_cells jsonb default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can change terrain.'; end if;
+
+  select * into v_battle from public.battles where status = 'active'::public.battle_status order by created_at desc limit 1;
+  if v_battle.id is null then raise exception 'No active encounter.'; end if;
+
+  if p_cells is null then
+    delete from public.battle_terrain where battle_id = v_battle.id;
+  else
+    delete from public.battle_terrain t
+    using (
+      select (value->>'x')::int as x, (value->>'y')::int as y
+      from jsonb_array_elements(coalesce(p_cells, '[]'::jsonb))
+    ) cells
+    where t.battle_id = v_battle.id
+      and t.x = cells.x
+      and t.y = cells.y;
+  end if;
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+create or replace function public.add_bestiary_to_battle(
+  p_session_token text,
+  p_entity_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+  v_entity public.bestiary_entities%rowtype;
+  v_character public.characters%rowtype;
+  v_slot int := 0;
+  v_x int;
+  v_y int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can add bestiary combatants.'; end if;
+
+  select * into v_battle from public.battles where status = 'active'::public.battle_status order by created_at desc limit 1;
+  if v_battle.id is null then raise exception 'No active encounter.'; end if;
+
+  select * into v_entity from public.bestiary_entities where id = p_entity_id;
+  if v_entity.id is null then raise exception 'Bestiary entry not found.'; end if;
+
+  loop
+    v_x := v_slot % v_battle.grid_width;
+    v_y := floor(v_slot::numeric / v_battle.grid_width)::int;
+    exit when v_y >= v_battle.grid_height;
+    exit when not exists (select 1 from public.combatants c where c.battle_id = v_battle.id and c.x = v_x and c.y = v_y)
+      and not exists (select 1 from public.battle_terrain t where t.battle_id = v_battle.id and t.x = v_x and t.y = v_y and t.terrain_type = 'blocked');
+    v_slot := v_slot + 1;
+  end loop;
+
+  if v_y >= v_battle.grid_height then raise exception 'No open battlefield cell is available.'; end if;
+
+  insert into public.characters (
+    owner_user_id, name, kind, class_key, class_name, level, max_hp, current_hp, max_mana, current_mana,
+    magic_resist, inventory_slots, spell_slots, attributes, class_passives, personal_passives, token_color, location_name
+  )
+  values (
+    null,
+    v_entity.name,
+    'enemy'::public.character_kind,
+    public.catalog_key_for_name(coalesce(nullif(v_entity.category, ''), 'Bestiary')),
+    coalesce(nullif(v_entity.category, ''), 'Bestiary'),
+    1,
+    greatest(1, v_entity.hp),
+    greatest(1, v_entity.hp),
+    greatest(0, v_entity.mana),
+    greatest(0, v_entity.mana),
+    0,
+    0,
+    0,
+    '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":0,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb,
+    jsonb_build_array(coalesce(nullif(v_entity.summary, ''), v_entity.temperament)),
+    v_entity.details,
+    '#7f514d',
+    'Battlefield'
+  )
+  returning * into v_character;
+
+  insert into public.combatants (battle_id, character_id, x, y, current_hp, current_mana, initiative)
+  values (v_battle.id, v_character.id, v_x, v_y, v_character.current_hp, v_character.current_mana, null);
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
 create or replace function public.end_active_battle(p_session_token text)
 returns jsonb
 language plpgsql
@@ -3811,11 +4019,15 @@ $$;
 
 grant execute on function public.battle_record_to_json(public.battles) to anon, authenticated;
 grant execute on function public.combatant_record_to_json(public.combatants) to anon, authenticated;
+grant execute on function public.battle_terrain_record_to_json(public.battle_terrain) to anon, authenticated;
 grant execute on function public.get_battle_room(text) to anon, authenticated;
 grant execute on function public.start_campaign_battle(text, uuid[], int, int) to anon, authenticated;
 grant execute on function public.update_combatant_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.remove_combatant_from_battle(text, uuid) to anon, authenticated;
 grant execute on function public.end_active_battle(text) to anon, authenticated;
+grant execute on function public.set_battle_terrain(text, jsonb) to anon, authenticated;
+grant execute on function public.clear_battle_terrain(text, jsonb) to anon, authenticated;
+grant execute on function public.add_bestiary_to_battle(text, uuid) to anon, authenticated;
 
 
 -- ============================================================

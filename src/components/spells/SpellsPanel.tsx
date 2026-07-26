@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
+import { BookOpen, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
@@ -21,8 +21,7 @@ function SpellCard({
   activeBattle,
   canActivate,
   onUse,
-  onToggle,
-  onMove
+  onToggle
 }: {
   entry: CharacterSpell;
   canManage: boolean;
@@ -30,10 +29,17 @@ function SpellCard({
   canActivate: boolean;
   onUse: (entry: CharacterSpell) => void;
   onToggle: (entry: CharacterSpell, active: boolean) => void;
-  onMove: (entry: CharacterSpell, direction: -1 | 1) => void;
 }) {
   return (
-    <article className={`rounded-2xl border p-3 ${spellTypeClass(entry.spell.type)} ${entry.active ? '' : 'spell-card-inactive'}`}>
+    <article
+      draggable={canManage && !activeBattle}
+      onDragStart={(event) => {
+        if (!canManage || activeBattle) return;
+        event.dataTransfer.setData('application/x-arta-spell', entry.id);
+        event.dataTransfer.effectAllowed = 'move';
+      }}
+      className={`rounded-2xl border p-3 ${spellTypeClass(entry.spell.type)} ${entry.active ? '' : 'spell-card-inactive'} ${canManage && !activeBattle ? 'cursor-grab active:cursor-grabbing' : ''}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-black">{entry.spell.name}</p>
@@ -45,14 +51,10 @@ function SpellCard({
       {canManage && (
         <div className="mt-3 grid gap-2">
           {entry.active ? (
-            <>
+            <div className="grid grid-cols-2 gap-2">
               <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => onUse(entry)}>Use spell</Button>
-              <div className="grid grid-cols-3 gap-2">
-                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, false)}>Bench</Button>
-                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle || entry.slotIndex === 0} onClick={() => onMove(entry, -1)} aria-label={`Move ${entry.spell.name} up`}><ArrowUp size={13} /></Button>
-                <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onMove(entry, 1)} aria-label={`Move ${entry.spell.name} down`}><ArrowDown size={13} /></Button>
-              </div>
-            </>
+              <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, false)}>Bench</Button>
+            </div>
           ) : (
             <Button variant="teal" className="px-3 py-2 text-xs" disabled={activeBattle || !canActivate} onClick={() => onToggle(entry, true)}>{canActivate ? 'Activate' : 'No open slot'}</Button>
           )}
@@ -163,13 +165,6 @@ export function SpellsPanel({
     void patchSpell(entry, { active });
   }
 
-  function moveSpell(entry: CharacterSpell, direction: -1 | 1) {
-    if (entry.slotIndex === null || activeSlotCount <= 0) return;
-    const targetSlot = Math.max(0, Math.min(activeSlotCount - 1, entry.slotIndex + direction));
-    if (targetSlot === entry.slotIndex) return;
-    void patchSpell(entry, { active: true, slotIndex: targetSlot });
-  }
-
   async function useSpell(entry: CharacterSpell) {
     if (!canManage || !entry.active) return;
     setSaving(true);
@@ -184,6 +179,36 @@ export function SpellsPanel({
     } finally {
       setSaving(false);
     }
+  }
+
+  function dragOverSpell(event: DragEvent<HTMLElement>) {
+    if (!canManage || activeBattle || !Array.from(event.dataTransfer.types).includes('application/x-arta-spell')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }
+
+  function droppedSpellId(event: DragEvent<HTMLElement>) {
+    if (!canManage || activeBattle) return '';
+    const id = event.dataTransfer.getData('application/x-arta-spell');
+    if (id) event.preventDefault();
+    return id;
+  }
+
+  function dropSpellToActive(event: DragEvent<HTMLElement>, slotIndex: number) {
+    const id = droppedSpellId(event);
+    if (!id) return;
+    const entry = payload.spells.find((spell) => spell.id === id);
+    if (!entry) return;
+    if (entry.active && entry.slotIndex === slotIndex) return;
+    void patchSpell(entry, { active: true, slotIndex });
+  }
+
+  function dropSpellToInactive(event: DragEvent<HTMLElement>) {
+    const id = droppedSpellId(event);
+    if (!id) return;
+    const entry = payload.spells.find((spell) => spell.id === id);
+    if (!entry || !entry.active) return;
+    void patchSpell(entry, { active: false });
   }
 
   return (
@@ -221,22 +246,23 @@ export function SpellsPanel({
               {Array.from({ length: Math.max(activeSlotCount, activeSpells.length) }, (_, slot) => {
                 const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
                 return entry ? (
-                  <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onMove={moveSpell} />
+                  <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
+                    <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />
+                  </div>
                 ) : (
-                  <div key={slot} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
+                  <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
                 );
               })}
             </div>
           </section>
 
-          {inactiveSpells.length > 0 && (
-            <details className="rounded-2xl border border-[var(--line)] bg-black/10">
-              <summary className="cursor-pointer list-none p-3 font-black">Inactive spells · {inactiveSpells.length}</summary>
-              <div className="grid gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onMove={moveSpell} />)}
-              </div>
-            </details>
-          )}
+          <details className="rounded-2xl border border-[var(--line)] bg-black/10">
+            <summary className="cursor-pointer list-none p-3 font-black">Inactive spells · {inactiveSpells.length}</summary>
+            <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
+              {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
+              {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
+            </div>
+          </details>
 
           {activeBattle && <p className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Spell swapping is locked during combat.</p>}
         </div>

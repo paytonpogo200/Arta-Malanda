@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
+import { SelectField } from '@/components/ui/Field';
 import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/battle/data';
 import type { Character, Combatant, Profile } from '@/lib/types';
 
@@ -17,13 +18,16 @@ type TokenView = Combatant & { character: Character | undefined };
 const EMPTY_ROOM: BattleRoomPayload = {
   battle: null,
   combatants: [],
-  characters: []
+  terrain: [],
+  characters: [],
+  bestiary: []
 };
 
 export function BattleRoom({ profile }: { profile: Profile }) {
   const [room, setRoom] = useState<BattleRoomPayload>(EMPTY_ROOM);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedCombatantId, setSelectedCombatantId] = useState<string | null>(null);
+  const [bestiaryEntityId, setBestiaryEntityId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -37,6 +41,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const selectedCombatant = room.combatants.find((entry) => entry.id === selectedCombatantId) ?? null;
   const selectedCharacter = selectedCombatant ? characterById.get(selectedCombatant.characterId) ?? null : null;
   const myCombatants = tokens.filter((entry) => entry.character?.ownerUserId === profile.id);
+  const bestiaryOptions = useMemo(() => room.bestiary.filter((entry) => entry.unlocked || isDm).sort((a, b) => a.name.localeCompare(b.name)), [isDm, room.bestiary]);
 
   const loadRoom = useCallback(async () => {
     setError('');
@@ -44,7 +49,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       const response = await fetch('/api/battle', { cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'Battlefield could not be loaded.');
-      setRoom(normalizeBattleRoomPayload(payload));
+      const normalized = normalizeBattleRoomPayload(payload);
+      setRoom(normalized);
+      setBestiaryEntityId((current) => current || normalized.bestiary[0]?.id || '');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Battlefield could not be loaded.');
     } finally {
@@ -136,6 +143,70 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     }
   }
 
+  async function replaceRoomFromResponse(response: Response, fallback: string) {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error ?? fallback);
+    const normalized = normalizeBattleRoomPayload(payload);
+    setRoom(normalized);
+    setBestiaryEntityId((current) => current || normalized.bestiary[0]?.id || '');
+  }
+
+  async function setTerrain(cells: { x: number; y: number }[]) {
+    if (!isDm || !cells.length) return;
+    try {
+      await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cells })
+      }), 'Terrain could not be changed.');
+    } catch (terrainError) {
+      setError(terrainError instanceof Error ? terrainError.message : 'Terrain could not be changed.');
+    }
+  }
+
+  async function removeTerrain(cells: { x: number; y: number }[]) {
+    if (!isDm || !cells.length) return;
+    try {
+      await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cells })
+      }), 'Terrain could not be changed.');
+    } catch (terrainError) {
+      setError(terrainError instanceof Error ? terrainError.message : 'Terrain could not be changed.');
+    }
+  }
+
+  async function clearTerrain() {
+    if (!isDm) return;
+    try {
+      await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      }), 'Terrain could not be cleared.');
+    } catch (terrainError) {
+      setError(terrainError instanceof Error ? terrainError.message : 'Terrain could not be cleared.');
+    }
+  }
+
+  async function addBestiaryCombatant() {
+    if (!isDm || !bestiaryEntityId) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceRoomFromResponse(await fetch('/api/battle/bestiary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityId: bestiaryEntityId })
+      }), 'Bestiary combatant could not be added.');
+    } catch (bestiaryError) {
+      setError(bestiaryError instanceof Error ? bestiaryError.message : 'Bestiary combatant could not be added.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function removeCombatant(combatant: Combatant) {
     if (!isDm) return;
     setSaving(true);
@@ -203,6 +274,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       <BattleMap
         battle={room.battle}
         tokens={tokens}
+        terrain={room.terrain}
         profile={profile}
         selectedId={selectedCombatantId}
         onSelect={(id) => setSelectedCombatantId((current) => current === id ? null : id)}
@@ -211,12 +283,24 @@ export function BattleRoom({ profile }: { profile: Profile }) {
           if (combatant) void updateCombatant(combatant, { x, y });
           setSelectedCombatantId(null);
         }}
+        onTerrainAdd={(cells) => void setTerrain(cells)}
+        onTerrainRemove={(cells) => void removeTerrain(cells)}
+        onTerrainClear={() => void clearTerrain()}
       />
 
       <Card>
-        <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-black">Encounter Roster</h3>
-          {isDm && <Button variant="danger" disabled={saving} onClick={endBattle}><XCircle className="mr-2 inline" size={16} /> End encounter</Button>}
+          {isDm && (
+            <div className="flex flex-wrap items-center gap-2">
+              <SelectField value={bestiaryEntityId} onChange={(event) => setBestiaryEntityId(event.target.value)} className="min-w-52">
+                <option value="">Add from bestiary</option>
+                {bestiaryOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              </SelectField>
+              <Button variant="teal" disabled={!bestiaryEntityId || saving} onClick={addBestiaryCombatant}>Add</Button>
+              <Button variant="danger" disabled={saving} onClick={endBattle}><XCircle className="mr-2 inline" size={16} /> End encounter</Button>
+            </div>
+          )}
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
           {tokens.map((entry) => {

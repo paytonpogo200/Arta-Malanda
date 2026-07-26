@@ -525,6 +525,7 @@ function eligibleEnchantmentTargets(items: InventoryItem[]) {
 
 export function CitiesPanel({ profile }: { profile: Profile }) {
   const [payload, setPayload] = useState<CitiesPayload>(EMPTY_PAYLOAD);
+  const [selectedCityKey, setSelectedCityKey] = useState('');
   const [shoppingAs, setShoppingAs] = useState('');
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<MarketProduct | null>(null);
@@ -547,13 +548,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [error, setError] = useState('');
   const isDm = profile.role === 'dm';
 
-  const calostrynn = payload.cities.find((city) => city.key === 'calostrynn') ?? payload.cities[0];
+  const visibleCities = useMemo(() => [...payload.cities].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.cities]);
+  const selectedCity = visibleCities.find((city) => city.key === selectedCityKey) ?? visibleCities.find((city) => city.key === 'calostrynn') ?? visibleCities[0] ?? null;
   const shoppers = useMemo(() => payload.characters.filter((character) => isDm || character.ownerUserId === profile.id), [isDm, payload.characters, profile.id]);
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
-  const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && activeCityVendor(vendor)) ?? null;
-  const cityLocked = Boolean(calostrynn?.locked);
-  const shopperInCity = selectedShopper?.locationName === (calostrynn?.name ?? 'Calostrynn');
-  const canShop = Boolean(selectedShopper && calostrynn && !cityLocked && shopperInCity);
+  const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
+  const cityLocked = Boolean(selectedCity?.locked);
+  const shopperInCity = selectedShopper?.locationName === (selectedCity?.name ?? '');
+  const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
   const forgeRunes = useMemo(() => sharedForgeRuneProducts(payload.vendors), [payload.vendors]);
@@ -580,10 +582,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftMaterials, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeRunes, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
-    .filter((vendor) => vendor.cityKey === calostrynn?.key)
+    .filter((vendor) => vendor.cityKey === selectedCity?.key)
     .filter(activeCityVendor)
     .filter((vendor) => isDm || !vendor.hidden)
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [calostrynn?.key, isDm, payload.vendors]);
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [selectedCity?.key, isDm, payload.vendors]);
 
   const loadCities = useCallback(async () => {
     setError('');
@@ -594,6 +596,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const normalized = normalizeCitiesPayload(body);
       setPayload(normalized);
       setShoppingAs((current) => current || normalized.characters.find((character) => isDm || character.ownerUserId === profile.id)?.id || '');
+      setSelectedCityKey((current) => current || normalized.cities.find((city) => city.key === 'calostrynn')?.key || normalized.cities[0]?.key || '');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Discovered cities could not be loaded.');
     } finally {
@@ -649,14 +652,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function toggleCityLock() {
-    if (!isDm || !calostrynn) return;
+    if (!isDm || !selectedCity) return;
     setSaving(true);
     setError('');
     try {
-      await replaceFromResponse(await fetch(`/api/cities/${calostrynn.key}`, {
+      await replaceFromResponse(await fetch(`/api/cities/${selectedCity.key}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ locked: !calostrynn.locked })
+        body: JSON.stringify({ locked: !selectedCity.locked })
       }), 'City access could not be changed.');
     } catch (lockError) {
       setError(lockError instanceof Error ? lockError.message : 'City access could not be changed.');
@@ -832,7 +835,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     return <Card><div className="h-32 animate-pulse rounded-2xl bg-black/20" /></Card>;
   }
 
-  const pageTitle = selectedVendor ? selectedVendor.name : (calostrynn?.name ?? 'Calostrynn');
+  const pageTitle = selectedVendor ? selectedVendor.name : (selectedCity?.name ?? 'Cities');
 
   return (
     <div className="space-y-4">
@@ -846,10 +849,37 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to Cities</Button>}
             <Button variant="secondary" className="p-3" onClick={loadCities} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
-            {isDm && !selectedVendor && <Button variant={cityLocked ? 'danger' : 'teal'} onClick={toggleCityLock} disabled={saving}>{cityLocked ? <Lock className="mr-2 inline" size={15} /> : <Unlock className="mr-2 inline" size={15} />}{cityLocked ? 'Locked' : 'Open'}</Button>}
+            {isDm && !selectedVendor && selectedCity && <Button variant={cityLocked ? 'danger' : 'teal'} onClick={toggleCityLock} disabled={saving}>{cityLocked ? <Lock className="mr-2 inline" size={15} /> : <Unlock className="mr-2 inline" size={15} />}{cityLocked ? 'Locked' : 'Open'}</Button>}
           </div>
         </div>
         {error && <div className="mt-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
+        {!selectedVendor && (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleCities.map((city) => {
+              const active = city.key === selectedCity?.key;
+              const vendorCount = payload.vendors.filter((vendor) => vendor.cityKey === city.key && activeCityVendor(vendor) && (isDm || !vendor.hidden)).length;
+              return (
+                <button
+                  key={city.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCityKey(city.key);
+                    setSelectedVendorId('');
+                  }}
+                  className={`rounded-2xl border p-3 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
+                >
+                  <span className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block truncate font-black">{city.name}</span>
+                      <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{vendorCount} shop{vendorCount === 1 ? '' : 's'}</span>
+                    </span>
+                    <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="mt-4 grid gap-3 md:grid-cols-[18rem_1fr]">
           <label>
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shopping as</span>
@@ -859,12 +889,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             </SelectField>
           </label>
           <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-sm text-[var(--muted)]">
-            {!selectedShopper ? 'Choose who is shopping.' : cityLocked ? 'The city is locked by the DM.' : !shopperInCity ? `${selectedShopper.name} is in ${selectedShopper.locationName}, not ${calostrynn?.name ?? 'Calostrynn'}.` : `${selectedShopper.name} can shop here.`}
+            {!selectedShopper ? 'Choose who is shopping.' : cityLocked ? `${selectedCity?.name ?? 'This city'} is locked by the DM.` : !shopperInCity ? `${selectedShopper.name} is in ${selectedShopper.locationName}, not ${selectedCity?.name ?? 'this city'}.` : `${selectedShopper.name} can shop here.`}
           </div>
         </div>
       </Card>
 
-      {!selectedVendor ? (
+      {!selectedCity ? (
+        <Card><p className="text-sm text-[var(--muted)]">No cities have been discovered yet.</p></Card>
+      ) : !selectedVendor ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {cityVendors.map((vendor) => (
             <ShopCard

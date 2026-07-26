@@ -434,8 +434,10 @@ export function InventoryPanel({
 
   async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
     if (!canManage) return;
-    setTarget(`${parentItemId ?? 'main'}:${slot}`);
     const movingItem = items.find((item) => item.id === itemId);
+    if (movingItem && sameContainer(movingItem, parentItemId) && movingItem.slotIndex === slot && !movingItem.loadoutSlot) return;
+
+    setTarget(`${parentItemId ?? 'main'}:${slot}`);
     const targetItem = items.find((item) => item.id !== itemId && sameContainer(item, parentItemId) && item.slotIndex === slot);
     let optimisticItems = items;
     if (movingItem) {

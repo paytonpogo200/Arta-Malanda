@@ -222,6 +222,14 @@ export type CampaignProperty = {
   storageCapacity: number;
 };
 
+export type BattleTerrain = {
+  id: string;
+  battleId: string;
+  x: number;
+  y: number;
+  type: 'blocked';
+};
+
 export type City = {
   id: string;
   key: string;
