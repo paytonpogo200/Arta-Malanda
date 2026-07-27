@@ -262,6 +262,8 @@ export function BattleMap({
           setRedoStack([]);
           onTerrainAdd(cells);
         }
+        setMode('move');
+        setBorderBrush('draw');
         suppressClickRef.current = true;
         return;
       }

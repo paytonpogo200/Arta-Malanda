@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
-import { SelectField } from '@/components/ui/Field';
+import { SelectField, TextField } from '@/components/ui/Field';
 import { calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/battle/data';
 import type { Character, Combatant, InventoryItem, Profile } from '@/lib/types';
@@ -34,6 +34,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedCombatantId, setSelectedCombatantId] = useState<string | null>(null);
   const [bestiaryEntityId, setBestiaryEntityId] = useState('');
+  const [bestiarySearch, setBestiarySearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -75,6 +76,11 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const canUseDmTools = isDm && viewingAs === DM_VIEW;
   const isSpectator = !isDm && myCombatants.length === 0;
   const bestiaryOptions = useMemo(() => room.bestiary.filter((entry) => entry.unlocked || isDm).sort((a, b) => a.name.localeCompare(b.name)), [isDm, room.bestiary]);
+  const filteredBestiaryOptions = useMemo(() => {
+    const needle = bestiarySearch.trim().toLowerCase();
+    if (!needle) return bestiaryOptions;
+    return bestiaryOptions.filter((entity) => `${entity.name} ${entity.category} ${entity.summary}`.toLowerCase().includes(needle));
+  }, [bestiaryOptions, bestiarySearch]);
 
   const loadRoom = useCallback(async () => {
     setError('');
@@ -112,6 +118,11 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     if (canUseDmTools) return;
     setSelectedCombatantId(null);
   }, [canUseDmTools]);
+
+  useEffect(() => {
+    if (!bestiaryEntityId || filteredBestiaryOptions.some((entity) => entity.id === bestiaryEntityId)) return;
+    setBestiaryEntityId('');
+  }, [bestiaryEntityId, filteredBestiaryOptions]);
 
   function toggleParticipant(characterId: string) {
     setSelectedIds((current) => current.includes(characterId)
@@ -365,16 +376,27 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-black">Encounter Roster</h3>
           {canUseDmTools && (
-            <div className="flex flex-wrap items-center gap-2">
-              <SelectField value={bestiaryEntityId} onChange={(event) => setBestiaryEntityId(event.target.value)} className="min-w-52">
-                <option value="">Add from bestiary</option>
-                {bestiaryOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
-              </SelectField>
-              <Button variant="teal" disabled={!bestiaryEntityId || saving} onClick={addBestiaryCombatant}>Add</Button>
-              <Button variant="danger" disabled={saving} onClick={endBattle}><XCircle className="mr-2 inline" size={16} /> End encounter</Button>
-            </div>
+            <Button variant="danger" disabled={saving} onClick={endBattle}><XCircle className="mr-2 inline" size={16} /> End encounter</Button>
           )}
         </div>
+        {canUseDmTools && (
+          <div className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3 lg:grid-cols-[1fr_1fr_auto]">
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Search Bestiary</span>
+              <TextField value={bestiarySearch} onChange={(event) => setBestiarySearch(event.target.value)} placeholder="Search entity name, category, or summary" />
+            </label>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Entity</span>
+              <SelectField value={bestiaryEntityId} onChange={(event) => setBestiaryEntityId(event.target.value)}>
+                <option value="">{filteredBestiaryOptions.length ? 'Choose from bestiary' : 'No matching entities'}</option>
+                {filteredBestiaryOptions.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}
+              </SelectField>
+            </label>
+            <div className="flex items-end">
+              <Button variant="teal" className="w-full lg:w-auto" disabled={!bestiaryEntityId || saving || !filteredBestiaryOptions.some((entity) => entity.id === bestiaryEntityId)} onClick={addBestiaryCombatant}>Add Entity</Button>
+            </div>
+          </div>
+        )}
         <div className="grid gap-2 sm:grid-cols-2">
           {orderedTokens.map((entry) => {
             const character = entry.character;

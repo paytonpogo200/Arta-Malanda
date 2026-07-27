@@ -1153,9 +1153,9 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onEdit, onToggle
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[var(--brass)]/45 bg-[var(--brass)]/15 text-[var(--brass)] shadow-[0_0_22px_rgba(245,180,76,0.14)]">
             <Store size={22} />
           </span>
-          <span className="min-w-0">
+          <span className="min-w-0 flex-1">
             <span className="eyebrow">{vendor.facility}</span>
-            <span className="mt-1 block truncate text-xl font-black">{vendor.name}</span>
+            <span className="mt-1 block break-words text-xl font-black leading-tight">{vendor.name}</span>
             <span className="mt-1 flex flex-wrap items-center gap-2 text-xs font-bold text-[var(--muted)]">
               <span className="inline-flex items-center gap-1"><Users size={13} /> {vendor.npcName}</span>
               <span>{vendor.category}</span>
@@ -1705,7 +1705,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className="block truncate font-black">{product.name}</span>
+                  <span className="block break-words font-black leading-tight">{product.name}</span>
                   <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} · ${product.rarity}`}</span>
                 </span>
               </span>
