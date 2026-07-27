@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { LocateFixed, Minus, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
+import { LocateFixed, Minus, PaintBucket, Pencil, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
 import type { Battle, BattleTerrain, Character, Combatant, Profile } from '@/lib/types';
@@ -12,6 +12,7 @@ const STARTING_ZOOM = 0.82;
 type TokenView = Combatant & { character: Character | undefined };
 type Cell = { x: number; y: number };
 type TerrainAction = { action: 'add' | 'remove'; cells: Cell[] };
+type BorderBrush = 'draw' | 'fill';
 
 const BattleToken = memo(function BattleToken({
   token,
@@ -65,6 +66,8 @@ export function BattleMap({
   tokens,
   terrain,
   profile,
+  canEditMap,
+  viewingCharacterId,
   selectedId,
   onSelect,
   onMove,
@@ -76,6 +79,8 @@ export function BattleMap({
   tokens: TokenView[];
   terrain: BattleTerrain[];
   profile: Profile;
+  canEditMap: boolean;
+  viewingCharacterId?: string | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onMove: (id: string, x: number, y: number) => void;
@@ -96,15 +101,21 @@ export function BattleMap({
   const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
   const [zoom, setZoom] = useState(STARTING_ZOOM);
   const [mode, setMode] = useState<'move' | 'border'>('move');
+  const [borderBrush, setBorderBrush] = useState<BorderBrush>('draw');
   const [paintPreviewCells, setPaintPreviewCells] = useState<Cell[]>([]);
   const [undoStack, setUndoStack] = useState<TerrainAction[]>([]);
   const [redoStack, setRedoStack] = useState<TerrainAction[]>([]);
 
   const size = useMemo(() => ({ width: battle.gridWidth * CELL_SIZE, height: battle.gridHeight * CELL_SIZE }), [battle.gridWidth, battle.gridHeight]);
-  const isDm = profile.role === 'dm';
   const terrainKeys = useMemo(() => new Set(terrain.map((cell) => `${cell.x}:${cell.y}`)), [terrain]);
   const occupiedKeys = useMemo(() => new Set(tokens.map((token) => `${token.x}:${token.y}`)), [tokens]);
   tokensRef.current = tokens;
+
+  useEffect(() => {
+    if (canEditMap) return;
+    setMode('move');
+    setBorderBrush('draw');
+  }, [canEditMap]);
 
   function applyTransform() {
     if (!mapRef.current) return;
@@ -167,19 +178,52 @@ export function BattleMap({
     return { x, y };
   }
 
+  function cellKey(cell: Cell) {
+    return `${cell.x}:${cell.y}`;
+  }
+
+  function floodOpenRegion(start: Cell | null) {
+    if (!start) return [];
+    const blocked = new Set([...terrainKeys, ...occupiedKeys]);
+    if (blocked.has(cellKey(start))) return [];
+
+    const cells: Cell[] = [];
+    const seen = new Set<string>();
+    const stack = [start];
+
+    while (stack.length) {
+      const cell = stack.pop();
+      if (!cell || cell.x < 0 || cell.x >= battle.gridWidth || cell.y < 0 || cell.y >= battle.gridHeight) continue;
+
+      const key = cellKey(cell);
+      if (seen.has(key) || blocked.has(key)) continue;
+      seen.add(key);
+      cells.push(cell);
+
+      stack.push(
+        { x: cell.x + 1, y: cell.y },
+        { x: cell.x - 1, y: cell.y },
+        { x: cell.x, y: cell.y + 1 },
+        { x: cell.x, y: cell.y - 1 }
+      );
+    }
+
+    return cells;
+  }
+
   function collectPaintCell(event: PointerEvent<HTMLDivElement>) {
     const paint = paintRef.current;
     const cell = cellFromPointer(event);
     if (!paint || !cell) return;
-    if (occupiedKeys.has(`${cell.x}:${cell.y}`)) return;
-    paint.cells.set(`${cell.x}:${cell.y}`, cell);
+    if (occupiedKeys.has(cellKey(cell))) return;
+    paint.cells.set(cellKey(cell), cell);
     setPaintPreviewCells([...paint.cells.values()]);
   }
 
   function moveSelectedToCell(cell: Cell | null) {
     const selected = tokensRef.current.find((token) => token.id === selectedId);
-    if (!isDm || mode !== 'move' || !selected || !cell) return false;
-    const key = `${cell.x}:${cell.y}`;
+    if (!canEditMap || mode !== 'move' || !selected || !cell) return false;
+    const key = cellKey(cell);
     if (terrainKeys.has(key)) return false;
     if (tokensRef.current.some((token) => token.id !== selected.id && token.x === cell.x && token.y === cell.y)) return false;
     if (selected.x === cell.x && selected.y === cell.y) return false;
@@ -209,7 +253,19 @@ export function BattleMap({
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture(event.pointerId);
 
-    if (isDm && mode === 'border') {
+    if (canEditMap && mode === 'border') {
+      event.preventDefault();
+      if (borderBrush === 'fill') {
+        const cells = floodOpenRegion(cellFromPointer(event));
+        if (cells.length) {
+          setUndoStack((current) => [...current, { action: 'add', cells }]);
+          setRedoStack([]);
+          onTerrainAdd(cells);
+        }
+        suppressClickRef.current = true;
+        return;
+      }
+
       paintRef.current = { id: event.pointerId, cells: new Map() };
       setPaintPreviewCells([]);
       collectPaintCell(event);
@@ -255,7 +311,7 @@ export function BattleMap({
 
     const paint = paintRef.current;
     if (paint?.id === event.pointerId) {
-      const cells = [...paint.cells.values()].filter((cell) => !terrainKeys.has(`${cell.x}:${cell.y}`));
+      const cells = [...paint.cells.values()].filter((cell) => !terrainKeys.has(cellKey(cell)));
       if (cells.length) {
         setUndoStack((current) => [...current, { action: 'add', cells }]);
         setRedoStack([]);
@@ -301,9 +357,16 @@ export function BattleMap({
           <h2 className="font-black">Battlefield</h2>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {isDm && (
+          {canEditMap && (
             <>
-              <Button variant={mode === 'border' ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => { setMode((current) => current === 'border' ? 'move' : 'border'); fitWholeMap(); }}><Square className="mr-2 inline" size={14} /> Border</Button>
+              <Button variant={mode === 'move' ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => setMode('move')}><LocateFixed className="mr-2 inline" size={14} /> Move</Button>
+              <Button variant={mode === 'border' ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => { setMode('border'); fitWholeMap(); }}><Square className="mr-2 inline" size={14} /> Border</Button>
+              {mode === 'border' && (
+                <span className="flex rounded-xl border border-[var(--line)] bg-black/20 p-1">
+                  <Button variant={borderBrush === 'draw' ? 'teal' : 'ghost'} className="px-3 py-2 text-xs" onClick={() => setBorderBrush('draw')}><Pencil className="mr-1 inline" size={13} /> Draw</Button>
+                  <Button variant={borderBrush === 'fill' ? 'teal' : 'ghost'} className="px-3 py-2 text-xs" onClick={() => setBorderBrush('fill')}><PaintBucket className="mr-1 inline" size={13} /> Fill</Button>
+                </span>
+              )}
               <Button className="p-2.5" onClick={undoTerrain} disabled={!undoStack.length} aria-label="Undo terrain"><RotateCcw size={16} /></Button>
               <Button className="p-2.5" onClick={redoTerrain} disabled={!redoStack.length} aria-label="Redo terrain"><RotateCw size={16} /></Button>
               <Button variant="danger" className="p-2.5" onClick={() => { setUndoStack((current) => [...current, { action: 'remove', cells: terrain.map((cell) => ({ x: cell.x, y: cell.y })) }]); setRedoStack([]); onTerrainClear(); }} disabled={!terrain.length} aria-label="Delete all terrain"><Trash2 size={16} /></Button>
@@ -346,13 +409,13 @@ export function BattleMap({
               />
             ))}
             {tokens.map((token) => (
-              <BattleToken key={token.id} token={token} selected={token.id === selectedId} mine={token.character?.ownerUserId === profile.id} onSelect={onSelect} />
+              <BattleToken key={token.id} token={token} selected={token.id === selectedId} mine={viewingCharacterId ? token.characterId === viewingCharacterId : token.character?.ownerUserId === profile.id} onSelect={onSelect} />
             ))}
           </div>
         </div>
         <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex justify-center">
           <div className="rounded-full border border-white/10 bg-[#0d1110dc] px-4 py-2 text-center text-[11px] font-bold text-[var(--muted)]">
-            {isDm && mode === 'border' ? 'Border mode: tap or drag cells to make blocked terrain' : isDm && selectedId ? 'Tap an open square to move the selected token' : 'Drag to pan; pinch or Ctrl-wheel to zoom'}
+            {canEditMap && mode === 'border' ? borderBrush === 'fill' ? 'Fill mode: tap a connected open region to block it' : 'Border mode: tap or drag cells to make blocked terrain' : canEditMap && selectedId ? 'Tap an open square to move the selected token' : 'Drag to pan; pinch or Ctrl-wheel to zoom'}
           </div>
         </div>
       </div>

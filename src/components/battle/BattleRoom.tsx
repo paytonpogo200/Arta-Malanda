@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, XCircle } from 'lucide-react';
+import { Eye, Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
@@ -15,6 +15,9 @@ import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/b
 import type { Character, Combatant, InventoryItem, Profile } from '@/lib/types';
 
 type TokenView = Combatant & { character: Character | undefined };
+
+const DM_VIEW = 'dm';
+const SPECTATOR_VIEW = 'spectator';
 
 const EMPTY_ROOM: BattleRoomPayload = {
   battle: null,
@@ -35,6 +38,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const isDm = profile.role === 'dm';
+  const [viewingAs, setViewingAs] = useState(isDm ? DM_VIEW : SPECTATOR_VIEW);
 
   const characterById = useMemo(() => new Map(room.characters.map((character) => [character.id, character])), [room.characters]);
   const classByKey = useMemo(() => new Map(room.classes.map((template) => [template.key, template])), [room.classes]);
@@ -58,7 +62,18 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }), [tokens]);
   const selectedCombatant = room.combatants.find((entry) => entry.id === selectedCombatantId) ?? null;
   const selectedCharacter = selectedCombatant ? characterById.get(selectedCombatant.characterId) ?? null : null;
-  const myCombatants = orderedTokens.filter((entry) => entry.character?.ownerUserId === profile.id);
+  const playerViewTokens = useMemo(() => orderedTokens.filter((entry) => entry.character?.kind === 'player'), [orderedTokens]);
+  const myCombatants = useMemo(() => playerViewTokens.filter((entry) => entry.character?.ownerUserId === profile.id), [playerViewTokens, profile.id]);
+  const viewerOptions = useMemo(() => {
+    const characterOptions = (isDm ? playerViewTokens : myCombatants)
+      .filter((entry) => entry.character)
+      .map((entry) => ({ id: entry.id, label: entry.character?.name ?? 'Unknown character' }));
+    return isDm ? [{ id: DM_VIEW, label: 'DM' }, ...characterOptions] : characterOptions;
+  }, [isDm, myCombatants, playerViewTokens]);
+  const viewedCombatant = orderedTokens.find((entry) => entry.id === viewingAs) ?? null;
+  const viewedCharacter = viewedCombatant?.character ?? null;
+  const canUseDmTools = isDm && viewingAs === DM_VIEW;
+  const isSpectator = !isDm && myCombatants.length === 0;
   const bestiaryOptions = useMemo(() => room.bestiary.filter((entry) => entry.unlocked || isDm).sort((a, b) => a.name.localeCompare(b.name)), [isDm, room.bestiary]);
 
   const loadRoom = useCallback(async () => {
@@ -86,6 +101,17 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       setSelectedCombatantId(null);
     }
   }, [room.combatants, selectedCombatantId]);
+
+  useEffect(() => {
+    const validIds = new Set(viewerOptions.map((entry) => entry.id));
+    const fallback = isDm ? DM_VIEW : viewerOptions[0]?.id ?? SPECTATOR_VIEW;
+    if (!validIds.has(viewingAs)) setViewingAs(fallback);
+  }, [isDm, viewerOptions, viewingAs]);
+
+  useEffect(() => {
+    if (canUseDmTools) return;
+    setSelectedCombatantId(null);
+  }, [canUseDmTools]);
 
   function toggleParticipant(characterId: string) {
     setSelectedIds((current) => current.includes(characterId)
@@ -116,7 +142,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function endBattle() {
-    if (!isDm) return;
+    if (!canUseDmTools) return;
     setSaving(true);
     setError('');
     try {
@@ -133,7 +159,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function updateCombatant(combatant: Combatant, patch: Partial<Combatant>) {
-    if (!isDm) return;
+    if (!canUseDmTools) return;
     const previous = room.combatants;
     setRoom((current) => ({
       ...current,
@@ -177,7 +203,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function setTerrain(cells: { x: number; y: number }[]) {
-    if (!isDm || !cells.length) return;
+    if (!canUseDmTools || !cells.length) return;
     try {
       await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
         method: 'POST',
@@ -190,7 +216,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function removeTerrain(cells: { x: number; y: number }[]) {
-    if (!isDm || !cells.length) return;
+    if (!canUseDmTools || !cells.length) return;
     try {
       await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
         method: 'DELETE',
@@ -203,7 +229,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function clearTerrain() {
-    if (!isDm) return;
+    if (!canUseDmTools) return;
     try {
       await replaceRoomFromResponse(await fetch('/api/battle/terrain', {
         method: 'DELETE',
@@ -216,7 +242,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function addBestiaryCombatant() {
-    if (!isDm || !bestiaryEntityId) return;
+    if (!canUseDmTools || !bestiaryEntityId) return;
     setSaving(true);
     setError('');
     try {
@@ -233,7 +259,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }
 
   async function removeCombatant(combatant: Combatant) {
-    if (!isDm) return;
+    if (!canUseDmTools) return;
     setSaving(true);
     setError('');
     try {
@@ -296,13 +322,35 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   return (
     <div className="flex flex-col gap-4">
       {error && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="eyebrow">Viewing As</p>
+            <h2 className="mt-1 flex items-center gap-2 text-xl font-black">
+              {canUseDmTools ? <ShieldAlert size={18} className="text-[var(--brass)]" /> : isSpectator ? <Eye size={18} className="text-[var(--muted)]" /> : <UserRound size={18} className="text-[var(--teal)]" />}
+              {canUseDmTools ? 'Dungeon Master' : isSpectator ? 'Spectator' : viewedCharacter?.name ?? 'Character'}
+            </h2>
+          </div>
+          <div className="min-w-56">
+            {viewerOptions.length > 0 ? (
+              <SelectField value={viewingAs} onChange={(event) => setViewingAs(event.target.value)}>
+                {viewerOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </SelectField>
+            ) : (
+              <div className="rounded-xl border border-[var(--line)] bg-black/20 px-4 py-3 text-sm font-black text-[var(--muted)]">Spectator</div>
+            )}
+          </div>
+        </div>
+      </Card>
       <BattleMap
         battle={room.battle}
         tokens={orderedTokens}
         terrain={room.terrain}
         profile={profile}
-        selectedId={selectedCombatantId}
-        onSelect={setSelectedCombatantId}
+        canEditMap={canUseDmTools}
+        viewingCharacterId={viewedCharacter?.id ?? null}
+        selectedId={canUseDmTools ? selectedCombatantId : null}
+        onSelect={canUseDmTools ? setSelectedCombatantId : () => undefined}
         onMove={(id, x, y) => {
           const combatant = room.combatants.find((entry) => entry.id === id);
           if (combatant) void updateCombatant(combatant, { x, y });
@@ -316,7 +364,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-black">Encounter Roster</h3>
-          {isDm && (
+          {canUseDmTools && (
             <div className="flex flex-wrap items-center gap-2">
               <SelectField value={bestiaryEntityId} onChange={(event) => setBestiaryEntityId(event.target.value)} className="min-w-52">
                 <option value="">Add from bestiary</option>
@@ -334,7 +382,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             const sheetStats = character ? calculateCharacterSheetStats(character, loadoutItems, classByKey.get(character.classKey)) : null;
             return (
               <article key={entry.id} className={`rounded-xl border p-3 transition ${selectedCombatantId === entry.id ? 'border-[var(--brass)] bg-[#d1a85b0b]' : 'border-[var(--line)] bg-black/10'}`}>
-                <button type="button" onClick={() => setSelectedCombatantId((current) => current === entry.id ? null : entry.id)} className="w-full text-left">
+                <button type="button" onClick={canUseDmTools ? () => setSelectedCombatantId((current) => current === entry.id ? null : entry.id) : undefined} className={`w-full text-left ${canUseDmTools ? '' : 'cursor-default'}`}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="min-w-0 flex items-center gap-2">
                       <span className="truncate font-black">{character?.name ?? 'Unknown'}</span>
@@ -362,7 +410,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                     </span>
                   </div>
                 </button>
-                {isDm && (
+                {canUseDmTools && (
                   <div className="mt-3 flex justify-end">
                     <Button variant="secondary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => removeCombatant(entry)}><Trash2 className="mr-1 inline" size={13} /> Remove</Button>
                   </div>
@@ -373,9 +421,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         </div>
       </Card>
 
-      {isDm && selectedCombatant && selectedCharacter && (
+      {canUseDmTools && selectedCombatant && selectedCharacter && (
         <Card>
-          <div className="mb-4 flex items-center gap-2"><ShieldAlert size={18} className="text-[var(--brass)]" /><h3 className="font-black">DM Controls · {selectedCharacter.name}</h3></div>
+          <div className="mb-4 flex items-center gap-2"><ShieldAlert size={18} className="text-[var(--brass)]" /><h3 className="font-black">DM Controls - {selectedCharacter.name}</h3></div>
           <div className="grid grid-cols-3 gap-2">
             <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]"><Heart className="mr-1 inline" size={11} /> Health</span><NumberInput min={0} value={selectedCombatant.currentHp} onValueChange={(currentHp) => updateCombatant(selectedCombatant, { currentHp })} /></label>
             <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]"><Sparkles className="mr-1 inline" size={11} /> Mana</span><NumberInput min={0} value={selectedCombatant.currentMana} onValueChange={(currentMana) => updateCombatant(selectedCombatant, { currentMana })} /></label>
@@ -384,26 +432,22 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         </Card>
       )}
 
-      {!isDm && myCombatants.length > 0 && (
+      {viewedCombatant && viewedCharacter && (
         <div className="space-y-4">
-          {myCombatants.map((entry) => entry.character && (
-            <div key={entry.id} className="space-y-4">
-              <SpellsPanel
-                character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }}
-                canManage
-                canGrant={false}
-                combatLocked
-                activeOnly
-                onManaChanged={(currentMana) => updateLocalCombatant(entry.id, { currentMana })}
-              />
-              <InventoryPanel
-                character={{ ...entry.character, currentHp: entry.currentHp, currentMana: entry.currentMana }}
-                canManage
-                canAdd={false}
-                onResourceChanged={(patch) => updateLocalCombatant(entry.id, patch)}
-              />
-            </div>
-          ))}
+          <SpellsPanel
+            character={{ ...viewedCharacter, currentHp: viewedCombatant.currentHp, currentMana: viewedCombatant.currentMana }}
+            canManage
+            canGrant={false}
+            combatLocked
+            activeOnly
+            onManaChanged={(currentMana) => updateLocalCombatant(viewedCombatant.id, { currentMana })}
+          />
+          <InventoryPanel
+            character={{ ...viewedCharacter, currentHp: viewedCombatant.currentHp, currentMana: viewedCombatant.currentMana }}
+            canManage
+            canAdd={false}
+            onResourceChanged={(patch) => updateLocalCombatant(viewedCombatant.id, patch)}
+          />
         </div>
       )}
     </div>
