@@ -66,10 +66,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const playerViewTokens = useMemo(() => orderedTokens.filter((entry) => entry.character?.kind === 'player'), [orderedTokens]);
   const myCombatants = useMemo(() => playerViewTokens.filter((entry) => entry.character?.ownerUserId === profile.id), [playerViewTokens, profile.id]);
   const viewerOptions = useMemo(() => {
-    const characterOptions = (isDm ? playerViewTokens : myCombatants)
+    return (isDm ? playerViewTokens : myCombatants)
       .filter((entry) => entry.character)
       .map((entry) => ({ id: entry.id, label: entry.character?.name ?? 'Unknown character' }));
-    return isDm ? [{ id: DM_VIEW, label: 'DM' }, ...characterOptions] : characterOptions;
   }, [isDm, myCombatants, playerViewTokens]);
   const viewedCombatant = orderedTokens.find((entry) => entry.id === viewingAs) ?? null;
   const viewedCharacter = viewedCombatant?.character ?? null;
@@ -111,7 +110,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   useEffect(() => {
     const validIds = new Set(viewerOptions.map((entry) => entry.id));
     const fallback = isDm ? DM_VIEW : viewerOptions[0]?.id ?? SPECTATOR_VIEW;
-    if (!validIds.has(viewingAs)) setViewingAs(fallback);
+    if (viewingAs !== DM_VIEW && !validIds.has(viewingAs)) setViewingAs(fallback);
   }, [isDm, viewerOptions, viewingAs]);
 
   useEffect(() => {
@@ -342,14 +341,16 @@ export function BattleRoom({ profile }: { profile: Profile }) {
               {canUseDmTools ? 'Dungeon Master' : isSpectator ? 'Spectator' : viewedCharacter?.name ?? 'Character'}
             </h2>
           </div>
-          <div className="min-w-56">
+          <div className="flex min-w-56 flex-wrap items-center gap-2">
             {viewerOptions.length > 0 ? (
-              <SelectField value={viewingAs} onChange={(event) => setViewingAs(event.target.value)}>
+              <SelectField value={viewingAs === DM_VIEW ? '' : viewingAs} onChange={(event) => setViewingAs(event.target.value)} className="min-w-56">
+                {isDm && <option value="">View a character screen</option>}
                 {viewerOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </SelectField>
             ) : (
               <div className="rounded-xl border border-[var(--line)] bg-black/20 px-4 py-3 text-sm font-black text-[var(--muted)]">Spectator</div>
             )}
+            {isDm && !canUseDmTools && <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => setViewingAs(DM_VIEW)}>DM View</Button>}
           </div>
         </div>
       </Card>
