@@ -58,7 +58,7 @@ export const InventorySlot = memo(function InventorySlot({
         if (item || canAdd) onOpen();
       }}
       className={`inventory-slot relative flex min-h-[7.6rem] flex-col items-center justify-between rounded-2xl border p-2.5 text-center transition active:scale-95 sm:min-h-[7rem] ${
-        item ? `${rarityClass(item.rarity)} ${item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(item) ? 'inventory-enhanced' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
+        item ? `${rarityClass(item.rarity)} ${item.enchantment || item.runeName ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(item) ? 'inventory-enhanced' : ''}` : 'border-dashed border-[var(--line)] bg-black/10'
       } ${target ? 'inventory-slot-target' : ''}`}
     >
       <span className="inventory-slot-number pointer-events-none absolute top-1.5 text-[9px] font-black text-[var(--muted)]">{slot + 1}</span>
@@ -69,6 +69,7 @@ export const InventorySlot = memo(function InventorySlot({
           {item.type === 'pet' && item.displayName && (
             <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[var(--muted)]">{item.name}</span>
           )}
+          {item.runeName && <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[#56e2c2]">{item.runeName}</span>}
           <span className="min-h-[1.25rem]">
             {item.quantity > 1 && <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] font-black">x{item.quantity}</span>}
           </span>

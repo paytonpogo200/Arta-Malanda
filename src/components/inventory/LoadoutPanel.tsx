@@ -55,7 +55,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                 event.preventDefault();
                 onEquip(itemId, key);
               }}
-              className={`min-h-28 rounded-2xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(item) ? 'inventory-enhanced' : ''}` : 'surface-soft'}`}
+              className={`min-h-28 rounded-2xl border p-3 ${item ? `${rarityClass(item.rarity)} ${item.enchantment || item.runeName ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(item) ? 'inventory-enhanced' : ''}` : 'surface-soft'}`}
             >
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{label}</p>
@@ -83,6 +83,9 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                       <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">
                         {enchantmentSpell?.name ?? item.enchantment}{enchantmentSpell ? ` · ${spellManaText(enchantmentSpell)}` : ''}
                       </span>
+                    )}
+                    {item.runeName && (
+                      <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">{item.runeName}</span>
                     )}
                     {modifiers.length > 0 && (
                       <span className="mt-1 flex flex-wrap gap-1">

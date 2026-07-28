@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react
 import { BookOpen, ChevronDown, ChevronRight, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { TextField } from '@/components/ui/Field';
+import { SelectField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
 import { spellManaText, spellTypeClass, spellTypes } from '@/lib/utils/spells';
 import type { Character, CharacterSpell, Spell } from '@/lib/types';
@@ -77,11 +77,10 @@ function GrantSpellButton({
     <button
       type="button"
       onClick={() => onSelect(spell.id)}
-      className={`rounded-2xl border p-3 text-left transition hover:scale-[1.01] ${spellTypeClass(spell.type)} ${selected ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#100907]' : ''}`}
+      className={`rounded-xl border px-3 py-2 text-left transition hover:scale-[1.01] ${spellTypeClass(spell.type)} ${selected ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#100907]' : ''}`}
     >
-      <span className="block text-base font-black leading-tight">{spell.name}</span>
+      <span className="block truncate text-sm font-black leading-tight">{spell.name}</span>
       <span className="mt-1 block text-xs font-black uppercase tracking-wide text-[var(--muted)]">{spell.type}; {spellManaText(spell)}</span>
-      {spell.summary && <span className="mt-2 block max-h-10 overflow-hidden text-sm leading-5 text-[var(--muted)]">{spell.summary}</span>}
     </button>
   );
 }
@@ -269,25 +268,35 @@ export function SpellsPanel({
       ) : (
         <div className="space-y-4">
           {canGrant && (
-            <div className="grid gap-3">
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+              <div className="grid gap-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto]">
                 <TextField value={grantSearch} onChange={(event) => setGrantSearch(event.target.value)} placeholder="Search spells by name, type, or school" />
+                <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
+                  <option value="">Choose spell</option>
+                  {filteredGrantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.type} · {spellManaText(spell)}</option>)}
+                </SelectField>
                 <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant'}</Button>
               </div>
-              <div className="grid gap-3">
+              {selectedGrantSpell && (
+                <div className={`rounded-xl border px-3 py-2 text-xs ${spellTypeClass(selectedGrantSpell.type)}`}>
+                  <p className="font-black">{selectedGrantSpell.name} · {selectedGrantSpell.type} · {spellManaText(selectedGrantSpell)}</p>
+                  {selectedGrantSpell.summary && <p className="mt-1 line-clamp-2 text-[var(--muted)]">{selectedGrantSpell.summary}</p>}
+                </div>
+              )}
+              <div className="thin-scrollbar grid max-h-72 gap-2 overflow-y-auto pr-1">
                 {grantGroups.map(({ type, spells }) => {
                   const expanded = expandedGrantTypes.has(type);
                   return (
-                    <Card key={type} className="overflow-hidden">
+                    <div key={type} className="overflow-hidden rounded-xl border border-[var(--line)] bg-black/10">
                       <button
                         type="button"
                         onClick={() => toggleGrantType(type)}
-                        className="group w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left transition hover:border-[var(--brass)]/70"
+                        className="group w-full p-3 text-left transition hover:bg-black/15"
                       >
                         <span className="flex items-start justify-between gap-3">
                           <span className="min-w-0">
                             <span className="eyebrow">Spell Category</span>
-                            <span className="mt-1 block text-xl font-black leading-tight">{type} Spells</span>
+                            <span className="mt-1 block text-base font-black leading-tight">{type} Spells</span>
                             <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
                               <span>{spells.length} available</span>
                               {selectedGrantSpell?.type === type && <span>selected {selectedGrantSpell.name}</span>}
@@ -299,11 +308,11 @@ export function SpellsPanel({
                         </span>
                       </button>
                       {expanded && (
-                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                      {spells.map((spell) => <GrantSpellButton key={spell.id} spell={spell} selected={spell.id === grantSpellId} onSelect={setGrantSpellId} />)}
+                        <div className="grid gap-2 border-t border-[var(--line)] p-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {spells.map((spell) => <GrantSpellButton key={spell.id} spell={spell} selected={spell.id === grantSpellId} onSelect={setGrantSpellId} />)}
                         </div>
                       )}
-                    </Card>
+                    </div>
                   );
                 })}
                 {!grantGroups.length && <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No spells match that search.</div>}

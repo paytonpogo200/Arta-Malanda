@@ -11,9 +11,11 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import {
   EDITABLE_MODIFIER_FIELDS,
+  canApplyRune,
   canManuallyEnchant,
   canManuallyEnhance,
   cleanModifiers,
@@ -31,6 +33,11 @@ type SlotTarget = {
   slot: number;
   parentItemId: string | null;
   item?: InventoryItem;
+};
+
+type AvailableRune = {
+  source: 'inventory' | 'house';
+  item: InventoryItem;
 };
 
 type ItemDraft = {
@@ -190,6 +197,9 @@ export function InventoryPanel({
   const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
+  const [houseRunes, setHouseRunes] = useState<InventoryItem[]>([]);
+  const [runeLoading, setRuneLoading] = useState(false);
+  const [runeError, setRuneError] = useState('');
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -213,6 +223,40 @@ export function InventoryPanel({
   useEffect(() => {
     void loadInventory();
   }, [loadInventory]);
+
+  useEffect(() => {
+    if (!modal?.item || !canApplyRune(modal.item) || !character.ownerUserId) {
+      setHouseRunes([]);
+      setRuneError('');
+      return;
+    }
+
+    let cancelled = false;
+    setRuneLoading(true);
+    setRuneError('');
+    fetch(`/api/houses/${character.ownerUserId}`, { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error ?? 'House runes could not be loaded.');
+        if (!cancelled) {
+          const normalized = normalizeHousePayload(payload);
+          setHouseRunes(normalized.items.filter((item) => item.type === 'rune' && item.quantity > 0));
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setHouseRunes([]);
+          setRuneError(loadError instanceof Error ? loadError.message : 'House runes could not be loaded.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRuneLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [character.ownerUserId, modal?.item]);
 
   const loadCatalog = useCallback(async () => {
     if (!canAdd) return;
@@ -270,6 +314,14 @@ export function InventoryPanel({
   }, [catalog, catalogSearch]);
   const modalSpell = useMemo(() => modal?.item ? spellForEnchantment(spells, modal.item.enchantment) : null, [modal, spells]);
   const sortedSpells = useMemo(() => [...spells].sort((a, b) => a.name.localeCompare(b.name)), [spells]);
+  const availableRunes = useMemo<AvailableRune[]>(() => {
+    if (!modal?.item || !canApplyRune(modal.item)) return [];
+    const inventoryRunes = items
+      .filter((item) => item.type === 'rune' && item.quantity > 0)
+      .map((item) => ({ source: 'inventory' as const, item }));
+    const homeRunes = houseRunes.map((item) => ({ source: 'house' as const, item }));
+    return [...inventoryRunes, ...homeRunes].sort((a, b) => a.item.name.localeCompare(b.item.name) || a.source.localeCompare(b.source));
+  }, [houseRunes, items, modal?.item]);
 
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
@@ -431,6 +483,15 @@ export function InventoryPanel({
     const optimisticItems = items.map((item) => item.id === modal.item!.id ? { ...item, displayName: displayName || undefined } : item);
     setDraft({ ...draft, displayName });
     await patchItemState(modal.item.id, { displayName: displayName || null }, optimisticItems);
+  }
+
+  async function applyRune(source: AvailableRune) {
+    if (!modal?.item || !canManage || !canApplyRune(modal.item)) return;
+    await requestInventoryChange(`/api/inventory/items/${modal.item.id}/rune`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runeItemId: source.item.id, source: source.source })
+    });
   }
 
   async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
@@ -778,6 +839,7 @@ export function InventoryPanel({
                     )}
                     {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">Material: {modal.item.material}</p>}
                     {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
+                    {modal.item.runeName && <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#56e2c2]">Rune: {modal.item.runeName}</p>}
                     {modal.item.enchantment && (
                       <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
                         <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Enchantment: {modalSpell?.name ?? modal.item.enchantment}</p>
@@ -815,6 +877,38 @@ export function InventoryPanel({
                   </label>
                   <Button variant="secondary" disabled={saving}>Save pet name</Button>
                 </form>
+              )}
+              {canManage && canApplyRune(modal.item) && (
+                <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Apply rune</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                      Adds a visible rune mark to this Mythril item. It does not change stats.
+                    </p>
+                  </div>
+                  {runeLoading ? (
+                    <div className="grid h-12 place-items-center rounded-xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><Loader2 className="animate-spin" size={16} /></div>
+                  ) : availableRunes.length ? (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {availableRunes.map((rune) => (
+                        <Button
+                          key={`${rune.source}:${rune.item.id}`}
+                          variant="secondary"
+                          className="justify-start px-3 py-2 text-left text-xs"
+                          disabled={saving}
+                          onClick={() => applyRune(rune)}
+                        >
+                          {rune.item.name} x{rune.item.quantity} · {rune.source === 'house' ? 'House' : 'Inventory'}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">
+                      No runes available.
+                    </p>
+                  )}
+                  {runeError && <p className="text-xs font-black text-[var(--red)]">{runeError}</p>}
+                </div>
               )}
               {canManage && (
                 <div className="grid gap-2">

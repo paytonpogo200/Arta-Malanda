@@ -178,6 +178,7 @@ export type InventoryItem = {
   storageCapacity: number;
   modifiers: LoadoutModifiers;
   enchantment?: string;
+  runeName?: string;
   material?: string;
   enhancementCount: number;
   isTwoHanded: boolean;

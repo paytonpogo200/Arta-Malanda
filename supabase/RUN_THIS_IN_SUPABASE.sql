@@ -123,6 +123,7 @@ create table if not exists public.inventory_items (
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
   enchantment text,
+  rune_name text,
   material text,
   enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   is_two_handed boolean not null default false,
@@ -166,6 +167,7 @@ alter table public.inventory_items
 alter table public.inventory_items
   add column if not exists display_name text,
   add column if not exists enchantment text,
+  add column if not exists rune_name text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   add column if not exists is_two_handed boolean not null default false,
@@ -1978,6 +1980,7 @@ as $$
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
     'enchantment', p_item.enchantment,
+    'runeName', p_item.rune_name,
     'material', p_item.material,
     'enhancementCount', p_item.enhancement_count,
     'isTwoHanded', p_item.is_two_handed,
@@ -2242,6 +2245,7 @@ as $$
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
+    and coalesce(a.rune_name, '') = coalesce(b.rune_name, '')
     and coalesce(a.material, '') = coalesce(b.material, '')
     and coalesce(a.potion_strength, '') = coalesce(b.potion_strength, '')
     and coalesce(a.potion_property, '') = coalesce(b.potion_property, '')
@@ -2251,6 +2255,17 @@ as $$
     and a.modifiers = b.modifiers
     and a.is_storage = false
     and b.is_storage = false
+$$;
+
+create or replace function public.inventory_item_is_mythril(
+  p_item_name text,
+  p_material text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select lower(concat_ws(' ', coalesce(p_material, ''), coalesce(p_item_name, ''))) like '%mythril%'
 $$;
 
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
@@ -2394,6 +2409,7 @@ begin
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
+      and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
       and coalesce(v_target.potion_strength, '') = coalesce(v_potion_strength, '')
       and coalesce(v_target.potion_property, '') = coalesce(v_potion_property, '')
@@ -2521,6 +2537,15 @@ begin
       update public.inventory_items
       set item_name = public.format_potion_item_name(v_item.potion_strength, v_item.potion_property, v_item.potion_quality),
           rarity = public.potion_rarity_for_strength(v_item.potion_strength)
+      where id = v_item.id
+      returning * into v_item;
+    end if;
+
+    if not public.inventory_item_is_mythril(v_item.item_name, v_item.material)
+      and v_item.rune_name is not null
+    then
+      update public.inventory_items
+      set rune_name = null
       where id = v_item.id
       returning * into v_item;
     end if;
@@ -2743,6 +2768,7 @@ grant execute on function public.assert_inventory_slot_capacity(public.character
 grant execute on function public.next_storage_container_slot(uuid) to anon, authenticated;
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
+grant execute on function public.inventory_item_is_mythril(text, text) to anon, authenticated;
 grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
@@ -2778,6 +2804,7 @@ create table if not exists public.house_inventory_items (
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
   enchantment text,
+  rune_name text,
   material text,
   enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   is_two_handed boolean not null default false,
@@ -2808,6 +2835,7 @@ alter table public.house_inventory_items
 alter table public.house_inventory_items
   add column if not exists display_name text,
   add column if not exists enchantment text,
+  add column if not exists rune_name text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
   add column if not exists is_two_handed boolean not null default false,
@@ -2963,6 +2991,7 @@ as $$
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
     'enchantment', p_item.enchantment,
+    'runeName', p_item.rune_name,
     'material', p_item.material,
     'enhancementCount', p_item.enhancement_count,
     'isTwoHanded', p_item.is_two_handed,
@@ -3000,6 +3029,7 @@ as $$
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
+    and coalesce(a.rune_name, '') = coalesce(b.rune_name, '')
     and coalesce(a.material, '') = coalesce(b.material, '')
     and coalesce(a.potion_strength, '') = coalesce(b.potion_strength, '')
     and coalesce(a.potion_property, '') = coalesce(b.potion_property, '')
@@ -3163,6 +3193,7 @@ begin
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
+      and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
       and coalesce(v_target.potion_strength, '') = coalesce(v_potion_strength, '')
       and coalesce(v_target.potion_property, '') = coalesce(v_potion_property, '')
@@ -3283,6 +3314,15 @@ begin
       is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
     where id = p_item_id
     returning * into v_item;
+
+    if not public.inventory_item_is_mythril(v_item.item_name, v_item.material)
+      and v_item.rune_name is not null
+    then
+      update public.house_inventory_items
+      set rune_name = null
+      where id = v_item.id
+      returning * into v_item;
+    end if;
   end if;
 
   if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
@@ -3428,6 +3468,7 @@ begin
     and h.item_type = v_item.item_type
     and h.rarity = v_item.rarity
     and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
+    and coalesce(h.rune_name, '') = coalesce(v_item.rune_name, '')
     and coalesce(h.material, '') = coalesce(v_item.material, '')
     and coalesce(h.potion_strength, '') = coalesce(v_item.potion_strength, '')
     and coalesce(h.potion_property, '') = coalesce(v_item.potion_property, '')
@@ -3466,6 +3507,7 @@ begin
     storage_capacity,
     modifiers,
     enchantment,
+    rune_name,
     material,
     enhancement_count,
     is_two_handed,
@@ -3485,6 +3527,7 @@ begin
     v_item.storage_capacity,
     v_item.modifiers,
     v_item.enchantment,
+    v_item.rune_name,
     v_item.material,
     v_item.enhancement_count,
     v_item.is_two_handed,
@@ -3496,6 +3539,100 @@ begin
 
   delete from public.inventory_items where id = v_item.id;
   return public.get_player_house(p_session_token, v_character.owner_user_id);
+end;
+$$;
+
+create or replace function public.apply_inventory_item_rune(
+  p_session_token text,
+  p_target_item_id uuid,
+  p_rune_item_id uuid,
+  p_source text default 'inventory'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_inventory_rune public.inventory_items%rowtype;
+  v_house_rune public.house_inventory_items%rowtype;
+  v_source text := lower(trim(coalesce(p_source, 'inventory')));
+  v_rune_name text;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_target from public.inventory_items where id = p_target_item_id;
+  if v_target.id is null then raise exception 'Item not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_target.character_id, false);
+
+  if not public.inventory_item_is_mythril(v_target.item_name, v_target.material) then
+    raise exception 'Runes can only be applied to Mythril items.';
+  end if;
+
+  if v_source = 'inventory' then
+    select * into v_inventory_rune
+    from public.inventory_items
+    where id = p_rune_item_id
+      and character_id = v_target.character_id
+      and item_type = 'rune'
+      and quantity >= 1
+      and id <> v_target.id;
+
+    if v_inventory_rune.id is null then
+      raise exception 'That inventory rune was not found.';
+    end if;
+
+    v_rune_name := v_inventory_rune.item_name;
+
+    if v_inventory_rune.quantity <= 1 then
+      delete from public.inventory_items where id = v_inventory_rune.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - 1
+      where id = v_inventory_rune.id;
+    end if;
+  elsif v_source = 'house' then
+    if v_character.owner_user_id is null then
+      raise exception 'That character is not assigned to a player house.';
+    end if;
+
+    perform public.assert_house_access(v_profile, v_character.owner_user_id, false);
+
+    select * into v_house_rune
+    from public.house_inventory_items
+    where id = p_rune_item_id
+      and owner_user_id = v_character.owner_user_id
+      and item_type = 'rune'
+      and quantity >= 1;
+
+    if v_house_rune.id is null then
+      raise exception 'That house rune was not found.';
+    end if;
+
+    v_rune_name := v_house_rune.item_name;
+
+    if v_house_rune.quantity <= 1 then
+      delete from public.house_inventory_items where id = v_house_rune.id;
+    else
+      update public.house_inventory_items
+      set quantity = quantity - 1
+      where id = v_house_rune.id;
+    end if;
+  else
+    raise exception 'Rune source must be inventory or house.';
+  end if;
+
+  update public.inventory_items
+  set rune_name = v_rune_name
+  where id = v_target.id
+  returning * into v_target;
+
+  return public.inventory_item_record_to_json(v_target);
 end;
 $$;
 
@@ -3637,6 +3774,7 @@ grant execute on function public.add_house_inventory_item(text, uuid, int, text,
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
+grant execute on function public.apply_inventory_item_rune(text, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;
 

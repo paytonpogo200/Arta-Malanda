@@ -71,6 +71,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
     modifiers: normalizeModifiers(source.modifiers),
     enchantment: source.enchantment ? String(source.enchantment) : undefined,
+    runeName: source.runeName ? String(source.runeName) : undefined,
     material: source.material ? String(source.material) : undefined,
     enhancementCount: Math.max(0, numberFrom(source.enhancementCount, 0)),
     isTwoHanded: Boolean(source.isTwoHanded),

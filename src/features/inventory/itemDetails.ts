@@ -27,6 +27,7 @@ export type ItemDetailLike = {
   type: ItemType;
   material?: string;
   enchantment?: string;
+  runeName?: string;
   modifiers?: LoadoutModifiers;
 };
 
@@ -82,6 +83,10 @@ export function canManuallyEnhance(item: ItemDetailLike) {
 
 export function canManuallyEnchant(item: ItemDetailLike) {
   return isMythrilItem(item) && item.type === 'weapon';
+}
+
+export function canApplyRune(item: ItemDetailLike) {
+  return isMythrilItem(item);
 }
 
 function normalizedSpellName(value: string) {
