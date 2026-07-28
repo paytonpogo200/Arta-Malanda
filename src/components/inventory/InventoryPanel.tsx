@@ -171,12 +171,14 @@ export function InventoryPanel({
   character,
   canManage,
   canAdd,
+  refreshSignal = 0,
   onItemsChanged,
   onResourceChanged
 }: {
   character: Character;
   canManage: boolean;
   canAdd: boolean;
+  refreshSignal?: number;
   onItemsChanged?: (items: InventoryItem[]) => void;
   onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
 }) {
@@ -222,7 +224,7 @@ export function InventoryPanel({
 
   useEffect(() => {
     void loadInventory();
-  }, [loadInventory]);
+  }, [loadInventory, refreshSignal]);
 
   useEffect(() => {
     if (!modal?.item || !canApplyRune(modal.item) || !character.ownerUserId) {

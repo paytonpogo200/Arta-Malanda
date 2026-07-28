@@ -3542,6 +3542,129 @@ begin
 end;
 $$;
 
+create or replace function public.move_inventory_item_to_house_slot(
+  p_session_token text,
+  p_item_id uuid,
+  p_slot_index int
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_target public.house_inventory_items%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+  if v_character.owner_user_id is null then
+    raise exception 'That character is not assigned to a player house.';
+  end if;
+
+  if v_item.is_storage and exists (
+    select 1
+    from public.inventory_items child
+    where child.parent_item_id = v_item.id
+  ) then
+    raise exception 'Empty this storage item before sending it to the house.';
+  end if;
+
+  v_house := public.ensure_player_house(v_character.owner_user_id);
+  if p_slot_index < 0 or p_slot_index >= v_house.inventory_slots then
+    raise exception 'House slot is outside the house capacity.';
+  end if;
+
+  select * into v_target
+  from public.house_inventory_items h
+  where h.owner_user_id = v_character.owner_user_id
+    and h.slot_index = p_slot_index
+  limit 1;
+
+  if v_target.id is not null then
+    if v_target.item_name = v_item.item_name
+      and coalesce(v_target.display_name, '') = coalesce(v_item.display_name, '')
+      and v_target.item_type = v_item.item_type
+      and v_target.rarity = v_item.rarity
+      and coalesce(v_target.enchantment, '') = coalesce(v_item.enchantment, '')
+      and coalesce(v_target.rune_name, '') = coalesce(v_item.rune_name, '')
+      and coalesce(v_target.material, '') = coalesce(v_item.material, '')
+      and coalesce(v_target.potion_strength, '') = coalesce(v_item.potion_strength, '')
+      and coalesce(v_target.potion_property, '') = coalesce(v_item.potion_property, '')
+      and coalesce(v_target.potion_quality, '') = coalesce(v_item.potion_quality, '')
+      and v_target.enhancement_count = v_item.enhancement_count
+      and v_target.is_two_handed = v_item.is_two_handed
+      and v_target.modifiers = v_item.modifiers
+      and v_target.is_storage = false
+      and v_item.is_storage = false
+    then
+      update public.house_inventory_items
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id;
+
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_player_house(p_session_token, v_character.owner_user_id);
+    end if;
+
+    raise exception 'That house slot is already occupied.';
+  end if;
+
+  insert into public.house_inventory_items (
+    owner_user_id,
+    slot_index,
+    item_name,
+    display_name,
+    item_type,
+    rarity,
+    quantity,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    v_character.owner_user_id,
+    p_slot_index,
+    v_item.item_name,
+    v_item.display_name,
+    v_item.item_type,
+    v_item.rarity,
+    v_item.quantity,
+    v_item.is_storage,
+    v_item.storage_capacity,
+    v_item.modifiers,
+    v_item.enchantment,
+    v_item.rune_name,
+    v_item.material,
+    v_item.enhancement_count,
+    v_item.is_two_handed,
+    v_item.potion_strength,
+    v_item.potion_property,
+    v_item.potion_quality
+  )
+  returning * into v_house_item;
+
+  delete from public.inventory_items where id = v_item.id;
+  return public.get_player_house(p_session_token, v_character.owner_user_id);
+end;
+$$;
+
 create or replace function public.apply_inventory_item_rune(
   p_session_token text,
   p_target_item_id uuid,
@@ -3774,6 +3897,7 @@ grant execute on function public.add_house_inventory_item(text, uuid, int, text,
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
+grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int) to anon, authenticated;
 grant execute on function public.apply_inventory_item_rune(text, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;

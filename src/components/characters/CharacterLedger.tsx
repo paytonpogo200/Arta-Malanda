@@ -40,6 +40,8 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   const [selectedId, setSelectedId] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<CreationDraft>(EMPTY_DRAFT);
+  const [assignmentCharacterId, setAssignmentCharacterId] = useState('');
+  const [assignmentOwnerUserId, setAssignmentOwnerUserId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -64,6 +66,9 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       setClasses(ledger.classes.length ? ledger.classes : CLASS_TEMPLATES);
       setCharacters(ledger.characters);
       setSelectedId((current) => ledger.characters.some((character) => character.id === current) ? current : '');
+      setAssignmentCharacterId((current) => ledger.characters.some((character) => character.id === current)
+        ? current
+        : ledger.characters.find((character) => !character.ownerUserId)?.id ?? ledger.characters[0]?.id ?? '');
       setDraft((current) => ({
         ...current,
         classKey: current.classKey || ledger.classes[0]?.key || CLASS_TEMPLATES[0]?.key || '',
@@ -92,7 +97,12 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   }, [characters, profile.id]);
 
   const selectedCharacter = characters.find((entry) => entry.id === selectedId) ?? null;
+  const assignmentCharacter = characters.find((entry) => entry.id === assignmentCharacterId) ?? null;
   const canOfferTrades = useMemo(() => characters.some((character) => character.ownerUserId === profile.id), [characters, profile.id]);
+
+  useEffect(() => {
+    setAssignmentOwnerUserId(assignmentCharacter?.ownerUserId ?? '');
+  }, [assignmentCharacter?.id, assignmentCharacter?.ownerUserId]);
 
   async function createCharacter(event: FormEvent) {
     event.preventDefault();
@@ -132,6 +142,38 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   function updateCharacter(character: Character) {
     setCharacters((current) => current.map((entry) => entry.id === character.id ? character : entry));
     setSelectedId(character.id);
+  }
+
+  async function assignCharacter(character: Character, ownerUserId: string) {
+    if (!isDm || saving) return;
+    setSaving(true);
+    setError('');
+
+    try {
+      const response = await fetch(`/api/characters/${character.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerUserId: ownerUserId || null })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'The character could not be assigned.');
+
+      const updated = payload.character as Character;
+      setCharacters((current) => current.map((entry) => entry.id === updated.id ? updated : entry));
+      setAssignmentCharacterId(updated.id);
+      setAssignmentOwnerUserId(updated.ownerUserId ?? '');
+      setSelectedId((current) => current === updated.id ? updated.id : current);
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : 'The character could not be assigned.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function assignSelectedCharacter(event: FormEvent) {
+    event.preventDefault();
+    if (!assignmentCharacter) return;
+    await assignCharacter(assignmentCharacter, assignmentOwnerUserId);
   }
 
   return (
@@ -209,6 +251,34 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
               <Button variant="teal" disabled={!draft.name.trim() || saving}>
                 {saving ? <span className="flex items-center justify-center gap-2"><Loader2 size={15} className="animate-spin" /> Creating</span> : 'Create'}
               </Button>
+            </form>
+          )}
+
+          {isDm && !loading && characters.length > 0 && (
+            <form onSubmit={assignSelectedCharacter} className="mb-4 grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+              <div>
+                <p className="eyebrow">DM Assignment</p>
+                <h3 className="mt-1 text-lg font-black">Assign characters</h3>
+              </div>
+              <div className="grid gap-2 lg:grid-cols-[1fr_1fr_auto]">
+                <SelectField value={assignmentCharacterId} onChange={(event) => setAssignmentCharacterId(event.target.value)}>
+                  {characters
+                    .slice()
+                    .sort((a, b) => Number(Boolean(a.ownerUserId)) - Number(Boolean(b.ownerUserId)) || a.name.localeCompare(b.name))
+                    .map((character) => (
+                      <option key={character.id} value={character.id}>
+                        {character.name} - {character.ownerUserId ? ownerLabel(profileById.get(character.ownerUserId)) : 'Unassigned'}
+                      </option>
+                    ))}
+                </SelectField>
+                <SelectField value={assignmentOwnerUserId} onChange={(event) => setAssignmentOwnerUserId(event.target.value)}>
+                  <option value="">Unassigned</option>
+                  {profiles.map((entry) => <option key={entry.id} value={entry.id}>{ownerLabel(entry)}</option>)}
+                </SelectField>
+                <Button variant="teal" disabled={!assignmentCharacter || saving}>
+                  {saving ? <span className="flex items-center justify-center gap-2"><Loader2 size={15} className="animate-spin" /> Assigning</span> : 'Assign'}
+                </Button>
+              </div>
             </form>
           )}
 

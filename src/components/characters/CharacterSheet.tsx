@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Heart, Loader2, MapPin, Save, Shield, Sparkles, UserRound, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -41,19 +41,30 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [inventoryRefreshSignal, setInventoryRefreshSignal] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const characterIdRef = useRef(character.id);
 
   const isDm = profile.role === 'dm';
   const owned = character.ownerUserId === profile.id;
   const classTemplate = useMemo(() => classes.find((entry) => entry.key === character.classKey), [character.classKey, classes]);
 
   useEffect(() => {
-    setDraft(character);
-    setInventoryItems([]);
-    setEditing(false);
-    setError('');
-  }, [character]);
+    if (characterIdRef.current !== character.id) {
+      characterIdRef.current = character.id;
+      setDraft(character);
+      setInventoryItems([]);
+      setEditing(false);
+      setError('');
+      return;
+    }
+
+    if (!editing) {
+      setDraft(character);
+      setError('');
+    }
+  }, [character, editing]);
 
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
@@ -269,10 +280,17 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             character={character}
             canManage={isDm || owned}
             canAdd={isDm}
+            refreshSignal={inventoryRefreshSignal}
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
           />
-          <HousePanel ownerUserId={character.ownerUserId} caretakerCharacterId={character.id} canManage={isDm || owned} canAdd={isDm} />
+          <HousePanel
+            ownerUserId={character.ownerUserId}
+            caretakerCharacterId={character.id}
+            canManage={isDm || owned}
+            canAdd={isDm}
+            onCharacterInventoryChanged={() => setInventoryRefreshSignal((value) => value + 1)}
+          />
         </div>
 
         <div className="space-y-4">

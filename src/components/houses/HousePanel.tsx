@@ -18,6 +18,7 @@ type HousePanelProps = {
   caretakerCharacterId: string;
   canManage: boolean;
   canAdd: boolean;
+  onCharacterInventoryChanged?: () => void;
 };
 
 type ItemDraft = {
@@ -58,7 +59,7 @@ const EMPTY_PROPERTY: PropertyDraft = {
   storageCapacity: 0
 };
 
-export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAdd }: HousePanelProps) {
+export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
   const [inventorySlots, setInventorySlots] = useState(50);
@@ -201,11 +202,21 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   async function moveItem(itemId: string, slotIndex: number) {
     if (!canManage) return;
     setTargetSlot(slotIndex);
-    await requestHouseChange(`/api/houses/items/${itemId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slotIndex })
-    });
+    const existingHouseItem = items.some((item) => item.id === itemId);
+    if (existingHouseItem) {
+      await requestHouseChange(`/api/houses/items/${itemId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slotIndex })
+      });
+    } else {
+      await requestHouseChange(`/api/inventory/items/${itemId}/send-house`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slotIndex })
+      });
+      onCharacterInventoryChanged?.();
+    }
     window.setTimeout(() => setTargetSlot(null), 120);
   }
 
