@@ -33,11 +33,21 @@ type SlotTarget = {
   slot: number;
   parentItemId: string | null;
   item?: InventoryItem;
+  source?: 'inventory' | 'wagon';
+  wagonId?: string;
 };
 
 type AvailableRune = {
   source: 'inventory' | 'house';
   item: InventoryItem;
+};
+
+type WagonStorage = {
+  wagon: InventoryItem;
+  ownerCharacterId: string;
+  ownerName: string;
+  ownerUserId: string | null;
+  canManage: boolean;
 };
 
 type ItemDraft = {
@@ -57,6 +67,22 @@ type ItemDraft = {
   potionProperty: string;
   potionQuality: string;
 };
+
+function normalizeWagonPayload(source: unknown) {
+  const payload = source && typeof source === 'object' ? source as Record<string, unknown> : {};
+  const wagons = Array.isArray(payload.wagons) ? payload.wagons.map((entry) => {
+    const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+    return {
+      wagon: normalizeInventoryItem(record.wagon),
+      ownerCharacterId: String(record.ownerCharacterId ?? ''),
+      ownerName: String(record.ownerName ?? 'Unknown'),
+      ownerUserId: record.ownerUserId ? String(record.ownerUserId) : null,
+      canManage: Boolean(record.canManage)
+    };
+  }).filter((entry) => entry.wagon.id) : [];
+  const items = Array.isArray(payload.items) ? payload.items.map(normalizeInventoryItem).filter((entry) => entry.id) : [];
+  return { wagons, items };
+}
 
 const EMPTY_DRAFT: ItemDraft = {
   name: '',
@@ -205,8 +231,32 @@ export function InventoryPanel({
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
   const [houseRunes, setHouseRunes] = useState<InventoryItem[]>([]);
+  const [nearbyWagons, setNearbyWagons] = useState<WagonStorage[]>([]);
+  const [nearbyWagonItems, setNearbyWagonItems] = useState<InventoryItem[]>([]);
   const [runeLoading, setRuneLoading] = useState(false);
   const [runeError, setRuneError] = useState('');
+
+  const loadWagons = useCallback(async () => {
+    if (!canManage && !canAdd) {
+      setNearbyWagons([]);
+      setNearbyWagonItems([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/characters/${character.id}/wagons`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Nearby wagons could not be loaded.');
+      const normalized = normalizeWagonPayload(payload);
+      const sharedWagons = normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id);
+      const sharedWagonIds = new Set(sharedWagons.map((entry) => entry.wagon.id));
+      setNearbyWagons(sharedWagons);
+      setNearbyWagonItems(normalized.items.filter((item) => item.parentItemId && sharedWagonIds.has(item.parentItemId)));
+    } catch {
+      setNearbyWagons([]);
+      setNearbyWagonItems([]);
+    }
+  }, [canAdd, canManage, character.id]);
 
   const loadInventory = useCallback(async () => {
     setLoading(true);
@@ -229,7 +279,8 @@ export function InventoryPanel({
 
   useEffect(() => {
     void loadInventory();
-  }, [loadInventory, refreshSignal]);
+    void loadWagons();
+  }, [loadInventory, loadWagons, refreshSignal]);
 
   useEffect(() => {
     if (!modal?.item || !canApplyRune(modal.item) || !character.ownerUserId) {
@@ -312,6 +363,7 @@ export function InventoryPanel({
   const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
   const itemByMainSlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const nearbyWagonItemIds = useMemo(() => new Set(nearbyWagonItems.map((item) => item.id)), [nearbyWagonItems]);
   const filteredCatalog = useMemo(() => {
     const search = catalogSearch.trim().toLowerCase();
     const source = search
@@ -513,6 +565,11 @@ export function InventoryPanel({
 
   async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
     if (!canManage) return;
+    if (nearbyWagonItemIds.has(itemId)) {
+      await takeFromWagon(itemId, slot, parentItemId);
+      return;
+    }
+
     const movingItem = items.find((item) => item.id === itemId);
     if (movingItem && sameContainer(movingItem, parentItemId) && movingItem.slotIndex === slot && !movingItem.loadoutSlot) return;
 
@@ -541,6 +598,67 @@ export function InventoryPanel({
     }
     await patchItemState(itemId, { parentItemId, slotIndex: slot, loadoutSlot: null }, optimisticItems);
     window.setTimeout(() => setTarget(null), 120);
+  }
+
+  async function moveItemToWagon(itemId: string, wagonId: string, slot: number) {
+    if (!canManage) return;
+    const movingItem = items.find((item) => item.id === itemId);
+    if (!movingItem) return;
+    setTarget(`${wagonId}:${slot}`);
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/inventory/items/${itemId}/send-wagon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId: character.id, wagonId, slotIndex: slot })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Item could not be moved into the wagon.');
+      setItems((current) => {
+        const next = current.filter((item) => item.id !== itemId);
+        onItemsChanged?.(next);
+        return next;
+      });
+      const normalized = normalizeWagonPayload(payload);
+      setNearbyWagons(normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id));
+      setNearbyWagonItems(normalized.items);
+      setModal(null);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Item could not be moved into the wagon.');
+      await loadInventory();
+      await loadWagons();
+    } finally {
+      setSaving(false);
+      window.setTimeout(() => setTarget(null), 120);
+    }
+  }
+
+  async function takeFromWagon(itemId: string, slot?: number, parentItemId: string | null = null) {
+    if (!canManage) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/wagons/items/${itemId}/take`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId: character.id, parentItemId, slotIndex: slot })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Item could not be taken from the wagon.');
+      const normalized = normalizeCharacterInventoryPayload(payload);
+      setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+      await loadWagons();
+      setModal(null);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Item could not be taken from the wagon.');
+    } finally {
+      setSaving(false);
+      window.setTimeout(() => setTarget(null), 120);
+    }
   }
 
   async function equipItem(itemId: string, loadoutSlot: LoadoutSlot | null) {
@@ -839,6 +957,9 @@ export function InventoryPanel({
                       <span className="flex items-center gap-2 font-black"><PackageOpen size={16} className="text-[var(--brass)]" /> {storage.name}</span>
                       <span className="text-xs text-[var(--muted)]">{childItems.length}/{storage.storageCapacity} slots</span>
                     </summary>
+                    <div className="flex justify-end border-t border-[var(--line)] px-3 py-2">
+                      <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openSlot(storage.slotIndex, storage.parentItemId, storage)}>Inspect storage</Button>
+                    </div>
                     <div className="inventory-grid grid grid-cols-2 gap-2 border-t border-[var(--line)] p-3 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-5">
                       {Array.from({ length: storage.storageCapacity }, (_, slot) => {
                         const item = childBySlot.get(slot);
@@ -852,6 +973,44 @@ export function InventoryPanel({
                             target={target === `${storage.id}:${slot}`}
                             onOpen={() => openSlot(slot, storage.id, item)}
                             onDropItem={(itemId) => moveItem(itemId, slot, storage.id)}
+                          />
+                        );
+                      })}
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
+
+          {nearbyWagons.length > 0 && (
+            <div className="mt-5 space-y-2">
+              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Nearby Wagons</h3></div>
+              {nearbyWagons.map(({ wagon, ownerName }) => {
+                const childItems = nearbyWagonItems.filter((item) => item.parentItemId === wagon.id);
+                const childBySlot = new Map(childItems.map((item) => [item.slotIndex, item]));
+                return (
+                  <details key={wagon.id} className="rounded-2xl border border-[#56e2c24a] bg-black/15">
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                      <span className="flex min-w-0 items-center gap-2 font-black">
+                        <PackageOpen size={16} className="shrink-0 text-[#56e2c2]" />
+                        <span className="truncate">{wagon.displayName || wagon.name}</span>
+                      </span>
+                      <span className="shrink-0 text-xs text-[var(--muted)]">{ownerName}; {childItems.length}/{wagon.storageCapacity} slots</span>
+                    </summary>
+                    <div className="inventory-grid grid grid-cols-2 gap-2 border-t border-[var(--line)] p-3 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-5">
+                      {Array.from({ length: wagon.storageCapacity }, (_, slot) => {
+                        const item = childBySlot.get(slot);
+                        return (
+                          <InventorySlot
+                            key={slot}
+                            slot={slot}
+                            item={item}
+                            canEdit={canManage}
+                            canAdd={false}
+                            target={target === `${wagon.id}:${slot}`}
+                            onOpen={() => setModal({ slot, parentItemId: wagon.id, item, source: 'wagon', wagonId: wagon.id })}
+                            onDropItem={(itemId) => moveItemToWagon(itemId, wagon.id, slot)}
                           />
                         );
                       })}
@@ -906,7 +1065,13 @@ export function InventoryPanel({
                   </div>
                 </div>
               </div>
-              {canManage && modal.item.type === 'pet' && (
+              {modal.source === 'wagon' && canManage && (
+                <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+                  <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Shared wagon storage</p>
+                  <Button variant="teal" disabled={saving} onClick={() => takeFromWagon(modal.item!.id)}>Take to first open inventory slot</Button>
+                </div>
+              )}
+              {modal.source !== 'wagon' && canManage && modal.item.type === 'pet' && (
                 <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
                   <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
@@ -919,7 +1084,7 @@ export function InventoryPanel({
                   <Button variant="secondary" disabled={saving}>Save pet name</Button>
                 </form>
               )}
-              {canManage && canApplyRune(modal.item) && (
+              {modal.source !== 'wagon' && canManage && canApplyRune(modal.item) && (
                 <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
                   <div>
                     <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Apply rune</p>
@@ -951,7 +1116,7 @@ export function InventoryPanel({
                   {runeError && <p className="text-xs font-black text-[var(--red)]">{runeError}</p>}
                 </div>
               )}
-              {canManage && (
+              {modal.source !== 'wagon' && canManage && (
                 <div className="grid gap-2">
                   {!modal.item.loadoutSlot && (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -969,7 +1134,7 @@ export function InventoryPanel({
                   </div>
                 </div>
               )}
-              {canAdd && (
+              {modal.source !== 'wagon' && canAdd && (
                 <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
                   {renderItemDraftControls()}
                   <Button variant="primary" className="sticky bottom-0 z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)]" disabled={!draft.name.trim() || saving}>Save item</Button>

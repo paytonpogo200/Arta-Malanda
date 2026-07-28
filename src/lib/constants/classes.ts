@@ -16,7 +16,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 2,
     baseHp: 110,
     baseMana: 50,
-    baseMagicResist: 8,
+    baseMagicResist: 5,
     attributes: stats({ strength: -1, accuracy: 0, intelligence: 1, vitality: -1, recovery: 1, mana_regen: 0, charisma: 0, wisdom_cunning: 3, perception: 0, alchemy: 5, stealth: 0, agility: 0 }),
     passives: [
       'Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement',
@@ -35,7 +35,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 5,
     baseHp: 130,
     baseMana: 90,
-    baseMagicResist: 11,
+    baseMagicResist: 8,
     attributes: stats({ strength: -3, accuracy: -1, intelligence: 0, vitality: 1, recovery: 2, mana_regen: 2, charisma: 0, wisdom_cunning: 2, perception: 0, alchemy: 2, stealth: -2, agility: -1 }),
     passives: ['Can heal an ally for 10 hp in place of a movement'],
     tokenColor: '#5579a8'
@@ -51,7 +51,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 5,
     baseHp: 100,
     baseMana: 75,
-    baseMagicResist: 8,
+    baseMagicResist: 5,
     attributes: stats({ strength: 0, accuracy: 0, intelligence: 1, vitality: -1, recovery: 0, mana_regen: 1, charisma: 0, wisdom_cunning: 1, perception: 0, alchemy: 1, stealth: 0, agility: 1 }),
     passives: ['When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'],
     tokenColor: '#8a6da1'
@@ -67,7 +67,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 1,
     baseHp: 165,
     baseMana: 50,
-    baseMagicResist: 9,
+    baseMagicResist: 6,
     attributes: stats({ strength: 2, accuracy: 0, intelligence: -3, vitality: 3, recovery: 0, mana_regen: 0, charisma: -1, wisdom_cunning: -2, perception: -1, alchemy: 1, stealth: -3, agility: -3 }),
     passives: [
       "Has the ability _Distribution_, which will direct 50% of a target's damage to yourself",
@@ -86,7 +86,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 1,
     baseHp: 90,
     baseMana: 50,
-    baseMagicResist: 8,
+    baseMagicResist: 5,
     attributes: stats({ strength: -3, accuracy: 1, intelligence: 0, vitality: 0, recovery: 1, mana_regen: 0, charisma: 3, wisdom_cunning: 2, perception: 2, alchemy: 0, stealth: 0, agility: 1 }),
     passives: [
       'Has the Spell "Tame" (doesn\'t take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal\'s wild score. If the resulting number is positive, the animal/beast is tamed, but health isn\'t restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.',
@@ -107,7 +107,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 3,
     baseHp: 125,
     baseMana: 50,
-    baseMagicResist: 8,
+    baseMagicResist: 5,
     attributes: stats({ strength: 2, accuracy: 0, intelligence: 0, vitality: 1, recovery: 0, mana_regen: 0, charisma: 2, wisdom_cunning: 1, perception: 0, alchemy: 1, stealth: -1, agility: -1 }),
     passives: [
       "Doesn't need to pay for smithing labor, only materials",
@@ -127,7 +127,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 2,
     baseHp: 125,
     baseMana: 25,
-    baseMagicResist: 8,
+    baseMagicResist: 5,
     attributes: stats({ strength: 1, accuracy: 1, intelligence: -1, vitality: 1, recovery: 0, mana_regen: -2, charisma: 2, wisdom_cunning: 1, perception: 0, alchemy: -1, stealth: 0, agility: 0 }),
     passives: [
       '+1 Strength while on a Horse.',
@@ -147,7 +147,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 10,
     baseHp: 70,
     baseMana: 100,
-    baseMagicResist: 10,
+    baseMagicResist: 7,
     attributes: stats({ strength: -3, accuracy: 0, intelligence: 3, vitality: -3, recovery: 0, mana_regen: 1, charisma: 1, wisdom_cunning: 2, perception: 0, alchemy: 0, stealth: 0, agility: 0 }),
     passives: ['Regain 10 Mana for every enemy killed with a spell'],
     tokenColor: '#567a7f'
@@ -163,7 +163,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 0,
     baseHp: 85,
     baseMana: 0,
-    baseMagicResist: 7,
+    baseMagicResist: 4,
     attributes: stats({ strength: -1, accuracy: 1, intelligence: -5, vitality: 0, recovery: 3, mana_regen: 0, charisma: -3, wisdom_cunning: 3, perception: 3, alchemy: 4, stealth: 1, agility: 3 }),
     passives: [
       'Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.',
@@ -182,7 +182,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 1,
     baseHp: 90,
     baseMana: 50,
-    baseMagicResist: 10,
+    baseMagicResist: 7,
     attributes: stats({ strength: -2, accuracy: 2, intelligence: 1, vitality: -2, recovery: 0, mana_regen: 0, charisma: 0, wisdom_cunning: 2, perception: 2, alchemy: 0, stealth: 1, agility: 1 }),
     passives: [
       'Can tame birds',
@@ -202,7 +202,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 3,
     baseHp: 90,
     baseMana: 50,
-    baseMagicResist: 7,
+    baseMagicResist: 4,
     attributes: stats({ strength: -1, accuracy: 0, intelligence: 0, vitality: -1, recovery: 0, mana_regen: 0, charisma: -3, wisdom_cunning: 3, perception: 3, alchemy: 1, stealth: 3, agility: 2 }),
     passives: [
       'Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.',
@@ -221,7 +221,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 5,
     baseHp: 70,
     baseMana: 100,
-    baseMagicResist: 12,
+    baseMagicResist: 9,
     attributes: stats({ strength: -2, accuracy: -2, intelligence: -5, vitality: -2, recovery: 3, mana_regen: 2, charisma: 2, wisdom_cunning: 4, perception: 0, alchemy: 0, stealth: 0, agility: 2 }),
     passives: [
       'Healing and enhancement spells use _Recovery_ instead of Intelligence when using magic rolls',
@@ -240,7 +240,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 1,
     baseHp: 150,
     baseMana: 40,
-    baseMagicResist: 7,
+    baseMagicResist: 4,
     attributes: stats({ strength: 3, accuracy: -2, intelligence: -3, vitality: 1, recovery: 2, mana_regen: 0, charisma: -2, wisdom_cunning: -3, perception: -1, alchemy: -2, stealth: -2, agility: -2 }),
     passives: ['When The Muscle kills an enemy, gain 1 d6 for ensuing damage rolls. Resets after each combat/scene ends. Max of 5 d6'],
     tokenColor: '#9f6540'
@@ -256,7 +256,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 0,
     baseHp: 125,
     baseMana: 100,
-    baseMagicResist: 10,
+    baseMagicResist: 7,
     attributes: stats({ strength: 1, accuracy: 1, intelligence: 1, vitality: 1, recovery: 0, mana_regen: 0, charisma: 0, wisdom_cunning: 1, perception: 0, alchemy: -1, stealth: -2, agility: 0 }),
     passives: [
       'Inherits 3 random low-level runes.',
@@ -276,7 +276,7 @@ export const CLASS_TEMPLATES: ClassTemplate[] = [
     spellSlots: 3,
     baseHp: 110,
     baseMana: 75,
-    baseMagicResist: 9,
+    baseMagicResist: 6,
     attributes: stats({ strength: 0, accuracy: 0, intelligence: 0, vitality: 0, recovery: 0, mana_regen: 0, charisma: -2, wisdom_cunning: 3, perception: 2, alchemy: 1, stealth: 0, agility: 0 }),
     passives: [
       'Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.',

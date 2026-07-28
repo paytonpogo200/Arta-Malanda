@@ -18,7 +18,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       ? await supabase.rpc('move_inventory_item_to_house_slot', {
         p_session_token: token,
         p_item_id: id,
-        p_slot_index: Number(body.slotIndex ?? 0)
+        p_slot_index: Number(body.slotIndex ?? 0),
+        p_parent_item_id: body.parentItemId || null
       })
       : await supabase.rpc('move_inventory_item_to_house', {
         p_session_token: token,

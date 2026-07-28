@@ -31,6 +31,10 @@ type ItemDraft = {
   enchantment: string;
 };
 
+function sameContainer(item: InventoryItem, parentItemId: string | null) {
+  return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
+}
+
 type PropertyDraft = {
   name: string;
   type: PropertyType;
@@ -68,14 +72,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [loading, setLoading] = useState(Boolean(ownerUserId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [targetSlot, setTargetSlot] = useState<number | null>(null);
-  const [itemModal, setItemModal] = useState<{ slot: number; item?: InventoryItem } | null>(null);
+  const [targetSlot, setTargetSlot] = useState<string | null>(null);
+  const [itemModal, setItemModal] = useState<{ slot: number; parentItemId: string | null; item?: InventoryItem } | null>(null);
   const [propertyModal, setPropertyModal] = useState<CampaignProperty | 'new' | null>(null);
   const [itemDraft, setItemDraft] = useState<ItemDraft>(EMPTY_ITEM);
   const [propertyDraft, setPropertyDraft] = useState<PropertyDraft>(EMPTY_PROPERTY);
   const [dropQuantity, setDropQuantity] = useState(1);
 
-  const itemBySlot = useMemo(() => new Map(items.map((item) => [item.slotIndex, item])), [items]);
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
+  const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
+  const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
 
   const loadHouse = useCallback(async () => {
     if (!ownerUserId) return;
@@ -107,9 +113,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     return null;
   }
 
-  function openItem(slot: number, item?: InventoryItem) {
+  function openItem(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
-    setItemModal({ slot, item });
+    setItemModal({ slot, parentItemId, item });
     setItemDraft(item ? {
       name: item.name,
       displayName: item.displayName ?? '',
@@ -173,6 +179,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...itemDraft,
+        parentItemId: itemModal.parentItemId,
         slotIndex: itemModal.slot,
         isStorage: itemDraft.type === 'storage',
         storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
@@ -199,21 +206,24 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     });
   }
 
-  async function moveItem(itemId: string, slotIndex: number) {
+  async function moveItem(itemId: string, slotIndex: number, parentItemId: string | null) {
     if (!canManage) return;
-    setTargetSlot(slotIndex);
+    const movingHouseItem = items.find((item) => item.id === itemId);
+    if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
+
+    setTargetSlot(`${parentItemId ?? 'main'}:${slotIndex}`);
     const existingHouseItem = items.some((item) => item.id === itemId);
     if (existingHouseItem) {
       await requestHouseChange(`/api/houses/items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotIndex })
+        body: JSON.stringify({ slotIndex, parentItemId })
       });
     } else {
       await requestHouseChange(`/api/inventory/items/${itemId}/send-house`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotIndex })
+        body: JSON.stringify({ slotIndex, parentItemId })
       });
       onCharacterInventoryChanged?.();
     }
@@ -302,13 +312,50 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
                     item={item}
                     canEdit={canManage}
                     canAdd={canAdd}
-                    target={targetSlot === slot}
-                    onOpen={() => openItem(slot, item)}
-                    onDropItem={(itemId) => moveItem(itemId, slot)}
+                    target={targetSlot === `main:${slot}`}
+                    onOpen={() => openItem(slot, null, item)}
+                    onDropItem={(itemId) => moveItem(itemId, slot, null)}
                   />
                 );
               })}
             </div>
+            {storageItems.length > 0 && (
+              <div className="mt-5 space-y-2">
+                <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Additional Storage</h3></div>
+                {storageItems.map((storage) => {
+                  const childItems = items.filter((item) => sameContainer(item, storage.id));
+                  const childBySlot = new Map(childItems.map((item) => [item.slotIndex, item]));
+                  return (
+                    <details key={storage.id} className="rounded-2xl border border-[#d1a85b2f] bg-black/15">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
+                        <span className="flex items-center gap-2 font-black"><Home size={16} className="text-[var(--brass)]" /> {storage.displayName || storage.name}</span>
+                        <span className="text-xs text-[var(--muted)]">{childItems.length}/{storage.storageCapacity} slots</span>
+                      </summary>
+                      <div className="flex justify-end border-t border-[var(--line)] px-3 py-2">
+                        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openItem(storage.slotIndex, storage.parentItemId, storage)}>Inspect storage</Button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-5 lg:grid-cols-6">
+                        {Array.from({ length: storage.storageCapacity }, (_, slot) => {
+                          const item = childBySlot.get(slot);
+                          return (
+                            <InventorySlot
+                              key={slot}
+                              slot={slot}
+                              item={item}
+                              canEdit={canManage}
+                              canAdd={canAdd}
+                              target={targetSlot === `${storage.id}:${slot}`}
+                              onOpen={() => openItem(slot, storage.id, item)}
+                              onDropItem={(itemId) => moveItem(itemId, slot, storage.id)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section>
@@ -380,6 +427,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
                     <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                     <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
                   </div>
+                  {itemDraft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={itemDraft.storageCapacity || 6} onValueChange={(storageCapacity) => setItemDraft({ ...itemDraft, storageCapacity })} />}
                   <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
@@ -392,6 +440,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
                 <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                 <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
               </div>
+              {itemDraft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={itemDraft.storageCapacity || 6} onValueChange={(storageCapacity) => setItemDraft({ ...itemDraft, storageCapacity })} />}
               <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Add item</Button>
             </form>
           )}

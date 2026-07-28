@@ -16,6 +16,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ow
     const { data, error } = await supabase.rpc('add_house_inventory_item', {
       p_session_token: token,
       p_owner_user_id: ownerId,
+      p_parent_item_id: body.parentItemId || null,
       p_slot_index: Number(body.slotIndex ?? 0),
       p_item_name: String(body.name ?? ''),
       p_item_type: String(body.type ?? 'misc'),

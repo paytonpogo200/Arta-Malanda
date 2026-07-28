@@ -931,21 +931,21 @@ insert into public.class_templates (
   token_color
 )
 values
-  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intelligent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and exaggerations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 8, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
-  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are incredibly durable mages, known for their legendary support in combat and on the battlefield. They are extremely formidable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 11, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
-  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as opposed to utility. Their resourcefulness is often a great contribution to many successful expeditions.$am$, 100, 75, 8, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
-  ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', $am$Armor-clad warriors are amazing front liners. They are incredibly hard to take down and provide an amazing presence on the battlefield. What they lack in quickness, they make up for in annoying defensive utility. They are often seen as scary or mad due to their nature on the battlefield, or at least thats what they say. Hasn't been one in ages.$am$, 165, 50, 9, 10, 1, '{"strength":2,"accuracy":0,"intelligence":-3,"vitality":3,"recovery":0,"mana_regen":0,"charisma":-1,"wisdom_cunning":-2,"perception":-1,"alchemy":1,"stealth":-3,"agility":-3}'::jsonb, jsonb_build_array($am$Has the ability _Distribution_, which will direct 50% of a target's damage to yourself$am$, 'Does not pay armor labor, only materials. Armor-clad cannot receive extra defensive bonuses from shields'), '#9a6e52'),
-  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', $am$Beastmasters are incredibly rare, but invaluable as an asset. Many have never been much on the battlefield themselves, but their way with the animals and beasts of the land is marvelling. They say a couple hundred years ago, an elvish beastmaster once tamed a dragon, and one must wonder if it was the child's story we all were told, or if there is even a smidgen of truth hidden within.$am$, 90, 50, 8, 20, 1, '{"strength":-3,"accuracy":1,"intelligence":0,"vitality":0,"recovery":1,"mana_regen":0,"charisma":3,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":0,"agility":1}'::jsonb, jsonb_build_array($am$Has the Spell "Tame" (doesn't take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal's wild score. If the resulting number is positive, the animal/beast is tamed, but health isn't restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.$am$, 'All Attacks from a Beast master will only ever bring an animal or beast to 1hp, never killing it', 'Will always crit against animals and beasts', 'Can bring 20 wild score worth of beasts per mission. Each beast operates independently of the beastmaster with its own initiative and turns.'), '#77875a'),
-  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', $am$Blacksmiths are highly valued assets in the realm, in all kingdoms. Their utility and knack for anything with their hands is to be much admired. There are many kinds of blacksmiths, but the great runesmith Argon "The Hammer" Tyborgarian has been showing the realm just how versatile runes and magic can be in tools and armor, forming a new study within the craft as we speak.$am$, 125, 50, 8, 18, 3, '{"strength":2,"accuracy":0,"intelligence":0,"vitality":1,"recovery":0,"mana_regen":0,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":-1,"agility":-1}'::jsonb, jsonb_build_array($am$Doesn't need to pay for smithing labor, only materials$am$, 'Has the ability to create weapons away from a forge with a properly made fire', 'Once per combat, enhance a melee weapon of choice with +1 strength. Ends after combat/scene'), '#b28b45'),
-  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', $am$Knights are talented swordsmen and combat experts, and pair well with horses. Well liked knights have been known to have been shown favor even when purchasing one and have a larger political sway. They are your classic all around attack type with a nice amount of sustainability.$am$, 125, 25, 8, 14, 2, '{"strength":1,"accuracy":1,"intelligence":-1,"vitality":1,"recovery":0,"mana_regen":-2,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('+1 Strength while on a Horse.', 'Every hit received, roll for a parry, 18-20 will grant a 100% reduction of damage. 15-17 will grant a 50% (rounding up) reduction', 'Rally the troops: Once per combat, choose a target for the entire party to all attack at once; as long as this attack hits, all others will as well.'), '#a05e5a'),
-  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', $am$Mages are the hot shots of Calostrynn, their pride and joy. They pack a punch, much like the rangers, but what the rangers have in range and recon, the mages more than make up for in versatility. With enough knowledge, there is nearly a spell for almost all occasions.$am$, 70, 100, 10, 10, 10, '{"strength":-3,"accuracy":0,"intelligence":3,"vitality":-3,"recovery":0,"mana_regen":1,"charisma":1,"wisdom_cunning":2,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Regain 10 Mana for every enemy killed with a spell'), '#567a7f'),
-  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', $am$Mendrunners are a unique lot. They specialize in botany and natural remedies, resenting magic and its simple lifestyle. They are incredibly nimble and many have once been or sometimes become rogues. Little is known about them though due to their lack of number.$am$, 85, 0, 7, 20, 0, '{"strength":-1,"accuracy":1,"intelligence":-5,"vitality":0,"recovery":3,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":4,"stealth":1,"agility":3}'::jsonb, jsonb_build_array('Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.', 'Is immune to poison and Illness'), '#6b8f68'),
-  ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', $am$The Muscle is notorious for their large frame and small brains. They specialize on sustain and being...well, the muscle of a group. When paired with a sage or apothecary, these hulkish freaks of nature are unstoppable.$am$, 150, 40, 7, 10, 1, '{"strength":3,"accuracy":-2,"intelligence":-3,"vitality":1,"recovery":2,"mana_regen":0,"charisma":-2,"wisdom_cunning":-3,"perception":-1,"alchemy":-2,"stealth":-2,"agility":-2}'::jsonb, jsonb_build_array('When The Muscle kills an enemy, gain 1 d6 for ensuing damage rolls. Resets after each combat/scene ends. Max of 5 d6'), '#9f6540'),
-  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', $am$Ranged class is known for being a backline attack type. They can pack a punch and provide great support from range, and can even act as very nice recon, but are very vulnerable alone in most situations. A master archer especially has been the sole reason for many conclusions to wars, a much under appreciated craft, given their grand role in previous wars.$am$, 90, 50, 10, 15, 1, '{"strength":-2,"accuracy":2,"intelligence":1,"vitality":-2,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":1,"agility":1}'::jsonb, jsonb_build_array('Can tame birds', '3 times per combat, shoot 3 arrows in one draw. Must roll for accuracy for each arrow.', 'Allowed to buy and craft element or effect-tipped arrows'), '#7c8a49'),
-  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', $am$Rogues are shifty and cunning. They might not be strong in groups but are amazing duelists and specialize in catching enemies off guard. Their reputation precedes them, and not always in the best of ways, but they are always more than nice outside and within the castle walls.$am$, 90, 50, 7, 16, 3, '{"strength":-1,"accuracy":0,"intelligence":0,"vitality":-1,"recovery":0,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":1,"stealth":3,"agility":2}'::jsonb, jsonb_build_array('Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.', 'May use Agility instead of Strength for any attack that procs *Backstab*'), '#6b617e'),
-  ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', $am$Sages are loved and appreciated by all. In a world of war and selfish interest, they walk a path of selflessness, aiding others in their prosperity and support on the battlefield. Those who have mastered their craft are known to have boundless mana and spell casting.$am$, 70, 100, 12, 12, 5, '{"strength":-2,"accuracy":-2,"intelligence":-5,"vitality":-2,"recovery":3,"mana_regen":2,"charisma":2,"wisdom_cunning":4,"perception":0,"alchemy":0,"stealth":0,"agility":2}'::jsonb, jsonb_build_array('Healing and enhancement spells use _Recovery_ instead of Intelligence when using magic rolls', 'Heals also heal an additional ally for half (rounding up) of the heals amount. Can be used on the same target'), '#7581a0'),
-  ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', $am$Talismanists are experts at using weapons and armor forced with runes, and almost exclusively use weapons that hold spells or magical properties within them. This new class of warriors only recently came about, given the studies and smithsmanship from Argon "The Hammer" Tyborgarian.$am$, 125, 100, 10, 10, 0, '{"strength":1,"accuracy":1,"intelligence":1,"vitality":1,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":-2,"agility":0}'::jsonb, jsonb_build_array('Inherits 3 random low-level runes.', 'Requires only 3 runes to force spells into weapons as opposed to 5, with each rune beyond that increasing the chance of a stronger spell.', 'Each spell-infused weapon on hand can cast its spell twice per combat'), '#926d9f'),
-  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', $am$Wardens are your classic Jack-of-all trades master of none. They bring great all around helpfulness and can be plug and play in most settings. Wardens are known for their survival skills and cunning, but are shunned for a lack of a profitable or secure occupation.$am$, 110, 75, 9, 20, 3, '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":-2,"wisdom_cunning":3,"perception":2,"alchemy":1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.', 'Gains a +2 modifier of choice in a single category where the party has no bonuses'), '#79895f')
+  ('alchemist', 'Alchemist', 'Support · Decent sustain', 'Light armor', $am$Alchemists are intelligent and resourceful, knowing much of the land, yet always yearn for more knowledge. They are cunning and rumor has it, that an order of alchemists pass secrets of the world around to one another. Perhaps its just fables and exaggerations, but then again I've never really seen them ever at a brewery.$am$, 110, 50, 5, 16, 2, '{"strength":-1,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":1,"mana_regen":0,"charisma":0,"wisdom_cunning":3,"perception":0,"alchemy":5,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat, an Alchemist can use or make a potion or alchemical item without spending their main action or movement', 'Has unlimited flasks and Arcane Nector (Base ingredient in potions) as long as they have a house or residence'), '#4d8f83'),
+  ('apothecary', 'Apothecary', 'Support · Great sustain', 'Medium armor', $am$Apothecaries are incredibly durable mages, known for their legendary support in combat and on the battlefield. They are extremely formidable as mages, and sometimes, even in the frontline. Many a great apothecary was known for their priceless support in battle. But a few, are some of the most feared names Arda Malanda has heard.$am$, 130, 90, 8, 15, 5, '{"strength":-3,"accuracy":-1,"intelligence":0,"vitality":1,"recovery":2,"mana_regen":2,"charisma":0,"wisdom_cunning":2,"perception":0,"alchemy":2,"stealth":-2,"agility":-1}'::jsonb, jsonb_build_array('Can heal an ally for 10 hp in place of a movement'), '#5579a8'),
+  ('apprentice', 'Apprentice', 'Hybrid · Decent sustain', 'Medium armor', $am$Apprentices are learners, and are naturally talented mages, but enjoy the freedom of some extra sustainability, as opposed to utility. Their resourcefulness is often a great contribution to many successful expeditions.$am$, 100, 75, 5, 16, 5, '{"strength":0,"accuracy":0,"intelligence":1,"vitality":-1,"recovery":0,"mana_regen":1,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":0,"agility":1}'::jsonb, jsonb_build_array('When paired with a mage, has +1 Intelligence. When paired with a knight, has +1 Strength. When paired with a ranger, has +1 Accuracy. These can stack.'), '#8a6da1'),
+  ('armor-clad', 'Armor-clad', 'Defense · Great sustain', 'Heavy armor', $am$Armor-clad warriors are amazing front liners. They are incredibly hard to take down and provide an amazing presence on the battlefield. What they lack in quickness, they make up for in annoying defensive utility. They are often seen as scary or mad due to their nature on the battlefield, or at least thats what they say. Hasn't been one in ages.$am$, 165, 50, 6, 10, 1, '{"strength":2,"accuracy":0,"intelligence":-3,"vitality":3,"recovery":0,"mana_regen":0,"charisma":-1,"wisdom_cunning":-2,"perception":-1,"alchemy":1,"stealth":-3,"agility":-3}'::jsonb, jsonb_build_array($am$Has the ability _Distribution_, which will direct 50% of a target's damage to yourself$am$, 'Does not pay armor labor, only materials. Armor-clad cannot receive extra defensive bonuses from shields'), '#9a6e52'),
+  ('beastmaster', 'Beastmaster', 'Hybrid · Poor sustain', 'Light armor', $am$Beastmasters are incredibly rare, but invaluable as an asset. Many have never been much on the battlefield themselves, but their way with the animals and beasts of the land is marvelling. They say a couple hundred years ago, an elvish beastmaster once tamed a dragon, and one must wonder if it was the child's story we all were told, or if there is even a smidgen of truth hidden within.$am$, 90, 50, 5, 20, 1, '{"strength":-3,"accuracy":1,"intelligence":0,"vitality":0,"recovery":1,"mana_regen":0,"charisma":3,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":0,"agility":1}'::jsonb, jsonb_build_array($am$Has the Spell "Tame" (doesn't take a spell slot), which allows for a tame roll, which is a d6 plus charisma plus buffs vs the animal's wild score. If the resulting number is positive, the animal/beast is tamed, but health isn't restored. If the resulting number is zero, heads on a coin flip tames. Tame can only be attempted on creatures below 50% health. Creatures below 10% health yield a +3 bonus to a tame roll. Any below 5% yields a +5 to a tame roll.$am$, 'All Attacks from a Beast master will only ever bring an animal or beast to 1hp, never killing it', 'Will always crit against animals and beasts', 'Can bring 20 wild score worth of beasts per mission. Each beast operates independently of the beastmaster with its own initiative and turns.'), '#77875a'),
+  ('blacksmith', 'Blacksmith', 'Support · Decent sustain', 'Medium armor', $am$Blacksmiths are highly valued assets in the realm, in all kingdoms. Their utility and knack for anything with their hands is to be much admired. There are many kinds of blacksmiths, but the great runesmith Argon "The Hammer" Tyborgarian has been showing the realm just how versatile runes and magic can be in tools and armor, forming a new study within the craft as we speak.$am$, 125, 50, 5, 18, 3, '{"strength":2,"accuracy":0,"intelligence":0,"vitality":1,"recovery":0,"mana_regen":0,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":1,"stealth":-1,"agility":-1}'::jsonb, jsonb_build_array($am$Doesn't need to pay for smithing labor, only materials$am$, 'Has the ability to create weapons away from a forge with a properly made fire', 'Once per combat, enhance a melee weapon of choice with +1 strength. Ends after combat/scene'), '#b28b45'),
+  ('knight', 'Knight', 'Attack · Decent sustain', 'Medium armor', $am$Knights are talented swordsmen and combat experts, and pair well with horses. Well liked knights have been known to have been shown favor even when purchasing one and have a larger political sway. They are your classic all around attack type with a nice amount of sustainability.$am$, 125, 25, 5, 14, 2, '{"strength":1,"accuracy":1,"intelligence":-1,"vitality":1,"recovery":0,"mana_regen":-2,"charisma":2,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('+1 Strength while on a Horse.', 'Every hit received, roll for a parry, 18-20 will grant a 100% reduction of damage. 15-17 will grant a 50% (rounding up) reduction', 'Rally the troops: Once per combat, choose a target for the entire party to all attack at once; as long as this attack hits, all others will as well.'), '#a05e5a'),
+  ('mage', 'Mage', 'Attack · Poor sustain', 'Light armor', $am$Mages are the hot shots of Calostrynn, their pride and joy. They pack a punch, much like the rangers, but what the rangers have in range and recon, the mages more than make up for in versatility. With enough knowledge, there is nearly a spell for almost all occasions.$am$, 70, 100, 7, 10, 10, '{"strength":-3,"accuracy":0,"intelligence":3,"vitality":-3,"recovery":0,"mana_regen":1,"charisma":1,"wisdom_cunning":2,"perception":0,"alchemy":0,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Regain 10 Mana for every enemy killed with a spell'), '#567a7f'),
+  ('mendrunner', 'Mendrunner', 'Hybrid · Poor sustain', 'Medium armor', $am$Mendrunners are a unique lot. They specialize in botany and natural remedies, resenting magic and its simple lifestyle. They are incredibly nimble and many have once been or sometimes become rogues. Little is known about them though due to their lack of number.$am$, 85, 0, 4, 20, 0, '{"strength":-1,"accuracy":1,"intelligence":-5,"vitality":0,"recovery":3,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":4,"stealth":1,"agility":3}'::jsonb, jsonb_build_array('Heal an ally for 2d6 + Recovery + Alchemy and remove a debuff or negative effect. Cooldown of 1 turn.', 'Is immune to poison and Illness'), '#6b8f68'),
+  ('the-muscle', 'The Muscle', 'Defense · Great sustain', 'Medium armor', $am$The Muscle is notorious for their large frame and small brains. They specialize on sustain and being...well, the muscle of a group. When paired with a sage or apothecary, these hulkish freaks of nature are unstoppable.$am$, 150, 40, 4, 10, 1, '{"strength":3,"accuracy":-2,"intelligence":-3,"vitality":1,"recovery":2,"mana_regen":0,"charisma":-2,"wisdom_cunning":-3,"perception":-1,"alchemy":-2,"stealth":-2,"agility":-2}'::jsonb, jsonb_build_array('When The Muscle kills an enemy, gain 1 d6 for ensuing damage rolls. Resets after each combat/scene ends. Max of 5 d6'), '#9f6540'),
+  ('ranger', 'Ranger', 'Attack · Poor sustain', 'Light armor', $am$Ranged class is known for being a backline attack type. They can pack a punch and provide great support from range, and can even act as very nice recon, but are very vulnerable alone in most situations. A master archer especially has been the sole reason for many conclusions to wars, a much under appreciated craft, given their grand role in previous wars.$am$, 90, 50, 7, 15, 1, '{"strength":-2,"accuracy":2,"intelligence":1,"vitality":-2,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":2,"perception":2,"alchemy":0,"stealth":1,"agility":1}'::jsonb, jsonb_build_array('Can tame birds', '3 times per combat, shoot 3 arrows in one draw. Must roll for accuracy for each arrow.', 'Allowed to buy and craft element or effect-tipped arrows'), '#7c8a49'),
+  ('rogue', 'Rogue', 'Attack · Poor sustain', 'Light armor', $am$Rogues are shifty and cunning. They might not be strong in groups but are amazing duelists and specialize in catching enemies off guard. Their reputation precedes them, and not always in the best of ways, but they are always more than nice outside and within the castle walls.$am$, 90, 50, 4, 16, 3, '{"strength":-1,"accuracy":0,"intelligence":0,"vitality":-1,"recovery":0,"mana_regen":0,"charisma":-3,"wisdom_cunning":3,"perception":3,"alchemy":1,"stealth":3,"agility":2}'::jsonb, jsonb_build_array('Has the ability *Backstab* which when attacking from behind, from stealth, or against a pinned or otherwise defenseless enemy, Rogue deals double damage.', 'May use Agility instead of Strength for any attack that procs *Backstab*'), '#6b617e'),
+  ('sage', 'Sage', 'Support · Poor sustain', 'Medium armor', $am$Sages are loved and appreciated by all. In a world of war and selfish interest, they walk a path of selflessness, aiding others in their prosperity and support on the battlefield. Those who have mastered their craft are known to have boundless mana and spell casting.$am$, 70, 100, 9, 12, 5, '{"strength":-2,"accuracy":-2,"intelligence":-5,"vitality":-2,"recovery":3,"mana_regen":2,"charisma":2,"wisdom_cunning":4,"perception":0,"alchemy":0,"stealth":0,"agility":2}'::jsonb, jsonb_build_array('Healing and enhancement spells use _Recovery_ instead of Intelligence when using magic rolls', 'Heals also heal an additional ally for half (rounding up) of the heals amount. Can be used on the same target'), '#7581a0'),
+  ('talismanist', 'Talismanist', 'Attack · Decent sustain', 'Medium armor', $am$Talismanists are experts at using weapons and armor forced with runes, and almost exclusively use weapons that hold spells or magical properties within them. This new class of warriors only recently came about, given the studies and smithsmanship from Argon "The Hammer" Tyborgarian.$am$, 125, 100, 7, 10, 0, '{"strength":1,"accuracy":1,"intelligence":1,"vitality":1,"recovery":0,"mana_regen":0,"charisma":0,"wisdom_cunning":1,"perception":0,"alchemy":-1,"stealth":-2,"agility":0}'::jsonb, jsonb_build_array('Inherits 3 random low-level runes.', 'Requires only 3 runes to force spells into weapons as opposed to 5, with each rune beyond that increasing the chance of a stronger spell.', 'Each spell-infused weapon on hand can cast its spell twice per combat'), '#926d9f'),
+  ('warden', 'Warden', 'Hybrid · Decent sustain', 'Medium armor', $am$Wardens are your classic Jack-of-all trades master of none. They bring great all around helpfulness and can be plug and play in most settings. Wardens are known for their survival skills and cunning, but are shunned for a lack of a profitable or secure occupation.$am$, 110, 75, 6, 20, 3, '{"strength":0,"accuracy":0,"intelligence":0,"vitality":0,"recovery":0,"mana_regen":0,"charisma":-2,"wisdom_cunning":3,"perception":2,"alchemy":1,"stealth":0,"agility":0}'::jsonb, jsonb_build_array('Once per combat or exploration scene, Warden may reroll a failed Perception, Alchemy, Survival, or Utility check.', 'Gains a +2 modifier of choice in a single category where the party has no bonuses'), '#79895f')
 on conflict (class_key) do update
 set
   name = excluded.name,
@@ -960,6 +960,31 @@ set
   attributes = excluded.attributes,
   passives = excluded.passives,
   token_color = excluded.token_color;
+
+with class_resist_adjustments(class_key, old_magic_resist, new_magic_resist) as (
+  values
+    ('alchemist', 8, 5),
+    ('apothecary', 11, 8),
+    ('apprentice', 8, 5),
+    ('armor-clad', 9, 6),
+    ('beastmaster', 8, 5),
+    ('blacksmith', 8, 5),
+    ('knight', 8, 5),
+    ('mage', 10, 7),
+    ('mendrunner', 7, 4),
+    ('the-muscle', 7, 4),
+    ('ranger', 10, 7),
+    ('rogue', 7, 4),
+    ('sage', 12, 9),
+    ('talismanist', 10, 7),
+    ('warden', 9, 6)
+)
+update public.characters c
+set magic_resist = a.new_magic_resist,
+    updated_at = now()
+from class_resist_adjustments a
+where c.class_key = a.class_key
+  and c.magic_resist = a.old_magic_resist;
 
 update public.characters c
 set
@@ -2330,6 +2355,18 @@ as $$
   select lower(concat_ws(' ', coalesce(p_material, ''), coalesce(p_item_name, ''))) like '%mythril%'
 $$;
 
+create or replace function public.inventory_item_is_wagon(
+  p_item_name text,
+  p_item_type text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select lower(coalesce(p_item_type, '')) = 'storage'
+    and lower(coalesce(p_item_name, '')) like '%wagon%'
+$$;
+
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text);
@@ -2861,6 +2898,7 @@ create table if not exists public.player_houses (
 create table if not exists public.house_inventory_items (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  parent_item_id uuid references public.house_inventory_items(id) on delete cascade,
   item_name text not null,
   display_name text,
   item_description text not null default '',
@@ -2883,9 +2921,6 @@ create table if not exists public.house_inventory_items (
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists house_inventory_main_slot_unique
-  on public.house_inventory_items (owner_user_id, slot_index);
-
 alter table public.house_inventory_items
   drop constraint if exists house_inventory_item_type_valid,
   drop constraint if exists house_inventory_items_item_type_valid;
@@ -2902,6 +2937,7 @@ alter table public.house_inventory_items
 
 alter table public.house_inventory_items
   add column if not exists display_name text,
+  add column if not exists parent_item_id uuid references public.house_inventory_items(id) on delete cascade,
   add column if not exists item_description text not null default '',
   add column if not exists enchantment text,
   add column if not exists rune_name text,
@@ -2911,6 +2947,18 @@ alter table public.house_inventory_items
   add column if not exists potion_strength text,
   add column if not exists potion_property text,
   add column if not exists potion_quality text;
+
+drop index if exists house_inventory_main_slot_unique;
+
+create unique index if not exists house_inventory_root_slot_unique
+  on public.house_inventory_items (owner_user_id, slot_index)
+  where parent_item_id is null;
+
+create unique index if not exists house_inventory_parent_slot_unique
+  on public.house_inventory_items (parent_item_id, slot_index)
+  where parent_item_id is not null;
+
+create index if not exists house_inventory_parent_idx on public.house_inventory_items(parent_item_id);
 
 alter table public.player_houses
   add column if not exists is_locked boolean not null default false;
@@ -3048,7 +3096,7 @@ as $$
   select jsonb_build_object(
     'id', p_item.id,
     'characterId', p_item.owner_user_id,
-    'parentItemId', null,
+    'parentItemId', p_item.parent_item_id,
     'name', p_item.item_name,
     'displayName', p_item.display_name,
     'itemDescription', p_item.item_description,
@@ -3112,7 +3160,11 @@ as $$
     and b.is_storage = false
 $$;
 
-create or replace function public.find_first_free_house_slot(p_owner_user_id uuid, p_capacity int)
+create or replace function public.find_first_free_house_slot(
+  p_owner_user_id uuid,
+  p_parent_item_id uuid,
+  p_capacity int
+)
 returns int
 language plpgsql
 security definer
@@ -3130,6 +3182,7 @@ begin
       select 1
       from public.house_inventory_items i
       where i.owner_user_id = p_owner_user_id
+        and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
         and i.slot_index = v_slot
     ) then
       return v_slot;
@@ -3137,6 +3190,45 @@ begin
   end loop;
 
   return null;
+end;
+$$;
+
+create or replace function public.assert_house_slot_capacity(
+  p_house public.player_houses,
+  p_parent_item_id uuid,
+  p_slot_index int
+)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_capacity int;
+begin
+  if p_slot_index < 0 then
+    raise exception 'House slot is invalid.';
+  end if;
+
+  if p_parent_item_id is null then
+    v_capacity := p_house.inventory_slots;
+  else
+    select h.storage_capacity into v_capacity
+    from public.house_inventory_items h
+    where h.id = p_parent_item_id
+      and h.owner_user_id = p_house.owner_user_id
+      and h.is_storage = true;
+
+    if v_capacity is null then
+      raise exception 'House storage container not found.';
+    end if;
+  end if;
+
+  if p_slot_index >= v_capacity then
+    raise exception 'House slot is outside the container capacity.';
+  end if;
+
+  return v_capacity;
 end;
 $$;
 
@@ -3172,9 +3264,12 @@ begin
 end;
 $$;
 
+drop function if exists public.add_house_inventory_item(text, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
+
 create or replace function public.add_house_inventory_item(
   p_session_token text,
   p_owner_user_id uuid,
+  p_parent_item_id uuid,
   p_slot_index int,
   p_item_name text,
   p_item_type text,
@@ -3211,9 +3306,7 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   v_house := public.assert_house_access(v_profile, p_owner_user_id, true);
 
-  if p_slot_index < 0 or p_slot_index >= v_house.inventory_slots then
-    raise exception 'House slot is outside the house capacity.';
-  end if;
+  perform public.assert_house_slot_capacity(v_house, p_parent_item_id, p_slot_index);
 
   if length(trim(coalesce(v_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
@@ -3255,6 +3348,7 @@ begin
   select * into v_target
   from public.house_inventory_items i
   where i.owner_user_id = p_owner_user_id
+    and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
     and i.slot_index = p_slot_index
   limit 1;
 
@@ -3286,6 +3380,7 @@ begin
 
   insert into public.house_inventory_items (
     owner_user_id,
+    parent_item_id,
     slot_index,
     item_name,
     item_type,
@@ -3304,6 +3399,7 @@ begin
   )
   values (
     p_owner_user_id,
+    p_parent_item_id,
     p_slot_index,
     v_item_name,
     v_item_type,
@@ -3342,7 +3438,9 @@ declare
   v_item public.house_inventory_items%rowtype;
   v_target public.house_inventory_items%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_parent_item_id uuid;
   v_slot_index int;
+  v_original_parent_item_id uuid;
   v_original_slot_index int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
@@ -3412,16 +3510,28 @@ begin
     returning * into v_item;
   end if;
 
-  if v_patch ? 'slotIndex' then
+  if v_patch ? 'slotIndex' or v_patch ? 'parentItemId' then
+    v_original_parent_item_id := v_item.parent_item_id;
     v_original_slot_index := v_item.slot_index;
-    v_slot_index := (v_patch->>'slotIndex')::int;
-    if v_slot_index < 0 or v_slot_index >= v_house.inventory_slots then
-      raise exception 'House slot is outside the house capacity.';
+    v_parent_item_id := case when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid else v_item.parent_item_id end;
+    v_slot_index := case when v_patch ? 'slotIndex' then (v_patch->>'slotIndex')::int else v_item.slot_index end;
+
+    if v_parent_item_id = v_item.id then
+      raise exception 'An item cannot be moved inside itself.';
     end if;
+
+    if coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+      and v_slot_index = v_item.slot_index
+    then
+      return public.house_item_record_to_json(v_item);
+    end if;
+
+    perform public.assert_house_slot_capacity(v_house, v_parent_item_id, v_slot_index);
 
     select * into v_target
     from public.house_inventory_items i
     where i.owner_user_id = v_item.owner_user_id
+      and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
       and i.slot_index = v_slot_index
       and i.id <> v_item.id
     limit 1;
@@ -3432,19 +3542,22 @@ begin
       where id = v_target.id;
 
       update public.house_inventory_items
-      set slot_index = v_slot_index
+      set parent_item_id = v_parent_item_id,
+          slot_index = v_slot_index
       where id = p_item_id
       returning * into v_item;
 
       update public.house_inventory_items
-      set slot_index = v_original_slot_index
+      set parent_item_id = v_original_parent_item_id,
+          slot_index = v_original_slot_index
       where id = v_target.id;
 
       return public.house_item_record_to_json(v_item);
     end if;
 
     update public.house_inventory_items
-    set slot_index = v_slot_index
+    set parent_item_id = v_parent_item_id,
+        slot_index = v_slot_index
     where id = p_item_id
     returning * into v_item;
   end if;
@@ -3452,6 +3565,9 @@ begin
   return public.house_item_record_to_json(v_item);
 end;
 $$;
+
+drop function if exists public.drop_house_inventory_item_quantity(text, uuid, int);
+drop function if exists public.drop_house_inventory_item_quantity(text, uuid, integer);
 
 create or replace function public.drop_house_inventory_item_quantity(
   p_session_token text,
@@ -3562,13 +3678,14 @@ begin
     return public.get_player_house(p_session_token, v_character.owner_user_id);
   end if;
 
-  v_slot_index := public.find_first_free_house_slot(v_character.owner_user_id, v_house.inventory_slots);
+  v_slot_index := public.find_first_free_house_slot(v_character.owner_user_id, null::uuid, v_house.inventory_slots);
   if v_slot_index is null then
     raise exception 'No open house inventory slot.';
   end if;
 
   insert into public.house_inventory_items (
     owner_user_id,
+    parent_item_id,
     slot_index,
     item_name,
     display_name,
@@ -3590,6 +3707,7 @@ begin
   )
   values (
     v_character.owner_user_id,
+    null,
     v_slot_index,
     v_item.item_name,
     v_item.display_name,
@@ -3616,10 +3734,13 @@ begin
 end;
 $$;
 
+drop function if exists public.move_inventory_item_to_house_slot(text, uuid, int);
+
 create or replace function public.move_inventory_item_to_house_slot(
   p_session_token text,
   p_item_id uuid,
-  p_slot_index int
+  p_slot_index int,
+  p_parent_item_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -3654,13 +3775,12 @@ begin
   end if;
 
   v_house := public.ensure_player_house(v_character.owner_user_id);
-  if p_slot_index < 0 or p_slot_index >= v_house.inventory_slots then
-    raise exception 'House slot is outside the house capacity.';
-  end if;
+  perform public.assert_house_slot_capacity(v_house, p_parent_item_id, p_slot_index);
 
   select * into v_target
   from public.house_inventory_items h
   where h.owner_user_id = v_character.owner_user_id
+    and coalesce(h.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
     and h.slot_index = p_slot_index
   limit 1;
 
@@ -3695,6 +3815,7 @@ begin
 
   insert into public.house_inventory_items (
     owner_user_id,
+    parent_item_id,
     slot_index,
     item_name,
     display_name,
@@ -3716,6 +3837,7 @@ begin
   )
   values (
     v_character.owner_user_id,
+    p_parent_item_id,
     p_slot_index,
     v_item.item_name,
     v_item.display_name,
@@ -3739,6 +3861,220 @@ begin
 
   delete from public.inventory_items where id = v_item.id;
   return public.get_player_house(p_session_token, v_character.owner_user_id);
+end;
+$$;
+
+create or replace function public.get_location_wagon_storage(
+  p_session_token text,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  return jsonb_build_object(
+    'wagons', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'wagon', public.inventory_item_record_to_json(w),
+        'ownerCharacterId', owner_character.id,
+        'ownerName', owner_character.name,
+        'ownerUserId', owner_character.owner_user_id,
+        'canManage', v_profile.role = 'dm'::public.user_role or owner_character.owner_user_id is not distinct from v_profile.id
+      ) order by owner_character.name, w.item_name), '[]'::jsonb)
+      from public.inventory_items w
+      join public.characters owner_character on owner_character.id = w.character_id
+      where w.is_storage
+        and public.inventory_item_is_wagon(w.item_name, w.item_type)
+        and w.parent_item_id is null
+        and w.loadout_slot is null
+        and public.city_names_match(owner_character.location_name, v_character.location_name)
+    ),
+    'items', (
+      select coalesce(jsonb_agg(public.inventory_item_record_to_json(child) order by child.parent_item_id, child.slot_index, child.item_name), '[]'::jsonb)
+      from public.inventory_items child
+      join public.inventory_items w on w.id = child.parent_item_id
+      join public.characters owner_character on owner_character.id = w.character_id
+      where w.is_storage
+        and public.inventory_item_is_wagon(w.item_name, w.item_type)
+        and w.parent_item_id is null
+        and w.loadout_slot is null
+        and public.city_names_match(owner_character.location_name, v_character.location_name)
+    )
+  );
+end;
+$$;
+
+create or replace function public.move_inventory_item_to_wagon(
+  p_session_token text,
+  p_actor_character_id uuid,
+  p_item_id uuid,
+  p_wagon_id uuid,
+  p_slot_index int
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_actor public.characters%rowtype;
+  v_wagon public.inventory_items%rowtype;
+  v_wagon_owner public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_actor := public.assert_inventory_access(v_profile, p_actor_character_id, false);
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+  if v_item.character_id <> v_actor.id then
+    raise exception 'You can only move this character''s items into a wagon.';
+  end if;
+  if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty this storage item before moving it into a wagon.';
+  end if;
+
+  select * into v_wagon from public.inventory_items where id = p_wagon_id;
+  if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
+    raise exception 'Wagon storage not found.';
+  end if;
+
+  select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
+  if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
+    raise exception 'That wagon is not in this character''s location.';
+  end if;
+
+  perform public.assert_inventory_slot_capacity(v_wagon_owner, v_wagon.id, p_slot_index);
+
+  select * into v_target
+  from public.inventory_items i
+  where i.character_id = v_wagon.character_id
+    and i.parent_item_id = v_wagon.id
+    and i.loadout_slot is null
+    and i.slot_index = p_slot_index
+    and i.id <> v_item.id
+  limit 1;
+
+  if v_target.id is not null then
+    if public.inventory_items_stackable(v_target, v_item) then
+      update public.inventory_items
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id;
+
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_location_wagon_storage(p_session_token, p_actor_character_id);
+    end if;
+
+    raise exception 'That wagon slot is already occupied.';
+  end if;
+
+  update public.inventory_items
+  set character_id = v_wagon.character_id,
+      parent_item_id = v_wagon.id,
+      slot_index = p_slot_index,
+      loadout_slot = null
+  where id = v_item.id;
+
+  return public.get_location_wagon_storage(p_session_token, p_actor_character_id);
+end;
+$$;
+
+create or replace function public.move_wagon_item_to_inventory(
+  p_session_token text,
+  p_actor_character_id uuid,
+  p_item_id uuid,
+  p_parent_item_id uuid default null,
+  p_slot_index int default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_actor public.characters%rowtype;
+  v_wagon public.inventory_items%rowtype;
+  v_wagon_owner public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_slot_index int;
+  v_capacity int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_actor := public.assert_inventory_access(v_profile, p_actor_character_id, false);
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Wagon item not found.'; end if;
+  if v_item.parent_item_id is null then raise exception 'That item is not inside a wagon.'; end if;
+
+  select * into v_wagon from public.inventory_items where id = v_item.parent_item_id;
+  if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
+    raise exception 'Wagon storage not found.';
+  end if;
+
+  select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
+  if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
+    raise exception 'That wagon is not in this character''s location.';
+  end if;
+
+  if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty this storage item before taking it from the wagon.';
+  end if;
+
+  v_capacity := public.assert_inventory_slot_capacity(v_actor, p_parent_item_id, coalesce(p_slot_index, 0));
+  v_slot_index := p_slot_index;
+  if v_slot_index is null then
+    v_slot_index := public.find_first_free_inventory_slot(v_actor.id, p_parent_item_id, v_capacity);
+  end if;
+  if v_slot_index is null then raise exception 'No open inventory slot.'; end if;
+  perform public.assert_inventory_slot_capacity(v_actor, p_parent_item_id, v_slot_index);
+
+  select * into v_target
+  from public.inventory_items i
+  where i.character_id = v_actor.id
+    and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+    and i.loadout_slot is null
+    and i.slot_index = v_slot_index
+  limit 1;
+
+  if v_target.id is not null then
+    if public.inventory_items_stackable(v_target, v_item) then
+      update public.inventory_items
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id;
+
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_character_inventory(p_session_token, p_actor_character_id);
+    end if;
+
+    raise exception 'That inventory slot is already occupied.';
+  end if;
+
+  update public.inventory_items
+  set character_id = v_actor.id,
+      parent_item_id = p_parent_item_id,
+      slot_index = v_slot_index,
+      loadout_slot = null
+  where id = v_item.id;
+
+  return public.get_character_inventory(p_session_token, p_actor_character_id);
 end;
 $$;
 
@@ -3968,13 +4304,18 @@ grant execute on function public.house_record_to_json(public.player_houses) to a
 grant execute on function public.house_item_record_to_json(public.house_inventory_items) to anon, authenticated;
 grant execute on function public.property_record_to_json(public.campaign_properties) to anon, authenticated;
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
-grant execute on function public.find_first_free_house_slot(uuid, int) to anon, authenticated;
+grant execute on function public.inventory_item_is_wagon(text, text) to anon, authenticated;
+grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
+grant execute on function public.assert_house_slot_capacity(public.player_houses, uuid, int) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
-grant execute on function public.add_house_inventory_item(text, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
+grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
-grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int) to anon, authenticated;
+grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
+grant execute on function public.get_location_wagon_storage(text, uuid) to anon, authenticated;
+grant execute on function public.move_inventory_item_to_wagon(text, uuid, uuid, uuid, int) to anon, authenticated;
+grant execute on function public.move_wagon_item_to_inventory(text, uuid, uuid, uuid, int) to anon, authenticated;
 grant execute on function public.apply_inventory_item_rune(text, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;
