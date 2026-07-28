@@ -341,6 +341,12 @@ function activeCityVendor(vendor: ShopVendor) {
   return vendor.cityKey !== 'calostrynn' || CALOSTRYNN_ACTIVE_VENDOR_KEYS.has(vendor.key);
 }
 
+function sameCityName(left: string | null | undefined, right: string | null | undefined) {
+  const normalizedLeft = (left ?? '').trim().toLowerCase();
+  const normalizedRight = (right ?? '').trim().toLowerCase();
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
 function forgeMaterialProducts(vendors: ShopVendor[], service: ForgeService) {
   const vendor = vendors.find(service === 'armory' ? isArmoryVendor : isBlacksmithVendor);
   const source = vendor ? materialProducts(vendor) : vendors.flatMap(materialProducts);
@@ -554,7 +560,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
   const cityLocked = Boolean(selectedCity?.locked);
-  const shopperInCity = selectedShopper?.locationName === (selectedCity?.name ?? '');
+  const shopperInCity = sameCityName(selectedShopper?.locationName, selectedCity?.name);
   const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
@@ -609,7 +615,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }, [loadCities]);
 
   useEffect(() => {
-    if (!craftModal || !selectedShopper) {
+    if (!craftModal || !selectedShopper || !selectedCity || !canShop) {
       setCraftInventory([]);
       setCraftHouseItems([]);
       setCraftWallet([]);
@@ -628,7 +634,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         setCraftInventory(normalized.items);
         setCraftWallet(normalized.wallet);
         const house = normalizeHousePayload(houseBody);
-        const houseAccessible = Boolean(house.house && !house.house.locked && house.house.cityName === selectedShopper.locationName);
+        const houseAccessible = Boolean(house.house && !house.house.locked && sameCityName(house.house.cityName, selectedCity.name));
         setCraftHouseItems(houseAccessible ? house.items : []);
       })
       .catch(() => {
@@ -641,7 +647,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     return () => {
       active = false;
     };
-  }, [craftModal, selectedShopper]);
+  }, [canShop, craftModal, selectedCity, selectedShopper]);
 
   async function replaceFromResponse(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));

@@ -3321,6 +3321,14 @@ begin
     raise exception 'That character is not assigned to a player house.';
   end if;
 
+  if v_item.is_storage and exists (
+    select 1
+    from public.inventory_items child
+    where child.parent_item_id = v_item.id
+  ) then
+    raise exception 'Empty this storage item before sending it to the house.';
+  end if;
+
   v_house := public.ensure_player_house(v_character.owner_user_id);
 
   select * into v_target
@@ -3336,6 +3344,7 @@ begin
     and coalesce(h.potion_quality, '') = coalesce(v_item.potion_quality, '')
     and h.enhancement_count = v_item.enhancement_count
     and h.is_two_handed = v_item.is_two_handed
+    and h.modifiers = v_item.modifiers
     and h.is_storage = false
     and v_item.is_storage = false
   order by h.slot_index
@@ -4405,6 +4414,15 @@ as $$
   )
 $$;
 
+create or replace function public.city_names_match(p_left text, p_right text)
+returns boolean
+language sql
+immutable
+as $$
+  select length(trim(coalesce(p_left, ''))) > 0
+    and lower(trim(coalesce(p_left, ''))) = lower(trim(coalesce(p_right, '')))
+$$;
+
 create or replace function public.market_product_record_to_json(p_product public.market_products)
 returns jsonb
 language sql
@@ -4645,7 +4663,7 @@ begin
     raise exception 'That city is currently locked.';
   end if;
 
-  if v_character.location_name <> v_city.name then
+  if not public.city_names_match(v_character.location_name, v_city.name) then
     raise exception 'That character is not in %.', v_city.name;
   end if;
 
@@ -5039,8 +5057,8 @@ begin
     raise exception '% is currently locked.', v_city.name;
   end if;
 
-  if p_character.location_name <> v_city.name then
-    raise exception '% is in %, not %.', p_character.character_name, p_character.location_name, v_city.name;
+  if not public.city_names_match(p_character.location_name, v_city.name) then
+    raise exception '% is in %, not %.', p_character.name, p_character.location_name, v_city.name;
   end if;
 
   return v_city;
@@ -5063,8 +5081,8 @@ as $$
     where c.id = p_character_id
       and c.owner_user_id is not null
       and h.is_locked = false
-      and h.city_name = c.location_name
-      and h.city_name = p_station_city_name
+      and public.city_names_match(h.city_name, c.location_name)
+      and public.city_names_match(h.city_name, p_station_city_name)
   )
 $$;
 
