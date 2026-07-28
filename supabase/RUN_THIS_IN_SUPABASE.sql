@@ -113,6 +113,7 @@ create table if not exists public.inventory_items (
   character_id uuid not null references public.characters(id) on delete cascade,
   parent_item_id uuid references public.inventory_items(id) on delete cascade,
   item_name text not null,
+  display_name text,
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
@@ -140,6 +141,10 @@ alter table public.inventory_items add constraint inventory_items_visible_or_sto
   check (
     slot_index >= 0
     or (
+      slot_index < 0
+      and loadout_slot is null
+    )
+    or (
       is_storage = true
       and parent_item_id is null
       and loadout_slot is null
@@ -159,6 +164,7 @@ alter table public.inventory_items
   alter column quantity type numeric(12,1) using quantity::numeric;
 
 alter table public.inventory_items
+  add column if not exists display_name text,
   add column if not exists enchantment text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
@@ -1962,6 +1968,7 @@ as $$
     'characterId', p_item.character_id,
     'parentItemId', p_item.parent_item_id,
     'name', p_item.item_name,
+    'displayName', p_item.display_name,
     'type', p_item.item_type,
     'rarity', p_item.rarity,
     'quantity', p_item.quantity,
@@ -2231,6 +2238,7 @@ language sql
 immutable
 as $$
   select a.item_name = b.item_name
+    and coalesce(a.display_name, '') = coalesce(b.display_name, '')
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
@@ -2382,6 +2390,7 @@ begin
 
   if v_target.id is not null then
     if v_target.item_name = v_item_name
+      and coalesce(v_target.display_name, '') = ''
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
@@ -2440,6 +2449,9 @@ declare
   v_slot_index int;
   v_loadout_slot text;
   v_capacity int;
+  v_original_parent_item_id uuid;
+  v_original_slot_index int;
+  v_fallback_slot_index int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -2451,6 +2463,10 @@ begin
 
   if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
+  end if;
+
+  if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
+    raise exception 'Only pet items can be named.';
   end if;
 
   if v_profile.role = 'dm'::public.user_role then
@@ -2510,6 +2526,22 @@ begin
     end if;
   end if;
 
+  if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
+    raise exception 'Only pet items can be named.';
+  end if;
+
+  if v_patch ? 'displayName' then
+    update public.inventory_items
+    set display_name = nullif(left(trim(coalesce(v_patch->>'displayName', '')), 80), '')
+    where id = p_item_id
+    returning * into v_item;
+  elsif v_item.item_type <> 'pet' and v_item.display_name is not null then
+    update public.inventory_items
+    set display_name = null
+    where id = p_item_id
+    returning * into v_item;
+  end if;
+
   if v_patch ? 'loadoutSlot' then
     v_loadout_slot := nullif(v_patch->>'loadoutSlot', '');
 
@@ -2564,6 +2596,8 @@ begin
   end if;
 
   if v_patch ? 'slotIndex' or v_patch ? 'parentItemId' then
+    v_original_parent_item_id := v_item.parent_item_id;
+    v_original_slot_index := v_item.slot_index;
     v_parent_item_id := case when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid else v_item.parent_item_id end;
     v_slot_index := case when v_patch ? 'slotIndex' then (v_patch->>'slotIndex')::int else v_item.slot_index end;
     v_capacity := public.assert_inventory_slot_capacity(v_character, v_parent_item_id, v_slot_index);
@@ -2578,17 +2612,36 @@ begin
     limit 1;
 
     if v_target.id is not null then
-      if public.inventory_items_stackable(v_item, v_target) then
-        update public.inventory_items
-        set quantity = quantity + v_item.quantity
-        where id = v_target.id
-        returning * into v_target;
+      update public.inventory_items
+      set parent_item_id = v_parent_item_id, slot_index = -1000000
+      where id = v_target.id;
 
-        delete from public.inventory_items where id = v_item.id;
-        return public.inventory_item_record_to_json(v_target);
+      if v_item.loadout_slot is null then
+        update public.inventory_items
+        set parent_item_id = v_parent_item_id, slot_index = v_slot_index, loadout_slot = null
+        where id = p_item_id
+        returning * into v_item;
+
+        update public.inventory_items
+        set parent_item_id = v_original_parent_item_id, slot_index = v_original_slot_index, loadout_slot = null
+        where id = v_target.id;
+      else
+        update public.inventory_items
+        set parent_item_id = v_parent_item_id, slot_index = v_slot_index, loadout_slot = null
+        where id = p_item_id
+        returning * into v_item;
+
+        v_fallback_slot_index := public.find_first_free_inventory_slot(v_item.character_id, v_parent_item_id, v_capacity);
+        if v_fallback_slot_index is null then
+          raise exception 'No open inventory slot for the item already there.';
+        end if;
+
+        update public.inventory_items
+        set parent_item_id = v_parent_item_id, slot_index = v_fallback_slot_index, loadout_slot = null
+        where id = v_target.id;
       end if;
 
-      raise exception 'That inventory slot is already occupied.';
+      return public.inventory_item_record_to_json(v_item);
     end if;
 
     update public.inventory_items
@@ -2716,6 +2769,7 @@ create table if not exists public.house_inventory_items (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
   item_name text not null,
+  display_name text,
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
@@ -2746,6 +2800,13 @@ alter table public.house_inventory_items
   alter column quantity type numeric(12,1) using quantity::numeric;
 
 alter table public.house_inventory_items
+  drop constraint if exists house_inventory_items_slot_index_check;
+
+alter table public.house_inventory_items
+  add constraint house_inventory_items_slot_index_check check (slot_index >= -1);
+
+alter table public.house_inventory_items
+  add column if not exists display_name text,
   add column if not exists enchantment text,
   add column if not exists material text,
   add column if not exists enhancement_count int not null default 0 check (enhancement_count between 0 and 3),
@@ -2892,6 +2953,7 @@ as $$
     'characterId', p_item.owner_user_id,
     'parentItemId', null,
     'name', p_item.item_name,
+    'displayName', p_item.display_name,
     'type', p_item.item_type,
     'rarity', p_item.rarity,
     'quantity', p_item.quantity,
@@ -2934,6 +2996,7 @@ language sql
 immutable
 as $$
   select a.item_name = b.item_name
+    and coalesce(a.display_name, '') = coalesce(b.display_name, '')
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
@@ -3096,6 +3159,7 @@ begin
 
   if v_target.id is not null then
     if v_target.item_name = v_item_name
+      and coalesce(v_target.display_name, '') = ''
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
@@ -3177,6 +3241,7 @@ declare
   v_target public.house_inventory_items%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_slot_index int;
+  v_original_slot_index int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -3188,6 +3253,10 @@ begin
 
   if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
+  end if;
+
+  if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
+    raise exception 'Only pet items can be named.';
   end if;
 
   if v_profile.role = 'dm'::public.user_role then
@@ -3216,7 +3285,24 @@ begin
     returning * into v_item;
   end if;
 
+  if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
+    raise exception 'Only pet items can be named.';
+  end if;
+
+  if v_patch ? 'displayName' then
+    update public.house_inventory_items
+    set display_name = nullif(left(trim(coalesce(v_patch->>'displayName', '')), 80), '')
+    where id = p_item_id
+    returning * into v_item;
+  elsif v_item.item_type <> 'pet' and v_item.display_name is not null then
+    update public.house_inventory_items
+    set display_name = null
+    where id = p_item_id
+    returning * into v_item;
+  end if;
+
   if v_patch ? 'slotIndex' then
+    v_original_slot_index := v_item.slot_index;
     v_slot_index := (v_patch->>'slotIndex')::int;
     if v_slot_index < 0 or v_slot_index >= v_house.inventory_slots then
       raise exception 'House slot is outside the house capacity.';
@@ -3230,17 +3316,20 @@ begin
     limit 1;
 
     if v_target.id is not null then
-      if public.house_inventory_items_stackable(v_item, v_target) then
-        update public.house_inventory_items
-        set quantity = quantity + v_item.quantity
-        where id = v_target.id
-        returning * into v_target;
+      update public.house_inventory_items
+      set slot_index = -1
+      where id = v_target.id;
 
-        delete from public.house_inventory_items where id = v_item.id;
-        return public.house_item_record_to_json(v_target);
-      end if;
+      update public.house_inventory_items
+      set slot_index = v_slot_index
+      where id = p_item_id
+      returning * into v_item;
 
-      raise exception 'That house slot is already occupied.';
+      update public.house_inventory_items
+      set slot_index = v_original_slot_index
+      where id = v_target.id;
+
+      return public.house_item_record_to_json(v_item);
     end if;
 
     update public.house_inventory_items
@@ -3335,6 +3424,7 @@ begin
   from public.house_inventory_items h
   where h.owner_user_id = v_character.owner_user_id
     and h.item_name = v_item.item_name
+    and coalesce(h.display_name, '') = coalesce(v_item.display_name, '')
     and h.item_type = v_item.item_type
     and h.rarity = v_item.rarity
     and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
@@ -3368,6 +3458,7 @@ begin
     owner_user_id,
     slot_index,
     item_name,
+    display_name,
     item_type,
     rarity,
     quantity,
@@ -3386,6 +3477,7 @@ begin
     v_character.owner_user_id,
     v_slot_index,
     v_item.item_name,
+    v_item.display_name,
     v_item.item_type,
     v_item.rarity,
     v_item.quantity,

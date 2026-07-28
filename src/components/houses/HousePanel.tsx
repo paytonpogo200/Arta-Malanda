@@ -22,6 +22,7 @@ type HousePanelProps = {
 
 type ItemDraft = {
   name: string;
+  displayName: string;
   type: ItemType;
   rarity: ItemRarity;
   quantity: number;
@@ -40,6 +41,7 @@ type PropertyDraft = {
 
 const EMPTY_ITEM: ItemDraft = {
   name: '',
+  displayName: '',
   type: 'misc',
   rarity: 'Common',
   quantity: 1,
@@ -109,6 +111,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     setItemModal({ slot, item });
     setItemDraft(item ? {
       name: item.name,
+      displayName: item.displayName ?? '',
       type: item.type,
       rarity: item.rarity,
       quantity: item.quantity,
@@ -184,8 +187,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...itemDraft,
         name: itemDraft.name.trim(),
+        type: itemDraft.type,
+        rarity: itemDraft.rarity,
+        quantity: Math.max(quantityStepForItem(itemDraft), itemDraft.quantity),
         isStorage: itemDraft.type === 'storage',
         storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
         enchantment: itemDraft.enchantment.trim() || null
@@ -202,6 +207,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       body: JSON.stringify({ slotIndex })
     });
     window.setTimeout(() => setTargetSlot(null), 120);
+  }
+
+  async function savePetDisplayName(event: FormEvent) {
+    event.preventDefault();
+    if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManage) return;
+    await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName: itemDraft.displayName.trim() || null })
+    });
   }
 
   async function dropItem(item: InventoryItem) {
@@ -315,7 +330,28 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       )}
 
       {itemModal && (
-        <Modal title={itemModal.item ? itemModal.item.name : 'Add house item'} onClose={() => setItemModal(null)}>
+        <Modal title={itemModal.item ? (itemModal.item.displayName || itemModal.item.name) : 'Add house item'} onClose={() => setItemModal(null)}>
+          {itemModal.item?.type === 'pet' && (
+            <div className="mb-3 space-y-3">
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm">
+                <p className="font-black text-[var(--paper)]">{itemModal.item.displayName || itemModal.item.name}</p>
+                <p className="mt-1 font-black uppercase tracking-wide text-[var(--brass)]">Animal: {itemModal.item.name}</p>
+              </div>
+              {canManage && (
+                <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
+                    <TextField
+                      placeholder={itemModal.item.name}
+                      value={itemDraft.displayName}
+                      onChange={(event) => setItemDraft({ ...itemDraft, displayName: event.target.value })}
+                    />
+                  </label>
+                  <Button variant="secondary" disabled={saving}>Save pet name</Button>
+                </form>
+              )}
+            </div>
+          )}
           {itemModal.item ? (
             <div className="space-y-3">
               <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">{itemModal.item.type} · {itemModal.item.rarity} · Quantity {itemModal.item.quantity}</p>

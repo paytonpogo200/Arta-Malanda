@@ -35,6 +35,7 @@ type SlotTarget = {
 
 type ItemDraft = {
   name: string;
+  displayName: string;
   type: ItemType;
   rarity: ItemRarity;
   quantity: number;
@@ -51,6 +52,7 @@ type ItemDraft = {
 
 const EMPTY_DRAFT: ItemDraft = {
   name: '',
+  displayName: '',
   type: 'misc',
   rarity: 'Common',
   quantity: 1,
@@ -89,28 +91,6 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
 }
 
-function modifierSignature(item: InventoryItem) {
-  return JSON.stringify(Object.entries(item.modifiers ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-}
-
-function stackableItems(a: InventoryItem, b: InventoryItem) {
-  return a.name === b.name
-    && a.type === b.type
-    && a.rarity === b.rarity
-    && !a.isStorage
-    && !b.isStorage
-    && (a.enchantment ?? '') === (b.enchantment ?? '')
-    && (a.material ?? '') === (b.material ?? '')
-    && a.enhancementCount === b.enhancementCount
-    && a.isTwoHanded === b.isTwoHanded
-    && (a.potionStrength ?? '') === (b.potionStrength ?? '')
-    && (a.potionProperty ?? '') === (b.potionProperty ?? '')
-    && (a.potionQuality ?? '') === (b.potionQuality ?? '')
-    && modifierSignature(a) === modifierSignature(b)
-    && a.loadoutSlot === null
-    && b.loadoutSlot === null;
-}
-
 function inferStorageCapacity(itemName: string) {
   const normalized = itemName.toLowerCase();
   if (normalized.includes('bag of holding')) return 500;
@@ -120,6 +100,14 @@ function inferStorageCapacity(itemName: string) {
   if (normalized.includes('waist pouch') || normalized.includes('pouch')) return 1;
   if (normalized.includes('satchel')) return 3;
   return 6;
+}
+
+function firstOpenSlot(items: InventoryItem[], parentItemId: string | null, capacity: number) {
+  const occupied = new Set(items.filter((item) => sameContainer(item, parentItemId)).map((item) => item.slotIndex));
+  for (let slot = 0; slot < capacity; slot += 1) {
+    if (!occupied.has(slot)) return slot;
+  }
+  return null;
 }
 
 function itemSupportsLoadoutDetails(type: ItemType) {
@@ -156,6 +144,7 @@ function potionQualityCanApply(item: Pick<ItemDraft, 'name' | 'type' | 'potionPr
 function draftFromItem(item: InventoryItem): ItemDraft {
   return {
     name: item.name,
+    displayName: item.displayName ?? '',
     type: item.type,
     rarity: item.rarity,
     quantity: item.quantity,
@@ -296,6 +285,7 @@ export function InventoryPanel({
   function chooseCatalogItem(item: ItemCatalogEntry) {
     setDraft({
       name: item.name,
+      displayName: '',
       type: item.type,
       rarity: item.rarity,
       quantity: Math.max(item.quantityStep || 1, item.quantityStep || 1),
@@ -367,8 +357,10 @@ export function InventoryPanel({
           onItemsChanged?.(next);
           return next;
         });
+        setModal((current) => current?.item?.id === itemId ? null : current);
         return;
       }
+      setModal((current) => current?.item?.id === updated.id ? { ...current, item: updated } : current);
       setItems((current) => {
         const withoutMoved = current.filter((item) => item.id !== itemId);
         const replaced = withoutMoved.map((item) => item.id === updated.id ? updated : item);
@@ -432,6 +424,15 @@ export function InventoryPanel({
     });
   }
 
+  async function savePetDisplayName(event: FormEvent) {
+    event.preventDefault();
+    if (!modal?.item || modal.item.type !== 'pet' || !canManage) return;
+    const displayName = draft.displayName.trim();
+    const optimisticItems = items.map((item) => item.id === modal.item!.id ? { ...item, displayName: displayName || undefined } : item);
+    setDraft({ ...draft, displayName });
+    await patchItemState(modal.item.id, { displayName: displayName || null }, optimisticItems);
+  }
+
   async function moveItem(itemId: string, slot: number, parentItemId: string | null) {
     if (!canManage) return;
     const movingItem = items.find((item) => item.id === itemId);
@@ -441,13 +442,24 @@ export function InventoryPanel({
     const targetItem = items.find((item) => item.id !== itemId && sameContainer(item, parentItemId) && item.slotIndex === slot);
     let optimisticItems = items;
     if (movingItem) {
-      if (targetItem && stackableItems(movingItem, targetItem)) {
-        optimisticItems = items
-          .filter((item) => item.id !== movingItem.id)
-          .map((item) => item.id === targetItem.id ? { ...item, quantity: item.quantity + movingItem.quantity } : item);
-      } else if (!targetItem) {
-        optimisticItems = items.map((item) => item.id === itemId ? { ...item, parentItemId, slotIndex: slot, loadoutSlot: null } : item);
-      }
+      const targetCapacity = parentItemId
+        ? items.find((item) => item.id === parentItemId)?.storageCapacity ?? 0
+        : character.inventorySlots;
+      const targetFallbackSlot = targetItem && movingItem.loadoutSlot
+        ? firstOpenSlot(items, parentItemId, targetCapacity)
+        : null;
+      optimisticItems = items.map((item) => {
+        if (item.id === movingItem.id) return { ...item, parentItemId, slotIndex: slot, loadoutSlot: null };
+        if (targetItem && item.id === targetItem.id) {
+          return {
+            ...item,
+            parentItemId: movingItem.loadoutSlot ? parentItemId : movingItem.parentItemId,
+            slotIndex: movingItem.loadoutSlot ? targetFallbackSlot ?? item.slotIndex : movingItem.slotIndex,
+            loadoutSlot: null
+          };
+        }
+        return item;
+      });
     }
     await patchItemState(itemId, { parentItemId, slotIndex: slot, loadoutSlot: null }, optimisticItems);
     window.setTimeout(() => setTarget(null), 120);
@@ -752,15 +764,18 @@ export function InventoryPanel({
       )}
 
       {modal && (
-        <Modal title={modal.item ? modal.item.name : 'Add item'} onClose={() => setModal(null)}>
+        <Modal title={modal.item ? (modal.item.displayName || modal.item.name) : 'Add item'} onClose={() => setModal(null)}>
           {modal.item ? (
             <div className="space-y-3">
               <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(modal.item.rarity)} ${modal.item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(modal.item) ? 'inventory-enhanced' : ''}`}>
                 <div className="relative z-10 flex items-start gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-black/25 text-[var(--brass)]"><ItemIcon type={modal.item.type} size={22} /></span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-lg font-black leading-5">{modal.item.name}</p>
+                    <p className="text-lg font-black leading-5">{modal.item.displayName || modal.item.name}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
+                    {modal.item.type === 'pet' && (
+                      <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Animal: {modal.item.name}</p>
+                    )}
                     {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">Material: {modal.item.material}</p>}
                     {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
                     {modal.item.enchantment && (
@@ -788,6 +803,19 @@ export function InventoryPanel({
                   </div>
                 </div>
               </div>
+              {canManage && modal.item.type === 'pet' && (
+                <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
+                    <TextField
+                      placeholder={modal.item.name}
+                      value={draft.displayName}
+                      onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
+                    />
+                  </label>
+                  <Button variant="secondary" disabled={saving}>Save pet name</Button>
+                </form>
+              )}
               {canManage && (
                 <div className="grid gap-2">
                   {!modal.item.loadoutSlot && (

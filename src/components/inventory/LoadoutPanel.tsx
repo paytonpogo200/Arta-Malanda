@@ -75,7 +75,10 @@ export const LoadoutPanel = memo(function LoadoutPanel({
                 >
                   <span className="text-[var(--brass)]"><ItemIcon type={item.type} size={17} /></span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-black leading-4">{item.name}</span>
+                    <span className="block text-sm font-black leading-4">{item.displayName || item.name}</span>
+                    {item.type === 'pet' && item.displayName && (
+                      <span className="block truncate text-[10px] font-black uppercase text-[var(--muted)]">{item.name}</span>
+                    )}
                     {item.enchantment && (
                       <span className="block truncate text-[10px] font-black uppercase text-[#56e2c2]">
                         {enchantmentSpell?.name ?? item.enchantment}{enchantmentSpell ? ` · ${spellManaText(enchantmentSpell)}` : ''}
