@@ -100,10 +100,12 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
 
 function inferStorageCapacity(itemName: string) {
   const normalized = itemName.toLowerCase();
-  if (normalized.includes('bag of holding')) return 500;
-  if (normalized.includes('heavy duffle')) return 12;
+  if (normalized.includes('bag of holding')) return 100;
+  if (normalized.includes('heavy wagon')) return 60;
+  if (normalized.includes('light wagon')) return 25;
+  if (normalized.includes('heavy duffle')) return 10;
   if (normalized.includes('light duffle')) return 6;
-  if (normalized.includes('back bag') || normalized.includes('backpack')) return 4;
+  if (normalized.includes('back bag') || normalized.includes('backpack')) return 3;
   if (normalized.includes('waist pouch') || normalized.includes('pouch')) return 1;
   if (normalized.includes('satchel')) return 3;
   return 6;

@@ -48,17 +48,17 @@ export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): 
   if (combined.includes('scale') || combined.includes('material')) return 'material';
   if (combined.includes('shield')) return 'shield';
   if (combined.includes('armor') || combined.includes('armour')) return 'armor';
-  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('axe') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand') || combined.includes('arrows')) return 'weapon';
   if (combined.includes('animal') || combined.includes('horse') || combined.includes('dog') || combined.includes('pet')) return 'pet';
-  if (combined.includes('storage') || combined.includes('bag') || combined.includes('duffle') || combined.includes('pouch') || combined.includes('satchel')) return 'storage';
+  if (combined.includes('storage') || combined.includes('bag') || combined.includes('duffle') || combined.includes('pouch') || combined.includes('satchel') || combined.includes('wagon')) return 'storage';
   if (combined.includes('potion') || combined.includes('elixir') || combined.includes('nectar')) return 'potion';
   if (combined.includes('ore') || combined.includes('ingot') || combined.includes('metal')) return 'ore';
-  if (combined.includes('food') || combined.includes('ration')) return 'food';
+  if (combined.includes('food') || combined.includes('ration') || combined.includes('meal')) return 'food';
   if (combined.includes('plant') || combined.includes('herb') || combined.includes('flower') || combined.includes('root')) return 'plant';
   if (combined.includes('fabric') || combined.includes('cloth') || combined.includes('leather') || combined.includes('clothing') || combined.includes('cloak')) return 'fabric';
   if (combined.includes('scroll') || combined.includes('map') || combined.includes('lore') || combined.includes('tome')) return 'quest';
   if (combined.includes('belt') || combined.includes('ring') || combined.includes('jewel') || combined.includes('jewlery') || combined.includes('jewelry') || combined.includes('gem') || combined.includes('rune') || combined.includes('upgrade')) return 'accessory';
-  if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch')) return 'tool';
+  if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch') || combined.includes('blanket') || combined.includes('cooking pot') || combined.includes('ink and paper') || combined.includes('lock') || combined.includes('hammer') || combined.includes('axe')) return 'tool';
+  if (combined.includes('weapon') || combined.includes('sword') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand') || combined.includes('arrows')) return 'weapon';
   return 'misc';
 }
 
@@ -139,7 +139,19 @@ export function parseLootWorkbook(buffer: Buffer) {
   const adjustedWeightFormula = text(helper?.K2?.f);
 
   const rows = lootRows.slice(1).map((row) => {
-    const name = text(row[0]).replace(/\bMountian Rune\b/gi, 'Mountain Rune');
+    const name = text(row[0])
+      .replace(/\bMountian Rune\b/gi, 'Mountain Rune')
+      .replace(/\bFine Clothe\b/gi, 'Fine Cloth')
+      .replace(/\bCooking pots\b/gi, 'Cooking Pots')
+      .replace(/\bInk and paper\b/gi, 'Ink and Paper')
+      .replace(/\bStandard hammer\b/gi, 'Standard Hammer')
+      .replace(/\bStandard axe\b/gi, 'Standard Axe')
+      .replace(/\bWinter wear\b/gi, 'Winter Wear')
+      .replace(/\bHeat wear\b/gi, 'Heat Wear')
+      .replace(/\bRainproof wear\b/gi, 'Rainproof Wear')
+      .replace(/\bBasic meal\b/gi, 'Basic Meal')
+      .replace(/\bTavern meal\b/gi, 'Tavern Meal')
+      .replace(/\bFine inn\b/gi, 'Fine Inn');
     if (!name) return null;
     const type = categoryToItemType(row[1], name);
     const pool = `${typeLabel(type)} Catalog`;

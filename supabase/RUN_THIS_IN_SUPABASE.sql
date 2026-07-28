@@ -1480,10 +1480,12 @@ language sql
 stable
 as $$
   select case
-    when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 500
-    when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 12
+    when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 100
+    when lower(coalesce(p_item_name, '')) like '%heavy wagon%' then 60
+    when lower(coalesce(p_item_name, '')) like '%light wagon%' then 25
+    when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 10
     when lower(coalesce(p_item_name, '')) like '%light duffle%' then 6
-    when lower(coalesce(p_item_name, '')) like '%back bag%' or lower(coalesce(p_item_name, '')) like '%backpack%' then 4
+    when lower(coalesce(p_item_name, '')) like '%back bag%' or lower(coalesce(p_item_name, '')) like '%backpack%' then 3
     when lower(coalesce(p_item_name, '')) like '%waist pouch%' or lower(coalesce(p_item_name, '')) like '%pouch%' then 1
     when lower(coalesce(p_item_name, '')) like '%satchel%' then 3
     else 6
@@ -1626,6 +1628,50 @@ begin
   perform public.upsert_item_catalog_entry('Offensive Support Magic Spell Book', 'quest', 'Rare', 'Books', array['Offensive Support research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Offensive Support magic spell book from library research.', true, 17);
   perform public.upsert_item_catalog_entry('Enhancement Magic Spell Book', 'quest', 'Rare', 'Books', array['Enhancement research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Enhancement magic spell book from library research.', true, 18);
   perform public.upsert_item_catalog_entry('Utility Magic Spell Book', 'quest', 'Rare', 'Books', array['Utility research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Utility magic spell book from library research.', true, 19);
+  perform public.upsert_item_catalog_entry('Waist Pouch', 'storage', 'Common', 'Market Storage', array['1 storage slot']::text[], 1, false, '{}'::jsonb, '', false, 1, 'A compact pouch with 1 storage slot.', true, 2000);
+  perform public.upsert_item_catalog_entry('Back Bag', 'storage', 'Common', 'Market Storage', array['3 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 3, 'A back bag with 3 storage slots.', true, 2010);
+  perform public.upsert_item_catalog_entry('Light Duffle', 'storage', 'Uncommon', 'Market Storage', array['6 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 6, 'A light duffle with 6 storage slots.', true, 2020);
+  perform public.upsert_item_catalog_entry('Heavy Duffle', 'storage', 'Rare', 'Market Storage', array['10 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 10, 'A heavy duffle with 10 storage slots.', true, 2030);
+  perform public.upsert_item_catalog_entry('Bag of Holding', 'storage', 'Mythical', 'Market Storage', array['100 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 100, 'A magical bag with 100 storage slots.', true, 2040);
+  perform public.upsert_item_catalog_entry('Light Wagon', 'storage', 'Rare', 'Market Storage', array['25 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 25, 'A light wagon with 25 storage slots.', true, 2050);
+  perform public.upsert_item_catalog_entry('Heavy Wagon', 'storage', 'Epic', 'Market Storage', array['60 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 60, 'A heavy wagon with 60 storage slots.', true, 2060);
+  perform public.upsert_item_catalog_entry('Torch', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A basic torch for travel and dungeon work.', true, 2070);
+  perform public.upsert_item_catalog_entry('Rope', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A coil of sturdy rope.', true, 2080);
+  perform public.upsert_item_catalog_entry('Blanket', 'fabric', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A simple travel blanket.', true, 2090);
+  perform public.upsert_item_catalog_entry('Cooking Pots', 'tool', 'Common', 'Market Supplies', array['Camp cooking']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cooking pots for camp meals.', true, 2100);
+  perform public.upsert_item_catalog_entry('Cloth', 'fabric', 'Common', 'Market Supplies', array['Fabric']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Common cloth.', true, 2110);
+  perform public.upsert_item_catalog_entry('Fine Cloth', 'fabric', 'Common', 'Market Supplies', array['Fine fabric']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Fine cloth.', true, 2120);
+  perform public.upsert_item_catalog_entry('Ink and Paper', 'tool', 'Common', 'Market Supplies', array['Writing supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Ink and paper for notes, maps, and records.', true, 2130);
+  perform public.upsert_item_catalog_entry('Lock', 'tool', 'Common', 'Market Supplies', array['Security supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A standard lock.', true, 2140);
+  perform public.upsert_item_catalog_entry('Standard Hammer', 'tool', 'Common', 'Market Supplies', array['Tool']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A standard hammer.', true, 2150);
+  perform public.upsert_item_catalog_entry('Standard Axe', 'tool', 'Common', 'Market Supplies', array['Tool']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A standard axe.', true, 2160);
+  perform public.upsert_item_catalog_entry('Quartz', 'ore', 'Rare', 'Market Jewels', array['Gem']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A quartz gem.', true, 2170);
+  perform public.upsert_item_catalog_entry('Emerald', 'ore', 'Epic', 'Market Jewels', array['Gem']::text[], 1, true, '{}'::jsonb, '', false, 0, 'An emerald gem.', true, 2180);
+  perform public.upsert_item_catalog_entry('Ruby', 'ore', 'Epic', 'Market Jewels', array['Gem']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A ruby gem.', true, 2190);
+  perform public.upsert_item_catalog_entry('Sapphire', 'ore', 'Legendary', 'Market Jewels', array['Gem']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A sapphire gem.', true, 2200);
+  perform public.upsert_item_catalog_entry('Winter Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Cold weather clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for winter travel.', true, 2210);
+  perform public.upsert_item_catalog_entry('Heat Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Hot weather clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for hot climates.', true, 2220);
+  perform public.upsert_item_catalog_entry('Rainproof Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Rainproof clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for wet weather.', true, 2230);
+  perform public.upsert_item_catalog_entry('Basic Meal', 'food', 'Common', 'Market Tavern', array['Meal']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A basic meal from the market tavern.', true, 2240);
+  perform public.upsert_item_catalog_entry('Tavern Meal', 'food', 'Common', 'Market Tavern', array['Meal']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A filling tavern meal.', true, 2250);
+  perform public.upsert_item_catalog_entry('Inn Room', 'quest', 'Common', 'Market Tavern', array['Lodging']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A standard inn room voucher.', true, 2260);
+  perform public.upsert_item_catalog_entry('Fine Inn', 'quest', 'Common', 'Market Tavern', array['Fine lodging']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A fine inn voucher.', true, 2270);
+  perform public.upsert_item_catalog_entry('Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A riding horse.', true, 2280);
+  perform public.upsert_item_catalog_entry('War Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A trained war horse.', true, 2290);
+  perform public.upsert_item_catalog_entry('Dog', 'pet', 'Epic', 'Market Stable', array['Pet']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A loyal dog.', true, 2300);
+
+  update public.item_catalog
+  set storage_capacity = case item_key
+    when 'waist-pouch' then 1
+    when 'back-bag' then 3
+    when 'light-duffle' then 6
+    when 'heavy-duffle' then 10
+    when 'bag-of-holding' then 100
+    when 'light-wagon' then 25
+    when 'heavy-wagon' then 60
+    else storage_capacity
+  end
+  where item_key in ('waist-pouch', 'back-bag', 'light-duffle', 'heavy-duffle', 'bag-of-holding', 'light-wagon', 'heavy-wagon');
   perform public.upsert_item_catalog_entry('Acer Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 10);
   perform public.upsert_item_catalog_entry('Aethercap', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 20);
   perform public.upsert_item_catalog_entry('Agilis', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Agility']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Agility property when used as an ingredient', true, 30);
@@ -1781,6 +1827,17 @@ as $$
     when lower(trim(coalesce(p_item_name, ''))) = 'lesser scorcery potion' then 'Lesser Sorcery Potion'
     when lower(trim(coalesce(p_item_name, ''))) = 'greater scorcery potion' then 'Greater Sorcery Potion'
     when lower(trim(coalesce(p_item_name, ''))) = 'greatest scorcery potion' then 'Greatest Sorcery Potion'
+    when lower(trim(coalesce(p_item_name, ''))) = 'fine clothe' then 'Fine Cloth'
+    when lower(trim(coalesce(p_item_name, ''))) = 'cooking pots' then 'Cooking Pots'
+    when lower(trim(coalesce(p_item_name, ''))) = 'ink and paper' then 'Ink and Paper'
+    when lower(trim(coalesce(p_item_name, ''))) = 'standard hammer' then 'Standard Hammer'
+    when lower(trim(coalesce(p_item_name, ''))) = 'standard axe' then 'Standard Axe'
+    when lower(trim(coalesce(p_item_name, ''))) = 'winter wear' then 'Winter Wear'
+    when lower(trim(coalesce(p_item_name, ''))) = 'heat wear' then 'Heat Wear'
+    when lower(trim(coalesce(p_item_name, ''))) = 'rainproof wear' then 'Rainproof Wear'
+    when lower(trim(coalesce(p_item_name, ''))) = 'basic meal' then 'Basic Meal'
+    when lower(trim(coalesce(p_item_name, ''))) = 'tavern meal' then 'Tavern Meal'
+    when lower(trim(coalesce(p_item_name, ''))) = 'fine inn' then 'Fine Inn'
     else trim(coalesce(p_item_name, ''))
   end
 $$;
@@ -4586,12 +4643,13 @@ values
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
   ('calostrynn', 'calostrynn-spells', 'Spell Registrar', 'Spell Shop', 'Spell Catalog', 40),
   ('calostrynn', 'calostrynn-library', 'The Grand Calostrynn Library', 'Library', 'Books & Research', 45),
-  ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50)
+  ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50),
+  ('calostrynn', 'calostrynn-city-market', 'City Market', 'Market', 'General Goods', 60)
 on conflict (vendor_key) do nothing;
 
 delete from public.shop_vendors
 where city_key = 'calostrynn'
-  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-library', 'calostrynn-spells', 'calostrynn-blacksmith');
+  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-city-market', 'calostrynn-library', 'calostrynn-spells', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
@@ -4739,6 +4797,96 @@ join (values
   ('library-magical-research', 'Magical Research', 'Choose a spell category to receive a rare magic spell book for that category.', 'Rare', 2500, null, 'magical-research', 40)
 ) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, catalog_item_key, display_order)
 on v.vendor_key = 'calostrynn-library'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    price_coin = excluded.price_coin,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    is_available = excluded.is_available,
+    display_order = excluded.display_order,
+    updated_at = now();
+
+with city_market_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-city-market')
+delete from public.market_products p
+using city_market_vendor v
+where p.vendor_id = v.id
+  and p.product_key not in (
+    'city-market-waist-pouch',
+    'city-market-back-bag',
+    'city-market-light-duffle',
+    'city-market-heavy-duffle',
+    'city-market-bag-of-holding',
+    'city-market-light-wagon',
+    'city-market-heavy-wagon',
+    'city-market-torch',
+    'city-market-rope',
+    'city-market-blanket',
+    'city-market-cooking-pots',
+    'city-market-cloth',
+    'city-market-fine-cloth',
+    'city-market-ink-and-paper',
+    'city-market-lock',
+    'city-market-standard-hammer',
+    'city-market-standard-axe',
+    'city-market-quartz',
+    'city-market-emerald',
+    'city-market-ruby',
+    'city-market-sapphire',
+    'city-market-winter-wear',
+    'city-market-heat-wear',
+    'city-market-rainproof-wear',
+    'city-market-basic-meal',
+    'city-market-tavern-meal',
+    'city-market-inn-room',
+    'city-market-fine-inn',
+    'city-market-horse',
+    'city-market-war-horse',
+    'city-market-dog'
+  );
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, true, seed.display_order
+from public.shop_vendors v
+join (values
+  ('city-market-waist-pouch', 'Waist Pouch', 'Rowan sells a compact pouch with 1 storage slot.', 'storage', 'Common', 8, null, 'Rowan - Storage', 'waist-pouch', 10),
+  ('city-market-back-bag', 'Back Bag', 'Rowan sells a back bag with 3 storage slots.', 'storage', 'Common', 80, null, 'Rowan - Storage', 'back-bag', 20),
+  ('city-market-light-duffle', 'Light Duffle', 'Rowan sells a light duffle with 6 storage slots.', 'storage', 'Uncommon', 200, null, 'Rowan - Storage', 'light-duffle', 30),
+  ('city-market-heavy-duffle', 'Heavy Duffle', 'Rowan sells a heavy duffle with 10 storage slots.', 'storage', 'Rare', 500, null, 'Rowan - Storage', 'heavy-duffle', 40),
+  ('city-market-bag-of-holding', 'Bag of Holding', 'Rowan sells a magical bag with 100 storage slots.', 'storage', 'Mythical', 2500000, null, 'Rowan - Storage', 'bag-of-holding', 50),
+  ('city-market-light-wagon', 'Light Wagon', 'Rowan sells a light wagon with 25 storage slots.', 'storage', 'Rare', 2500, null, 'Rowan - Storage', 'light-wagon', 60),
+  ('city-market-heavy-wagon', 'Heavy Wagon', 'Rowan sells a heavy wagon with 60 storage slots.', 'storage', 'Epic', 6000, null, 'Rowan - Storage', 'heavy-wagon', 70),
+  ('city-market-torch', 'Torch', 'Cedrick sells a basic torch for travel and dungeon work.', 'tool', 'Common', 3, null, 'Cedrick - Supplies', 'torch', 100),
+  ('city-market-rope', 'Rope', 'Cedrick sells a coil of sturdy rope.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'rope', 110),
+  ('city-market-blanket', 'Blanket', 'Cedrick sells a simple travel blanket.', 'fabric', 'Common', 8, null, 'Cedrick - Supplies', 'blanket', 120),
+  ('city-market-cooking-pots', 'Cooking Pots', 'Cedrick sells cooking pots for camp meals.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'cooking-pots', 130),
+  ('city-market-cloth', 'Cloth', 'Cedrick sells common cloth.', 'fabric', 'Common', 2, null, 'Cedrick - Supplies', 'cloth', 140),
+  ('city-market-fine-cloth', 'Fine Cloth', 'Cedrick sells fine cloth.', 'fabric', 'Common', 50, null, 'Cedrick - Supplies', 'fine-cloth', 150),
+  ('city-market-ink-and-paper', 'Ink and Paper', 'Cedrick sells ink and paper for notes, maps, and records.', 'tool', 'Common', 5, null, 'Cedrick - Supplies', 'ink-and-paper', 160),
+  ('city-market-lock', 'Lock', 'Cedrick sells a standard lock.', 'tool', 'Common', 20, null, 'Cedrick - Supplies', 'lock', 170),
+  ('city-market-standard-hammer', 'Standard Hammer', 'Cedrick sells a standard hammer.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'standard-hammer', 180),
+  ('city-market-standard-axe', 'Standard Axe', 'Cedrick sells a standard axe.', 'tool', 'Common', 40, null, 'Cedrick - Supplies', 'standard-axe', 190),
+  ('city-market-quartz', 'Quartz', 'Dorien sells a quartz gem.', 'ore', 'Rare', 1000, null, 'Dorien - Jeweler', 'quartz', 220),
+  ('city-market-emerald', 'Emerald', 'Dorien sells an emerald gem.', 'ore', 'Epic', 4000, null, 'Dorien - Jeweler', 'emerald', 230),
+  ('city-market-ruby', 'Ruby', 'Dorien sells a ruby gem.', 'ore', 'Epic', 5000, null, 'Dorien - Jeweler', 'ruby', 240),
+  ('city-market-sapphire', 'Sapphire', 'Dorien sells a sapphire gem.', 'ore', 'Legendary', 10000, null, 'Dorien - Jeweler', 'sapphire', 250),
+  ('city-market-winter-wear', 'Winter Wear', 'Elara sells clothing suited for winter travel.', 'fabric', 'Uncommon', 50, null, 'Elara - Clothier', 'winter-wear', 300),
+  ('city-market-heat-wear', 'Heat Wear', 'Elara sells clothing suited for hot climates.', 'fabric', 'Uncommon', 40, null, 'Elara - Clothier', 'heat-wear', 310),
+  ('city-market-rainproof-wear', 'Rainproof Wear', 'Elara sells clothing suited for wet weather.', 'fabric', 'Uncommon', 60, null, 'Elara - Clothier', 'rainproof-wear', 320),
+  ('city-market-basic-meal', 'Basic Meal', 'Lucien serves a basic meal.', 'food', 'Common', 2, null, 'Lucien - Tavern Keep', 'basic-meal', 350),
+  ('city-market-tavern-meal', 'Tavern Meal', 'Lucien serves a filling tavern meal.', 'food', 'Common', 5, null, 'Lucien - Tavern Keep', 'tavern-meal', 360),
+  ('city-market-inn-room', 'Inn Room', 'Lucien offers a standard inn room voucher.', 'quest', 'Common', 10, null, 'Lucien - Tavern Keep', 'inn-room', 370),
+  ('city-market-fine-inn', 'Fine Inn', 'Lucien offers a fine inn voucher.', 'quest', 'Common', 50, null, 'Lucien - Tavern Keep', 'fine-inn', 380),
+  ('city-market-horse', 'Horse', 'Cassandra sells a riding horse.', 'pet', 'Rare', 1000, null, 'Cassandra - Stable Keeper', 'horse', 420),
+  ('city-market-war-horse', 'War Horse', 'Cassandra sells a trained war horse.', 'pet', 'Rare', 5000, null, 'Cassandra - Stable Keeper', 'war-horse', 430),
+  ('city-market-dog', 'Dog', 'Cassandra sells a loyal dog.', 'pet', 'Epic', 1000, null, 'Cassandra - Stable Keeper', 'dog', 440)
+) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, display_order)
+on v.vendor_key = 'calostrynn-city-market'
 on conflict (product_key) do update
 set vendor_id = excluded.vendor_id,
     item_name = excluded.item_name,
@@ -7691,6 +7839,110 @@ $$;
 grant execute on function public.loot_pool_record_to_json(public.loot_pools) to anon, authenticated;
 grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
+
+-- Seed/refresh City Market loot rows from the checked workbook shape without replacing the full generator table.
+do $$
+declare
+  v_row record;
+  v_pool_id uuid;
+begin
+  delete from public.loot_items
+  where lower(item_name) in (
+    'torch',
+    'rope',
+    'waist pouch',
+    'back bag',
+    'cloth',
+    'fine cloth',
+    'light duffle',
+    'horse',
+    'war horse',
+    'quartz',
+    'heavy duffle',
+    'emerald',
+    'ruby',
+    'sapphire',
+    'bag of holding',
+    'blanket',
+    'cooking pots',
+    'ink and paper',
+    'lock',
+    'standard hammer',
+    'standard axe',
+    'winter wear',
+    'heat wear',
+    'rainproof wear',
+    'dog'
+  );
+
+  for v_row in
+    select * from (values
+      ('Torch', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 3, 'Common', 100::numeric, 1::numeric, 3::numeric, false),
+      ('Rope', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 3, 'Common', 90::numeric, 1::numeric, 5::numeric, false),
+      ('Waist Pouch', 'storage', 'Storage Catalog', 'catalog-storage', array['Any']::text[], 1, 2, 'Common', 70::numeric, 1::numeric, 3::numeric, false),
+      ('Back Bag', 'storage', 'Storage Catalog', 'catalog-storage', array['Any']::text[], 1, 3, 'Common', 60::numeric, 1::numeric, 2::numeric, false),
+      ('Cloth', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 1, 2, 'Common', 80::numeric, 1::numeric, 3::numeric, false),
+      ('Fine Cloth', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 3, 5, 'Common', 75::numeric, 1::numeric, 5::numeric, false),
+      ('Light Duffle', 'storage', 'Storage Catalog', 'catalog-storage', array['Any']::text[], 2, 4, 'Uncommon', 50::numeric, 1::numeric, 2::numeric, false),
+      ('Horse', 'pet', 'Pet Catalog', 'catalog-pet', array['Any']::text[], 1, 3, 'Rare', 35::numeric, 1::numeric, 5::numeric, true),
+      ('War Horse', 'pet', 'Pet Catalog', 'catalog-pet', array['Any']::text[], 3, 5, 'Rare', 35::numeric, 1::numeric, 5::numeric, true),
+      ('Quartz', 'ore', 'Ore Catalog', 'catalog-ore', array['Any', 'Goblins']::text[], 1, 5, 'Rare', 40::numeric, 1::numeric, 5::numeric, false),
+      ('Heavy Duffle', 'storage', 'Storage Catalog', 'catalog-storage', array['Any']::text[], 2, 5, 'Rare', 35::numeric, 1::numeric, 2::numeric, false),
+      ('Emerald', 'ore', 'Ore Catalog', 'catalog-ore', array['Goblins', 'Caves']::text[], 2, 5, 'Epic', 30::numeric, 1::numeric, 4::numeric, false),
+      ('Ruby', 'ore', 'Ore Catalog', 'catalog-ore', array['Goblins', 'Caves']::text[], 3, 5, 'Epic', 20::numeric, 1::numeric, 3::numeric, false),
+      ('Sapphire', 'ore', 'Ore Catalog', 'catalog-ore', array['Goblins', 'Caves']::text[], 4, 5, 'Legendary', 10::numeric, 1::numeric, 2::numeric, false),
+      ('Bag of Holding', 'storage', 'Storage Catalog', 'catalog-storage', array['Any']::text[], 3, 5, 'Mythical', 2::numeric, 1::numeric, 1::numeric, false),
+      ('Blanket', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 5::numeric, false),
+      ('Cooking Pots', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 5::numeric, false),
+      ('Ink and Paper', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Lock', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Standard Hammer', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Standard Axe', 'tool', 'Tool Catalog', 'catalog-tool', array['Any']::text[], 1, 5, 'Common', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Winter Wear', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 1, 5, 'Uncommon', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Heat Wear', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 1, 5, 'Uncommon', 10::numeric, 1::numeric, 1::numeric, false),
+      ('Rainproof Wear', 'fabric', 'Fabric Catalog', 'catalog-fabric', array['Any']::text[], 1, 5, 'Uncommon', 5::numeric, 1::numeric, 1::numeric, false),
+      ('Dog', 'pet', 'Pet Catalog', 'catalog-pet', array['Any']::text[], 1, 5, 'Epic', 5::numeric, 1::numeric, 5::numeric, false)
+    ) as seed(item_name, item_type, pool_name, pool_key, biomes, min_difficulty, max_difficulty, rarity, loot_weight, min_quantity, max_quantity, tower_base_only)
+  loop
+    insert into public.loot_pools (pool_key, name, description, display_order)
+    values (v_row.pool_key, v_row.pool_name, 'Imported item catalog group.', 100)
+    on conflict (pool_key) do update
+    set name = excluded.name,
+        description = excluded.description
+    returning id into v_pool_id;
+
+    insert into public.loot_items (
+      pool_id,
+      item_name,
+      item_type,
+      rarity,
+      generator_biomes,
+      difficulty_min,
+      difficulty_max,
+      loot_weight,
+      tower_base_only,
+      min_quantity,
+      max_quantity,
+      notes,
+      is_active
+    )
+    values (
+      v_pool_id,
+      v_row.item_name,
+      public.normalize_item_type(v_row.item_type),
+      v_row.rarity::public.item_rarity,
+      v_row.biomes,
+      v_row.min_difficulty,
+      v_row.max_difficulty,
+      v_row.loot_weight,
+      v_row.tower_base_only,
+      v_row.min_quantity,
+      v_row.max_quantity,
+      '',
+      true
+    );
+  end loop;
+end $$;
 
 
 -- ============================================================
