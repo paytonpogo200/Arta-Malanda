@@ -2997,13 +2997,29 @@ create table if not exists public.campaign_properties (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.wagon_activity_log (
+  id uuid primary key default gen_random_uuid(),
+  wagon_item_id uuid not null references public.inventory_items(id) on delete cascade,
+  actor_character_id uuid references public.characters(id) on delete set null,
+  actor_name text not null default 'Unknown',
+  action text not null check (action in ('stored', 'taken')),
+  item_name text not null,
+  quantity numeric(12,1) not null default 1 check (quantity > 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists wagon_activity_log_wagon_created_idx
+  on public.wagon_activity_log (wagon_item_id, created_at desc);
+
 alter table public.player_houses enable row level security;
 alter table public.house_inventory_items enable row level security;
 alter table public.campaign_properties enable row level security;
+alter table public.wagon_activity_log enable row level security;
 
 revoke all on public.player_houses from anon, authenticated;
 revoke all on public.house_inventory_items from anon, authenticated;
 revoke all on public.campaign_properties from anon, authenticated;
+revoke all on public.wagon_activity_log from anon, authenticated;
 
 drop trigger if exists player_houses_touch_updated_at on public.player_houses;
 create trigger player_houses_touch_updated_at
@@ -3265,6 +3281,7 @@ end;
 $$;
 
 drop function if exists public.add_house_inventory_item(text, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
+drop function if exists public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
 
 create or replace function public.add_house_inventory_item(
   p_session_token text,
@@ -3278,7 +3295,14 @@ create or replace function public.add_house_inventory_item(
   p_is_storage boolean default false,
   p_storage_capacity int default 0,
   p_modifiers jsonb default '{}'::jsonb,
-  p_enchantment text default null
+  p_enchantment text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false,
+  p_potion_strength text default null,
+  p_potion_property text default null,
+  p_potion_quality text default null,
+  p_item_description text default null
 )
 returns jsonb
 language plpgsql
@@ -3296,9 +3320,11 @@ declare
   v_quantity numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_modifiers jsonb;
   v_material text := '';
-  v_is_two_handed boolean := false;
+  v_is_two_handed boolean := coalesce(p_is_two_handed, false);
+  v_enhancement_count int := least(3, greatest(0, coalesce(p_enhancement_count, 0)));
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_item_name text := public.normalize_item_name(p_item_name);
+  v_item_description text := left(trim(coalesce(p_item_description, '')), 1500);
   v_potion_strength text;
   v_potion_property text;
   v_potion_quality text;
@@ -3327,17 +3353,23 @@ begin
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers || v_modifiers;
     v_material := v_catalog.material;
-    v_is_two_handed := v_catalog.is_two_handed;
+    v_is_two_handed := v_is_two_handed or v_catalog.is_two_handed;
     v_storage_capacity := greatest(v_storage_capacity, v_catalog.storage_capacity);
+  end if;
+  if length(trim(coalesce(p_material, ''))) > 0 then
+    v_material := trim(p_material);
+  end if;
+  if length(trim(coalesce(p_enchantment, ''))) > 0 then
+    v_enhancement_count := 0;
   end if;
 
   if v_item_type = 'potion' then
-    v_potion_strength := public.potion_strength_from_name(v_item_name);
-    v_potion_property := public.potion_property_from_name(v_item_name);
+    v_potion_strength := coalesce(nullif(trim(coalesce(p_potion_strength, '')), ''), public.potion_strength_from_name(v_item_name));
+    v_potion_property := coalesce(nullif(trim(coalesce(p_potion_property, '')), ''), public.potion_property_from_name(v_item_name));
     v_potion_quality := case
       when v_potion_property in ('Healing', 'Mana Regen') then null
       when lower(v_item_name) = 'empty flask' then null
-      else public.potion_quality_from_name(v_item_name)
+      else coalesce(nullif(trim(coalesce(p_potion_quality, '')), ''), public.potion_quality_from_name(v_item_name))
     end;
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
@@ -3357,14 +3389,16 @@ begin
       and coalesce(v_target.display_name, '') = ''
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
+      and coalesce(v_target.item_description, '') = v_item_description
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
       and coalesce(v_target.potion_strength, '') = coalesce(v_potion_strength, '')
       and coalesce(v_target.potion_property, '') = coalesce(v_potion_property, '')
       and coalesce(v_target.potion_quality, '') = coalesce(v_potion_quality, '')
-      and v_target.enhancement_count = 0
+      and v_target.enhancement_count = v_enhancement_count
       and v_target.is_two_handed = v_is_two_handed
+      and v_target.modifiers = v_modifiers
       and v_target.is_storage = false
       and not coalesce(p_is_storage, false)
     then
@@ -3388,6 +3422,7 @@ begin
     quantity,
     is_storage,
     storage_capacity,
+    item_description,
     modifiers,
     enchantment,
     material,
@@ -3407,10 +3442,11 @@ begin
     v_quantity,
     coalesce(p_is_storage, false),
     case when coalesce(p_is_storage, false) then greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)) else 0 end,
+    v_item_description,
     v_modifiers,
     nullif(trim(coalesce(p_enchantment, '')), ''),
     v_material,
-    0,
+    v_enhancement_count,
     v_is_two_handed,
     v_potion_strength,
     v_potion_property,
@@ -3451,7 +3487,7 @@ begin
 
   v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'itemDescription' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -3468,6 +3504,7 @@ begin
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
+      item_description = case when v_patch ? 'itemDescription' then left(trim(coalesce(v_patch->>'itemDescription', '')), 1500) else item_description end,
       modifiers = case when v_patch ? 'modifiers' and jsonb_typeof(v_patch->'modifiers') = 'object' then v_patch->'modifiers' else modifiers end,
       enchantment = case
         when v_patch ? 'enhancementCount' and (v_patch->>'enhancementCount')::int > 0 then null
@@ -3480,7 +3517,14 @@ begin
         when v_patch ? 'enhancementCount' then least(3, greatest(0, (v_patch->>'enhancementCount')::int))
         else enhancement_count
       end,
-      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end
+      is_two_handed = case when v_patch ? 'isTwoHanded' then (v_patch->>'isTwoHanded')::boolean else is_two_handed end,
+      potion_strength = case when v_patch ? 'potionStrength' then nullif(trim(coalesce(v_patch->>'potionStrength', '')), '') else potion_strength end,
+      potion_property = case when v_patch ? 'potionProperty' then nullif(trim(coalesce(v_patch->>'potionProperty', '')), '') else potion_property end,
+      potion_quality = case
+        when v_patch ? 'potionProperty' and (v_patch->>'potionProperty') in ('Healing', 'Mana Regen') then null
+        when v_patch ? 'potionQuality' then nullif(trim(coalesce(v_patch->>'potionQuality', '')), '')
+        else potion_quality
+      end
     where id = p_item_id
     returning * into v_item;
 
@@ -3889,6 +3933,7 @@ begin
         'ownerCharacterId', owner_character.id,
         'ownerName', owner_character.name,
         'ownerUserId', owner_character.owner_user_id,
+        'locationName', owner_character.location_name,
         'canManage', v_profile.role = 'dm'::public.user_role or owner_character.owner_user_id is not distinct from v_profile.id
       ) order by owner_character.name, w.item_name), '[]'::jsonb)
       from public.inventory_items w
@@ -3909,6 +3954,31 @@ begin
         and w.parent_item_id is null
         and w.loadout_slot is null
         and public.city_names_match(owner_character.location_name, v_character.location_name)
+    ),
+    'activity', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', recent.id,
+        'wagonId', recent.wagon_item_id,
+        'actorCharacterId', recent.actor_character_id,
+        'actorName', recent.actor_name,
+        'action', recent.action,
+        'itemName', recent.item_name,
+        'quantity', recent.quantity,
+        'createdAt', recent.created_at
+      ) order by recent.created_at desc), '[]'::jsonb)
+      from (
+        select log_entry.*
+        from public.wagon_activity_log log_entry
+        join public.inventory_items w on w.id = log_entry.wagon_item_id
+        join public.characters owner_character on owner_character.id = w.character_id
+        where w.is_storage
+          and public.inventory_item_is_wagon(w.item_name, w.item_type)
+          and w.parent_item_id is null
+          and w.loadout_slot is null
+          and public.city_names_match(owner_character.location_name, v_character.location_name)
+        order by log_entry.created_at desc
+        limit 30
+      ) recent
     )
   );
 end;
@@ -3971,6 +4041,9 @@ begin
 
   if v_target.id is not null then
     if public.inventory_items_stackable(v_target, v_item) then
+      insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
+      values (v_wagon.id, v_actor.id, v_actor.name, 'stored', v_item.item_name, v_item.quantity);
+
       update public.inventory_items
       set quantity = quantity + v_item.quantity
       where id = v_target.id;
@@ -3988,6 +4061,9 @@ begin
       slot_index = p_slot_index,
       loadout_slot = null
   where id = v_item.id;
+
+  insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
+  values (v_wagon.id, v_actor.id, v_actor.name, 'stored', v_item.item_name, v_item.quantity);
 
   return public.get_location_wagon_storage(p_session_token, p_actor_character_id);
 end;
@@ -4056,6 +4132,9 @@ begin
 
   if v_target.id is not null then
     if public.inventory_items_stackable(v_target, v_item) then
+      insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
+      values (v_wagon.id, v_actor.id, v_actor.name, 'taken', v_item.item_name, v_item.quantity);
+
       update public.inventory_items
       set quantity = quantity + v_item.quantity
       where id = v_target.id;
@@ -4073,6 +4152,9 @@ begin
       slot_index = v_slot_index,
       loadout_slot = null
   where id = v_item.id;
+
+  insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
+  values (v_wagon.id, v_actor.id, v_actor.name, 'taken', v_item.item_name, v_item.quantity);
 
   return public.get_character_inventory(p_session_token, p_actor_character_id);
 end;
@@ -4308,7 +4390,7 @@ grant execute on function public.inventory_item_is_wagon(text, text) to anon, au
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.assert_house_slot_capacity(public.player_houses, uuid, int) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
-grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text) to anon, authenticated;
+grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text) to anon, authenticated;
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;

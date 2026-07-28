@@ -3,21 +3,20 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
+import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { LoadoutPanel } from '@/components/inventory/LoadoutPanel';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
-import { ITEM_TYPES, acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { normalizeWagonPayload, type WagonActivity, type WagonStorage } from '@/features/inventory/wagons';
 import {
-  EDITABLE_MODIFIER_FIELDS,
   canApplyRune,
-  canManuallyEnchant,
-  canManuallyEnhance,
   cleanModifiers,
   itemHasEnhancementVisual,
   modifierEntries,
@@ -25,9 +24,9 @@ import {
   modifierToneClass,
   spellForEnchantment
 } from '@/features/inventory/itemDetails';
-import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
+import { rarityClass } from '@/lib/utils/rarity';
 import { spellManaText } from '@/lib/utils/spells';
-import type { Character, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, LoadoutModifierKey, LoadoutModifiers, LoadoutSlot, Spell, WalletBalance } from '@/lib/types';
+import type { Character, InventoryItem, ItemCatalogEntry, LoadoutModifierKey, LoadoutSlot, Spell, WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -41,86 +40,6 @@ type AvailableRune = {
   source: 'inventory' | 'house';
   item: InventoryItem;
 };
-
-type WagonStorage = {
-  wagon: InventoryItem;
-  ownerCharacterId: string;
-  ownerName: string;
-  ownerUserId: string | null;
-  canManage: boolean;
-};
-
-type ItemDraft = {
-  name: string;
-  displayName: string;
-  itemDescription: string;
-  type: ItemType;
-  rarity: ItemRarity;
-  quantity: number;
-  storageCapacity: number;
-  enchantment: string;
-  material: string;
-  enhancementCount: number;
-  isTwoHanded: boolean;
-  modifiers: LoadoutModifiers;
-  potionStrength: string;
-  potionProperty: string;
-  potionQuality: string;
-};
-
-function normalizeWagonPayload(source: unknown) {
-  const payload = source && typeof source === 'object' ? source as Record<string, unknown> : {};
-  const wagons = Array.isArray(payload.wagons) ? payload.wagons.map((entry) => {
-    const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-    return {
-      wagon: normalizeInventoryItem(record.wagon),
-      ownerCharacterId: String(record.ownerCharacterId ?? ''),
-      ownerName: String(record.ownerName ?? 'Unknown'),
-      ownerUserId: record.ownerUserId ? String(record.ownerUserId) : null,
-      canManage: Boolean(record.canManage)
-    };
-  }).filter((entry) => entry.wagon.id) : [];
-  const items = Array.isArray(payload.items) ? payload.items.map(normalizeInventoryItem).filter((entry) => entry.id) : [];
-  return { wagons, items };
-}
-
-const EMPTY_DRAFT: ItemDraft = {
-  name: '',
-  displayName: '',
-  itemDescription: '',
-  type: 'misc',
-  rarity: 'Common',
-  quantity: 1,
-  storageCapacity: 0,
-  enchantment: '',
-  material: '',
-  enhancementCount: 0,
-  isTwoHanded: false,
-  modifiers: {},
-  potionStrength: '',
-  potionProperty: '',
-  potionQuality: ''
-};
-
-const POTION_STRENGTHS = ['Lesser', 'Greater', 'Greatest'];
-const POTION_QUALITIES = ['Shoddy', 'Basic', 'Fine', 'Strong', 'Enriched'];
-const POTION_PROPERTIES = [
-  { key: 'Healing', label: 'Healing' },
-  { key: 'Speed', label: 'Swiftness' },
-  { key: 'Agility', label: 'Agility' },
-  { key: 'Strength', label: 'Strength' },
-  { key: 'Sorcery', label: 'Sorcery' },
-  { key: 'Mana Regen', label: 'Mana' },
-  { key: 'Luck', label: 'Luck' },
-  { key: 'Antidote', label: 'Antidote' },
-  { key: 'Warming', label: 'Warming' },
-  { key: 'Cooling', label: 'Cooling' },
-  { key: 'Night-Eye', label: 'Night-Eye' },
-  { key: 'Thickskin', label: 'Thickskin' },
-  { key: 'Clear-Mind', label: 'Clear-Mind' },
-  { key: 'Wake-Up', label: 'Wake-Up' },
-  { key: 'Clotting', label: 'Clotting' }
-];
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
@@ -147,10 +66,6 @@ function firstOpenSlot(items: InventoryItem[], parentItemId: string | null, capa
   return null;
 }
 
-function itemSupportsLoadoutDetails(type: ItemType) {
-  return type === 'weapon' || type === 'armor' || type === 'shield' || type === 'accessory' || type === 'pet';
-}
-
 function normalizedItemName(name: string) {
   const clean = name.trim().toLowerCase();
   if (clean === 'glass flask' || clean === 'glass flasks' || clean === 'empty flasks') return 'empty flask';
@@ -162,40 +77,16 @@ function isEmptyFlask(item: Pick<InventoryItem, 'name'> | Pick<ItemDraft, 'name'
   return normalizedItemName(item.name) === 'empty flask';
 }
 
-function isArcaneNector(item: Pick<InventoryItem, 'name'> | Pick<ItemDraft, 'name'>) {
-  return normalizedItemName(item.name) === 'arcane nector';
-}
-
 function isPotionConsumable(item: InventoryItem) {
   return item.type === 'potion' && !isEmptyFlask(item);
 }
 
-function potionQualityCanApply(item: Pick<ItemDraft, 'name' | 'type' | 'potionProperty'>) {
-  if (item.type !== 'potion' || isEmptyFlask(item) || isArcaneNector(item)) return false;
-  const property = item.potionProperty || '';
-  if (property === 'Healing' || property === 'Mana Regen') return false;
-  const name = normalizedItemName(item.name);
-  return !name.includes('healing potion') && !name.includes('mana potion');
+function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+  return item.isStorage && item.name.toLowerCase().includes('wagon');
 }
 
-function draftFromItem(item: InventoryItem): ItemDraft {
-  return {
-    name: item.name,
-    displayName: item.displayName ?? '',
-    itemDescription: item.itemDescription ?? '',
-    type: item.type,
-    rarity: item.rarity,
-    quantity: item.quantity,
-    storageCapacity: item.storageCapacity,
-    enchantment: item.enchantment ?? '',
-    material: item.material ?? '',
-    enhancementCount: item.enhancementCount,
-    isTwoHanded: item.isTwoHanded,
-    modifiers: cleanModifiers(item.modifiers),
-    potionStrength: item.potionStrength ?? '',
-    potionProperty: item.potionProperty ?? '',
-    potionQuality: item.potionQuality ?? ''
-  };
+function quantityText(quantity: number) {
+  return Number.isInteger(quantity) ? quantity.toString() : quantity.toFixed(1);
 }
 
 export function InventoryPanel({
@@ -221,7 +112,7 @@ export function InventoryPanel({
   const [error, setError] = useState('');
   const [target, setTarget] = useState<string | null>(null);
   const [modal, setModal] = useState<SlotTarget | null>(null);
-  const [draft, setDraft] = useState<ItemDraft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<ItemDraft>(EMPTY_ITEM_DRAFT);
   const [dropQuantity, setDropQuantity] = useState(1);
   const [catalog, setCatalog] = useState<ItemCatalogEntry[]>([]);
   const [spells, setSpells] = useState<Spell[]>([]);
@@ -233,6 +124,7 @@ export function InventoryPanel({
   const [houseRunes, setHouseRunes] = useState<InventoryItem[]>([]);
   const [nearbyWagons, setNearbyWagons] = useState<WagonStorage[]>([]);
   const [nearbyWagonItems, setNearbyWagonItems] = useState<InventoryItem[]>([]);
+  const [nearbyWagonActivity, setNearbyWagonActivity] = useState<WagonActivity[]>([]);
   const [runeLoading, setRuneLoading] = useState(false);
   const [runeError, setRuneError] = useState('');
 
@@ -240,6 +132,7 @@ export function InventoryPanel({
     if (!canManage && !canAdd) {
       setNearbyWagons([]);
       setNearbyWagonItems([]);
+      setNearbyWagonActivity([]);
       return;
     }
 
@@ -252,9 +145,11 @@ export function InventoryPanel({
       const sharedWagonIds = new Set(sharedWagons.map((entry) => entry.wagon.id));
       setNearbyWagons(sharedWagons);
       setNearbyWagonItems(normalized.items.filter((item) => item.parentItemId && sharedWagonIds.has(item.parentItemId)));
+      setNearbyWagonActivity(normalized.activity.filter((entry) => sharedWagonIds.has(entry.wagonId)));
     } catch {
       setNearbyWagons([]);
       setNearbyWagonItems([]);
+      setNearbyWagonActivity([]);
     }
   }, [canAdd, canManage, character.id]);
 
@@ -385,7 +280,7 @@ export function InventoryPanel({
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
     setModal({ slot, parentItemId, item });
-    setDraft(item ? draftFromItem(item) : EMPTY_DRAFT);
+    setDraft(item ? draftFromInventoryItem(item) : EMPTY_ITEM_DRAFT);
     setDropQuantity(item?.quantity ?? 1);
     setCatalogSearch('');
     setAddMode(item ? 'custom' : 'catalog');
@@ -410,33 +305,6 @@ export function InventoryPanel({
       potionStrength: '',
       potionProperty: '',
       potionQuality: ''
-    });
-  }
-
-  function updateDraftEnchantment(enchantment: string) {
-    setDraft({
-      ...draft,
-      enchantment,
-      enhancementCount: enchantment.trim() ? 0 : draft.enhancementCount
-    });
-  }
-
-  function confirmDraftEnhancement() {
-    if (!canManuallyEnhance(draft) || draft.enhancementCount >= 3) return;
-    const currentValue = Number(draft.modifiers[enhanceStat] ?? 0);
-    setDraft({
-      ...draft,
-      modifiers: cleanModifiers({ ...draft.modifiers, [enhanceStat]: currentValue + 1 }),
-      enhancementCount: Math.min(3, draft.enhancementCount + 1),
-      enchantment: ''
-    });
-    setEnhanceOpen(false);
-  }
-
-  function updateDraftModifier(key: LoadoutModifierKey, value: number) {
-    setDraft({
-      ...draft,
-      modifiers: cleanModifiers({ ...draft.modifiers, [key]: value })
     });
   }
 
@@ -501,20 +369,9 @@ export function InventoryPanel({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...draft,
+        ...itemDraftPayload(draft),
         parentItemId: modal.parentItemId,
-        slotIndex: modal.slot,
-        isStorage: draft.type === 'storage',
-        storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        enchantment: draft.enchantment.trim() || null,
-        material: draft.material.trim(),
-        enhancementCount: draft.enhancementCount,
-        isTwoHanded: draft.isTwoHanded,
-        modifiers: cleanModifiers(draft.modifiers),
-        itemDescription: draft.itemDescription.trim(),
-        potionStrength: draft.potionStrength,
-        potionProperty: draft.potionProperty,
-        potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
+        slotIndex: modal.slot
       })
     });
   }
@@ -526,21 +383,10 @@ export function InventoryPanel({
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: draft.name.trim(),
-        type: draft.type,
-        rarity: draft.rarity,
-        quantity: Math.max(quantityStepForItem(draft), draft.quantity),
-        isStorage: draft.type === 'storage',
-        storageCapacity: draft.type === 'storage' ? Math.max(1, draft.storageCapacity || 6) : 0,
-        enchantment: draft.enchantment.trim() || null,
-        material: draft.material.trim(),
-        enhancementCount: draft.enhancementCount,
-        isTwoHanded: draft.isTwoHanded,
-        modifiers: cleanModifiers(draft.modifiers),
-        itemDescription: draft.itemDescription.trim(),
-        potionStrength: draft.potionStrength,
-        potionProperty: draft.potionProperty,
-        potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
+        ...itemDraftPayload({
+          ...draft,
+          quantity: Math.max(quantityStepForItem(draft), draft.quantity)
+        })
       })
     });
   }
@@ -621,8 +467,11 @@ export function InventoryPanel({
         return next;
       });
       const normalized = normalizeWagonPayload(payload);
-      setNearbyWagons(normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id));
-      setNearbyWagonItems(normalized.items);
+      const sharedWagons = normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id);
+      const sharedWagonIds = new Set(sharedWagons.map((entry) => entry.wagon.id));
+      setNearbyWagons(sharedWagons);
+      setNearbyWagonItems(normalized.items.filter((item) => item.parentItemId && sharedWagonIds.has(item.parentItemId)));
+      setNearbyWagonActivity(normalized.activity.filter((entry) => sharedWagonIds.has(entry.wagonId)));
       setModal(null);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Item could not be moved into the wagon.');
@@ -742,151 +591,19 @@ export function InventoryPanel({
   }
 
   function renderItemDraftControls() {
-    const modifierList = modifierEntries(draft.modifiers);
-    const showLoadoutDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.material.trim()) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
-    const enchantable = canManuallyEnchant(draft) || Boolean(draft.enchantment.trim());
-    const enhanceable = canManuallyEnhance(draft);
-    const legendaryWeapon = draft.type === 'weapon' && draft.rarity === 'Legendary';
-    const hasCurrentCustomSpell = Boolean(draft.enchantment.trim()) && !sortedSpells.some((spell) => spell.name === draft.enchantment);
-
     return (
-      <>
-        <TextField placeholder="Item name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        <div className="grid gap-2 sm:grid-cols-3">
-          <SelectField value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-          <SelectField value={draft.rarity} onChange={(event) => setDraft({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-          <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
-        </div>
-        {draft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
-
-        {legendaryWeapon && (
-          <details className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">
-            <summary className="cursor-pointer list-none p-3 font-black text-[var(--brass)]">Legendary weapon details</summary>
-            <div className="grid gap-3 border-t border-[var(--line)] p-3">
-              <TextAreaField
-                rows={4}
-                value={draft.itemDescription}
-                onChange={(event) => setDraft({ ...draft, itemDescription: event.target.value })}
-                placeholder="Inspection description for this legendary weapon"
-              />
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {EDITABLE_MODIFIER_FIELDS.map((field) => (
-                  <label key={field.key}>
-                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{field.label}</span>
-                    <NumberInput value={Number(draft.modifiers[field.key] ?? 0)} onValueChange={(value) => updateDraftModifier(field.key, value)} />
-                  </label>
-                ))}
-              </div>
-            </div>
-          </details>
-        )}
-
-        {draft.type === 'potion' && !isEmptyFlask(draft) && !isArcaneNector(draft) && (
-          <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
-            <p className="eyebrow text-[#56e2c2]">Potion details</p>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <SelectField value={draft.potionStrength} onChange={(event) => setDraft({ ...draft, potionStrength: event.target.value })}>
-                <option value="">Infer strength</option>
-                {POTION_STRENGTHS.map((strength) => <option key={strength} value={strength}>{strength}</option>)}
-              </SelectField>
-              <SelectField value={draft.potionProperty} onChange={(event) => setDraft({ ...draft, potionProperty: event.target.value, potionQuality: event.target.value === 'Healing' || event.target.value === 'Mana Regen' ? '' : draft.potionQuality })}>
-                <option value="">Infer property</option>
-                {POTION_PROPERTIES.map((property) => <option key={property.key} value={property.key}>{property.label}</option>)}
-              </SelectField>
-              {potionQualityCanApply(draft) ? (
-                <SelectField value={draft.potionQuality} onChange={(event) => setDraft({ ...draft, potionQuality: event.target.value })}>
-                  <option value="">No quality</option>
-                  {POTION_QUALITIES.map((quality) => <option key={quality} value={quality}>{quality}</option>)}
-                </SelectField>
-              ) : (
-                <div className="rounded-xl border border-[var(--line)] bg-black/15 px-3 py-3 text-sm font-black text-[var(--muted)]">
-                  No quality
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {showLoadoutDetails && (
-          <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-            <p className="eyebrow">Equipment details</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <TextField placeholder="Material, e.g. Mythril" value={draft.material} onChange={(event) => setDraft({ ...draft, material: event.target.value })} />
-              {draft.type === 'weapon' && (
-                <label className="flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 px-3 text-sm font-black">
-                  <input type="checkbox" checked={draft.isTwoHanded} onChange={(event) => setDraft({ ...draft, isTwoHanded: event.target.checked })} />
-                  Two-handed weapon
-                </label>
-              )}
-            </div>
-          </div>
-        )}
-
-        {enchantable && (
-          <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/35 bg-[#56e2c2]/10 p-3">
-            <div>
-              <p className="eyebrow text-[#56e2c2]">Enchantment</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">Mythril weapons can carry one spell. Confirming an enhancement removes it.</p>
-            </div>
-            <SelectField value={draft.enchantment} disabled={draft.enhancementCount > 0} onChange={(event) => updateDraftEnchantment(event.target.value)}>
-              <option value="">No enchantment</option>
-              {hasCurrentCustomSpell && <option value={draft.enchantment}>{draft.enchantment}</option>}
-              {sortedSpells.map((spell) => <option key={spell.id} value={spell.name}>{spell.name} · {spellManaText(spell)}</option>)}
-            </SelectField>
-            {draft.enhancementCount > 0 && <p className="text-xs font-black text-[var(--red)]">Remove enhancements before adding an enchantment.</p>}
-          </div>
-        )}
-
-        {enhanceable && (
-          <div className="grid gap-2 rounded-2xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3">
-            <div>
-              <p className="eyebrow">Manual enhancement</p>
-              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{draft.enhancementCount}/3 enhancements used. Each confirm adds +1 to the chosen stat.</p>
-            </div>
-            {modifierList.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {modifierList.map((modifier) => (
-                  <span key={modifier.key} className={`rounded-full bg-black/35 px-2 py-1 text-[10px] font-black uppercase ${modifierToneClass(modifier.value)}`}>
-                    {modifierText(modifier.value)} {modifier.label}
-                  </span>
-                ))}
-              </div>
-            )}
-            {draft.enhancementCount >= 3 ? (
-              <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black text-[var(--muted)]">Enhancement limit reached.</p>
-            ) : enhanceOpen ? (
-              <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3">
-                <SelectField value={enhanceStat} onChange={(event) => setEnhanceStat(event.target.value as LoadoutModifierKey)}>
-                  {EDITABLE_MODIFIER_FIELDS.map((field) => <option key={field.key} value={field.key}>{field.label}</option>)}
-                </SelectField>
-                {draft.enchantment && <p className="text-xs font-black text-[var(--red)]">Confirming removes {draft.enchantment} from this item.</p>}
-                <div className="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="secondary" onClick={() => setEnhanceOpen(false)}>Cancel</Button>
-                  <Button type="button" variant="teal" onClick={confirmDraftEnhancement}>Confirm +1</Button>
-                </div>
-              </div>
-            ) : (
-              <Button type="button" variant="teal" onClick={() => setEnhanceOpen(true)}>Enhance</Button>
-            )}
-          </div>
-        )}
-
-        {!enhanceable && modifierList.length > 0 && (
-          <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-            <p className="eyebrow">Loadout modifiers</p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {modifierList.map((modifier) => (
-                <span key={modifier.key} className={`rounded-full bg-black/35 px-2 py-1 text-[10px] font-black uppercase ${modifierToneClass(modifier.value)}`}>
-                  {modifierText(modifier.value)} {modifier.label}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-      </>
+      <ItemEditorFields
+        draft={draft}
+        spells={sortedSpells}
+        quantityStep={quantityStepForItem(draft)}
+        enhanceOpen={enhanceOpen}
+        enhanceStat={enhanceStat}
+        onDraftChange={setDraft}
+        onEnhanceOpenChange={setEnhanceOpen}
+        onEnhanceStatChange={setEnhanceStat}
+      />
     );
   }
-
   return (
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -955,7 +672,10 @@ export function InventoryPanel({
                   <details key={storage.id} className="rounded-2xl border border-[#d1a85b2f] bg-black/15">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
                       <span className="flex items-center gap-2 font-black"><PackageOpen size={16} className="text-[var(--brass)]" /> {storage.name}</span>
-                      <span className="text-xs text-[var(--muted)]">{childItems.length}/{storage.storageCapacity} slots</span>
+                      <span className="flex shrink-0 flex-wrap justify-end gap-1.5 text-xs text-[var(--muted)]">
+                        {isWagonStorage(storage) && <span className="rounded-full border border-[#56e2c2]/35 bg-[#56e2c2]/10 px-2 py-1 font-black uppercase text-[#56e2c2]">Shared at {character.locationName || 'current location'}</span>}
+                        <span>{childItems.length}/{storage.storageCapacity} slots</span>
+                      </span>
                     </summary>
                     <div className="flex justify-end border-t border-[var(--line)] px-3 py-2">
                       <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openSlot(storage.slotIndex, storage.parentItemId, storage)}>Inspect storage</Button>
@@ -986,9 +706,10 @@ export function InventoryPanel({
           {nearbyWagons.length > 0 && (
             <div className="mt-5 space-y-2">
               <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Nearby Wagons</h3></div>
-              {nearbyWagons.map(({ wagon, ownerName }) => {
+              {nearbyWagons.map(({ wagon, ownerName, locationName }) => {
                 const childItems = nearbyWagonItems.filter((item) => item.parentItemId === wagon.id);
                 const childBySlot = new Map(childItems.map((item) => [item.slotIndex, item]));
+                const activity = nearbyWagonActivity.filter((entry) => entry.wagonId === wagon.id).slice(0, 4);
                 return (
                   <details key={wagon.id} className="rounded-2xl border border-[#56e2c24a] bg-black/15">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3">
@@ -996,8 +717,21 @@ export function InventoryPanel({
                         <PackageOpen size={16} className="shrink-0 text-[#56e2c2]" />
                         <span className="truncate">{wagon.displayName || wagon.name}</span>
                       </span>
-                      <span className="shrink-0 text-xs text-[var(--muted)]">{ownerName}; {childItems.length}/{wagon.storageCapacity} slots</span>
+                      <span className="flex shrink-0 flex-wrap justify-end gap-1.5 text-xs text-[var(--muted)]">
+                        <span className="rounded-full border border-[#56e2c2]/35 bg-[#56e2c2]/10 px-2 py-1 font-black uppercase text-[#56e2c2]">Owner {ownerName}</span>
+                        <span className="rounded-full border border-[var(--line)] bg-black/20 px-2 py-1 font-black uppercase">{locationName || character.locationName || 'Nearby'}</span>
+                        <span className="px-1 py-1">{childItems.length}/{wagon.storageCapacity} slots</span>
+                      </span>
                     </summary>
+                    <div className="grid gap-1 border-t border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
+                      {activity.length ? activity.map((entry) => (
+                        <p key={entry.id}>
+                          <span className="font-black text-[var(--paper)]">{entry.actorName}</span> {entry.action === 'stored' ? 'stored' : 'took'} {quantityText(entry.quantity)} {entry.itemName}
+                        </p>
+                      )) : (
+                        <p>No wagon activity recorded yet.</p>
+                      )}
+                    </div>
                     <div className="inventory-grid grid grid-cols-2 gap-2 border-t border-[var(--line)] p-3 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-5">
                       {Array.from({ length: wagon.storageCapacity }, (_, slot) => {
                         const item = childBySlot.get(slot);

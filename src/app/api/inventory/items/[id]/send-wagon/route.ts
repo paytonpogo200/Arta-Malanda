@@ -1,23 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { normalizeInventoryItem } from '@/features/inventory/data';
+import { normalizeWagonPayload } from '@/features/inventory/wagons';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
-
-function normalizeWagonPayload(source: unknown) {
-  const payload = source && typeof source === 'object' ? source as Record<string, unknown> : {};
-  const wagons = Array.isArray(payload.wagons) ? payload.wagons.map((entry) => {
-    const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-    return {
-      wagon: normalizeInventoryItem(record.wagon),
-      ownerCharacterId: String(record.ownerCharacterId ?? ''),
-      ownerName: String(record.ownerName ?? 'Unknown'),
-      ownerUserId: record.ownerUserId ? String(record.ownerUserId) : null,
-      canManage: Boolean(record.canManage)
-    };
-  }).filter((entry) => entry.wagon.id) : [];
-  const items = Array.isArray(payload.items) ? payload.items.map(normalizeInventoryItem).filter((entry) => entry.id) : [];
-  return { wagons, items };
-}
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {

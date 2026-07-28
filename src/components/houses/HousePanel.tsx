@@ -2,16 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Unlock } from 'lucide-react';
+import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
+import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
-import { ITEM_TYPES, quantityStepForItem } from '@/features/inventory/data';
-import { rarityOptions } from '@/lib/utils/rarity';
-import type { CampaignProperty, InventoryItem, ItemRarity, ItemType, PropertyLocation, PropertyType } from '@/lib/types';
+import { quantityStepForItem } from '@/features/inventory/data';
+import type { CampaignProperty, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
 
 type HousePanelProps = {
   ownerUserId: string | null;
@@ -19,16 +20,6 @@ type HousePanelProps = {
   canManage: boolean;
   canAdd: boolean;
   onCharacterInventoryChanged?: () => void;
-};
-
-type ItemDraft = {
-  name: string;
-  displayName: string;
-  type: ItemType;
-  rarity: ItemRarity;
-  quantity: number;
-  storageCapacity: number;
-  enchantment: string;
 };
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
@@ -42,16 +33,6 @@ type PropertyDraft = {
   isPet: boolean;
   slotIndex: number;
   storageCapacity: number;
-};
-
-const EMPTY_ITEM: ItemDraft = {
-  name: '',
-  displayName: '',
-  type: 'misc',
-  rarity: 'Common',
-  quantity: 1,
-  storageCapacity: 0,
-  enchantment: ''
 };
 
 const EMPTY_PROPERTY: PropertyDraft = {
@@ -75,9 +56,12 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [targetSlot, setTargetSlot] = useState<string | null>(null);
   const [itemModal, setItemModal] = useState<{ slot: number; parentItemId: string | null; item?: InventoryItem } | null>(null);
   const [propertyModal, setPropertyModal] = useState<CampaignProperty | 'new' | null>(null);
-  const [itemDraft, setItemDraft] = useState<ItemDraft>(EMPTY_ITEM);
+  const [itemDraft, setItemDraft] = useState<ItemDraft>(EMPTY_ITEM_DRAFT);
   const [propertyDraft, setPropertyDraft] = useState<PropertyDraft>(EMPTY_PROPERTY);
   const [dropQuantity, setDropQuantity] = useState(1);
+  const [spells, setSpells] = useState<Spell[]>([]);
+  const [enhanceOpen, setEnhanceOpen] = useState(false);
+  const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
 
   const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
@@ -109,6 +93,31 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     void loadHouse();
   }, [loadHouse]);
 
+  useEffect(() => {
+    if (!canAdd) {
+      setSpells([]);
+      return;
+    }
+
+    let cancelled = false;
+    fetch('/api/assets', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) return;
+        if (!cancelled) {
+          const normalized = normalizeUpdateAssetsPayload(payload);
+          setSpells(normalized.spells.sort((a, b) => a.name.localeCompare(b.name)));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setSpells([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canAdd]);
+
   if (!ownerUserId) {
     return null;
   }
@@ -116,16 +125,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   function openItem(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
     setItemModal({ slot, parentItemId, item });
-    setItemDraft(item ? {
-      name: item.name,
-      displayName: item.displayName ?? '',
-      type: item.type,
-      rarity: item.rarity,
-      quantity: item.quantity,
-      storageCapacity: item.storageCapacity,
-      enchantment: item.enchantment ?? ''
-    } : EMPTY_ITEM);
+    setItemDraft(item ? draftFromInventoryItem(item) : EMPTY_ITEM_DRAFT);
     setDropQuantity(item?.quantity ?? 1);
+    setEnhanceOpen(false);
+    setEnhanceStat('strength');
   }
 
   function openProperty(property: CampaignProperty | 'new') {
@@ -178,12 +181,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        ...itemDraft,
+        ...itemDraftPayload(itemDraft),
         parentItemId: itemModal.parentItemId,
-        slotIndex: itemModal.slot,
-        isStorage: itemDraft.type === 'storage',
-        storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
-        enchantment: itemDraft.enchantment.trim() || null
+        slotIndex: itemModal.slot
       })
     });
   }
@@ -195,15 +195,27 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: itemDraft.name.trim(),
-        type: itemDraft.type,
-        rarity: itemDraft.rarity,
-        quantity: Math.max(quantityStepForItem(itemDraft), itemDraft.quantity),
-        isStorage: itemDraft.type === 'storage',
-        storageCapacity: itemDraft.type === 'storage' ? Math.max(1, itemDraft.storageCapacity || 6) : 0,
-        enchantment: itemDraft.enchantment.trim() || null
+        ...itemDraftPayload({
+          ...itemDraft,
+          quantity: Math.max(quantityStepForItem(itemDraft), itemDraft.quantity)
+        })
       })
     });
+  }
+
+  function renderItemEditor() {
+    return (
+      <ItemEditorFields
+        draft={itemDraft}
+        spells={spells}
+        quantityStep={quantityStepForItem(itemDraft)}
+        enhanceOpen={enhanceOpen}
+        enhanceStat={enhanceStat}
+        onDraftChange={setItemDraft}
+        onEnhanceOpenChange={setEnhanceOpen}
+        onEnhanceStatChange={setEnhanceStat}
+      />
+    );
   }
 
   async function moveItem(itemId: string, slotIndex: number, parentItemId: string | null) {
@@ -421,26 +433,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
               )}
               {canAdd && (
                 <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-                  <TextField value={itemDraft.name} onChange={(event) => setItemDraft({ ...itemDraft, name: event.target.value })} />
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <SelectField value={itemDraft.type} onChange={(event) => setItemDraft({ ...itemDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-                    <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                    <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
-                  </div>
-                  {itemDraft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={itemDraft.storageCapacity || 6} onValueChange={(storageCapacity) => setItemDraft({ ...itemDraft, storageCapacity })} />}
+                  {renderItemEditor()}
                   <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
             </div>
           ) : (
             <form onSubmit={addItem} className="grid gap-3">
-              <TextField autoFocus placeholder="Item name" value={itemDraft.name} onChange={(event) => setItemDraft({ ...itemDraft, name: event.target.value })} />
-              <div className="grid gap-2 sm:grid-cols-3">
-                <SelectField value={itemDraft.type} onChange={(event) => setItemDraft({ ...itemDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-                <SelectField value={itemDraft.rarity} onChange={(event) => setItemDraft({ ...itemDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-                <NumberInput min={quantityStepForItem(itemDraft)} step={quantityStepForItem(itemDraft)} value={itemDraft.quantity} onValueChange={(quantity) => setItemDraft({ ...itemDraft, quantity })} />
-              </div>
-              {itemDraft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={itemDraft.storageCapacity || 6} onValueChange={(storageCapacity) => setItemDraft({ ...itemDraft, storageCapacity })} />}
+              {renderItemEditor()}
               <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Add item</Button>
             </form>
           )}
