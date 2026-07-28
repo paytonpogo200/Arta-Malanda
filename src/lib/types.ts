@@ -169,6 +169,7 @@ export type InventoryItem = {
   parentItemId: string | null;
   name: string;
   displayName?: string;
+  itemDescription?: string;
   type: ItemType;
   rarity: ItemRarity;
   quantity: number;

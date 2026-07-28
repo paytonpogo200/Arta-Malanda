@@ -62,6 +62,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     parentItemId: source.parentItemId ? String(source.parentItemId) : null,
     name: String(source.name ?? 'Unknown item'),
     displayName: source.displayName ? String(source.displayName) : undefined,
+    itemDescription: source.itemDescription ? String(source.itemDescription) : undefined,
     type: normalizeItemType(source.type),
     rarity: normalizeRarity(source.rarity),
     quantity: Math.max(0.5, numberFrom(source.quantity, 1)),

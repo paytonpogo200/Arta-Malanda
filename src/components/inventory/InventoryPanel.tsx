@@ -7,7 +7,7 @@ import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { LoadoutPanel } from '@/components/inventory/LoadoutPanel';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField, TextField } from '@/components/ui/Field';
+import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
@@ -43,6 +43,7 @@ type AvailableRune = {
 type ItemDraft = {
   name: string;
   displayName: string;
+  itemDescription: string;
   type: ItemType;
   rarity: ItemRarity;
   quantity: number;
@@ -60,6 +61,7 @@ type ItemDraft = {
 const EMPTY_DRAFT: ItemDraft = {
   name: '',
   displayName: '',
+  itemDescription: '',
   type: 'misc',
   rarity: 'Common',
   quantity: 1,
@@ -154,6 +156,7 @@ function draftFromItem(item: InventoryItem): ItemDraft {
   return {
     name: item.name,
     displayName: item.displayName ?? '',
+    itemDescription: item.itemDescription ?? '',
     type: item.type,
     rarity: item.rarity,
     quantity: item.quantity,
@@ -342,6 +345,7 @@ export function InventoryPanel({
     setDraft({
       name: item.name,
       displayName: '',
+      itemDescription: '',
       type: item.type,
       rarity: item.rarity,
       quantity: Math.max(item.quantityStep || 1, item.quantityStep || 1),
@@ -375,6 +379,13 @@ export function InventoryPanel({
       enchantment: ''
     });
     setEnhanceOpen(false);
+  }
+
+  function updateDraftModifier(key: LoadoutModifierKey, value: number) {
+    setDraft({
+      ...draft,
+      modifiers: cleanModifiers({ ...draft.modifiers, [key]: value })
+    });
   }
 
   async function requestInventoryChange(url: string, init: RequestInit) {
@@ -448,6 +459,7 @@ export function InventoryPanel({
         enhancementCount: draft.enhancementCount,
         isTwoHanded: draft.isTwoHanded,
         modifiers: cleanModifiers(draft.modifiers),
+        itemDescription: draft.itemDescription.trim(),
         potionStrength: draft.potionStrength,
         potionProperty: draft.potionProperty,
         potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
@@ -473,6 +485,7 @@ export function InventoryPanel({
         enhancementCount: draft.enhancementCount,
         isTwoHanded: draft.isTwoHanded,
         modifiers: cleanModifiers(draft.modifiers),
+        itemDescription: draft.itemDescription.trim(),
         potionStrength: draft.potionStrength,
         potionProperty: draft.potionProperty,
         potionQuality: potionQualityCanApply(draft) ? draft.potionQuality : ''
@@ -615,6 +628,7 @@ export function InventoryPanel({
     const showLoadoutDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.material.trim()) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
     const enchantable = canManuallyEnchant(draft) || Boolean(draft.enchantment.trim());
     const enhanceable = canManuallyEnhance(draft);
+    const legendaryWeapon = draft.type === 'weapon' && draft.rarity === 'Legendary';
     const hasCurrentCustomSpell = Boolean(draft.enchantment.trim()) && !sortedSpells.some((spell) => spell.name === draft.enchantment);
 
     return (
@@ -626,6 +640,28 @@ export function InventoryPanel({
           <NumberInput min={quantityStepForItem(draft)} step={quantityStepForItem(draft)} value={draft.quantity} onValueChange={(quantity) => setDraft({ ...draft, quantity })} />
         </div>
         {draft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => setDraft({ ...draft, storageCapacity })} />}
+
+        {legendaryWeapon && (
+          <details className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">
+            <summary className="cursor-pointer list-none p-3 font-black text-[var(--brass)]">Legendary weapon details</summary>
+            <div className="grid gap-3 border-t border-[var(--line)] p-3">
+              <TextAreaField
+                rows={4}
+                value={draft.itemDescription}
+                onChange={(event) => setDraft({ ...draft, itemDescription: event.target.value })}
+                placeholder="Inspection description for this legendary weapon"
+              />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {EDITABLE_MODIFIER_FIELDS.map((field) => (
+                  <label key={field.key}>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{field.label}</span>
+                    <NumberInput value={Number(draft.modifiers[field.key] ?? 0)} onValueChange={(value) => updateDraftModifier(field.key, value)} />
+                  </label>
+                ))}
+              </div>
+            </div>
+          </details>
+        )}
 
         {draft.type === 'potion' && !isEmptyFlask(draft) && !isArcaneNector(draft) && (
           <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
@@ -838,6 +874,7 @@ export function InventoryPanel({
                   <div className="min-w-0 flex-1">
                     <p className="text-lg font-black leading-5">{modal.item.displayName || modal.item.name}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
+                    {modal.item.itemDescription && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
                     {modal.item.type === 'pet' && (
                       <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Animal: {modal.item.name}</p>
                     )}

@@ -52,7 +52,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       p_is_two_handed: Boolean(body.isTwoHanded),
       p_potion_strength: body.potionStrength ? String(body.potionStrength) : null,
       p_potion_property: body.potionProperty ? String(body.potionProperty) : null,
-      p_potion_quality: body.potionQuality ? String(body.potionQuality) : null
+      p_potion_quality: body.potionQuality ? String(body.potionQuality) : null,
+      p_item_description: body.itemDescription ? String(body.itemDescription) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react
 import { BookOpen, ChevronDown, ChevronRight, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Modal } from '@/components/ui/Modal';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
 import { spellManaText, spellTypeClass, spellTypes } from '@/lib/utils/spells';
@@ -104,6 +105,7 @@ export function SpellsPanel({
   const [grantSpellId, setGrantSpellId] = useState('');
   const [grantSearch, setGrantSearch] = useState('');
   const [expandedGrantTypes, setExpandedGrantTypes] = useState<Set<string>>(() => new Set());
+  const [grantModalOpen, setGrantModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -168,6 +170,7 @@ export function SpellsPanel({
         body: JSON.stringify({ spellId: grantSpellId })
       }), 'Spell could not be granted.');
       setGrantSpellId('');
+      setGrantModalOpen(false);
     } catch (grantError) {
       setError(grantError instanceof Error ? grantError.message : 'Spell could not be granted.');
     } finally {
@@ -258,7 +261,10 @@ export function SpellsPanel({
           <p className="eyebrow">Spellwork</p>
           <h3 className="mt-1 flex items-center gap-2 text-xl font-black"><BookOpen size={18} className="text-[var(--brass)]" /> Spells</h3>
         </div>
-        <Button variant="secondary" className="p-3" onClick={loadSpells} aria-label="Refresh spells"><RefreshCw size={16} /></Button>
+        <div className="flex gap-2">
+          {canGrant && <Button variant="teal" type="button" onClick={() => setGrantModalOpen(true)}>Add spell</Button>}
+          <Button variant="secondary" type="button" className="p-3" onClick={loadSpells} aria-label="Refresh spells"><RefreshCw size={16} /></Button>
+        </div>
       </div>
 
       {error && <div className="mb-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
@@ -267,59 +273,6 @@ export function SpellsPanel({
         <div className="grid h-28 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><Loader2 className="animate-spin" /></div>
       ) : (
         <div className="space-y-4">
-          {canGrant && (
-            <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-              <div className="grid gap-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)_auto]">
-                <TextField value={grantSearch} onChange={(event) => setGrantSearch(event.target.value)} placeholder="Search spells by name, type, or school" />
-                <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
-                  <option value="">Choose spell</option>
-                  {filteredGrantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.type} · {spellManaText(spell)}</option>)}
-                </SelectField>
-                <Button variant="teal" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant'}</Button>
-              </div>
-              {selectedGrantSpell && (
-                <div className={`rounded-xl border px-3 py-2 text-xs ${spellTypeClass(selectedGrantSpell.type)}`}>
-                  <p className="font-black">{selectedGrantSpell.name} · {selectedGrantSpell.type} · {spellManaText(selectedGrantSpell)}</p>
-                  {selectedGrantSpell.summary && <p className="mt-1 line-clamp-2 text-[var(--muted)]">{selectedGrantSpell.summary}</p>}
-                </div>
-              )}
-              <div className="thin-scrollbar grid max-h-72 gap-2 overflow-y-auto pr-1">
-                {grantGroups.map(({ type, spells }) => {
-                  const expanded = expandedGrantTypes.has(type);
-                  return (
-                    <div key={type} className="overflow-hidden rounded-xl border border-[var(--line)] bg-black/10">
-                      <button
-                        type="button"
-                        onClick={() => toggleGrantType(type)}
-                        className="group w-full p-3 text-left transition hover:bg-black/15"
-                      >
-                        <span className="flex items-start justify-between gap-3">
-                          <span className="min-w-0">
-                            <span className="eyebrow">Spell Category</span>
-                            <span className="mt-1 block text-base font-black leading-tight">{type} Spells</span>
-                            <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
-                              <span>{spells.length} available</span>
-                              {selectedGrantSpell?.type === type && <span>selected {selectedGrantSpell.name}</span>}
-                            </span>
-                          </span>
-                          <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
-                            {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                          </span>
-                        </span>
-                      </button>
-                      {expanded && (
-                        <div className="grid gap-2 border-t border-[var(--line)] p-2 sm:grid-cols-2 lg:grid-cols-3">
-                          {spells.map((spell) => <GrantSpellButton key={spell.id} spell={spell} selected={spell.id === grantSpellId} onSelect={setGrantSpellId} />)}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {!grantGroups.length && <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No spells match that search.</div>}
-              </div>
-            </div>
-          )}
-
           <section>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{activeOnly ? 'Active spells' : 'Active slots'} {activeSpells.length}/{character.spellSlots}</h3></div>
             {activeOnly ? (
@@ -355,6 +308,64 @@ export function SpellsPanel({
 
           {activeBattle && <p className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Spell swapping is locked during combat.</p>}
         </div>
+      )}
+
+      {canGrant && grantModalOpen && (
+        <Modal title="Add spell" onClose={() => setGrantModalOpen(false)}>
+          <div className="grid gap-3">
+            <div className="grid gap-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(12rem,1fr)]">
+              <TextField value={grantSearch} onChange={(event) => setGrantSearch(event.target.value)} placeholder="Search spells by name, type, or school" />
+              <SelectField value={grantSpellId} onChange={(event) => setGrantSpellId(event.target.value)}>
+                <option value="">Choose spell</option>
+                {filteredGrantOptions.map((spell) => <option key={spell.id} value={spell.id}>{spell.name} · {spell.type} · {spellManaText(spell)}</option>)}
+              </SelectField>
+            </div>
+            {selectedGrantSpell && (
+              <div className={`rounded-xl border px-3 py-2 text-xs ${spellTypeClass(selectedGrantSpell.type)}`}>
+                <p className="font-black">{selectedGrantSpell.name} · {selectedGrantSpell.type} · {spellManaText(selectedGrantSpell)}</p>
+                {selectedGrantSpell.summary && <p className="mt-1 line-clamp-2 text-[var(--muted)]">{selectedGrantSpell.summary}</p>}
+              </div>
+            )}
+            <div className="thin-scrollbar grid max-h-[55dvh] gap-3 overflow-y-auto pr-1">
+              {grantGroups.map(({ type, spells }) => {
+                const expanded = expandedGrantTypes.has(type);
+                return (
+                  <div key={type} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-black/10">
+                    <button
+                      type="button"
+                      onClick={() => toggleGrantType(type)}
+                      className={`group w-full p-4 text-left transition hover:bg-black/15 ${spellTypeClass(type)}`}
+                    >
+                      <span className="flex items-start justify-between gap-3">
+                        <span className="min-w-0">
+                          <span className="eyebrow">Spell Category</span>
+                          <span className="mt-1 block text-xl font-black leading-tight">{type} Spells</span>
+                          <span className="mt-1 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                            <span>{spells.length} available</span>
+                            {selectedGrantSpell?.type === type && <span>selected {selectedGrantSpell.name}</span>}
+                          </span>
+                        </span>
+                        <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+                          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                        </span>
+                      </span>
+                    </button>
+                    {expanded && (
+                      <div className="grid gap-2 border-t border-[var(--line)] p-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {spells.map((spell) => <GrantSpellButton key={spell.id} spell={spell} selected={spell.id === grantSpellId} onSelect={setGrantSpellId} />)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {!grantGroups.length && <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No spells match that search.</div>}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" type="button" onClick={() => setGrantModalOpen(false)}>Cancel</Button>
+              <Button variant="teal" type="button" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant spell'}</Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </Card>
   );

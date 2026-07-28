@@ -167,17 +167,16 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             {!owned && character.ownerUserId && onOfferTrade && (
               <Button variant="teal" type="button" onClick={() => onOfferTrade(character)}>Offer trade</Button>
             )}
-            {isDm && (
-              <Button
-                variant={editing ? 'primary' : 'secondary'}
-                onClick={() => editing ? undefined : setEditing(true)}
-                form={editing ? 'character-edit-form' : undefined}
-                type={editing ? 'submit' : 'button'}
-                disabled={saving}
-              >
-                {editing ? <span className="flex items-center gap-2">{saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save sheet</span> : 'Edit sheet'}
-              </Button>
-            )}
+            {isDm && (editing ? (
+              <>
+                <Button variant="secondary" type="button" disabled={saving} onClick={() => { setDraft(character); setEditing(false); }}>Cancel</Button>
+                <Button variant="primary" form="character-edit-form" type="submit" disabled={saving}>
+                  <span className="flex items-center gap-2">{saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Save sheet</span>
+                </Button>
+              </>
+            ) : (
+              <Button variant="secondary" type="button" onClick={() => setEditing(true)}>Edit sheet</Button>
+            ))}
           </div>
         </div>
 

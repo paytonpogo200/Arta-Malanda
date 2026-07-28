@@ -114,6 +114,7 @@ create table if not exists public.inventory_items (
   parent_item_id uuid references public.inventory_items(id) on delete cascade,
   item_name text not null,
   display_name text,
+  item_description text not null default '',
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
@@ -166,6 +167,7 @@ alter table public.inventory_items
 
 alter table public.inventory_items
   add column if not exists display_name text,
+  add column if not exists item_description text not null default '',
   add column if not exists enchantment text,
   add column if not exists rune_name text,
   add column if not exists material text,
@@ -1652,10 +1654,6 @@ begin
   perform public.upsert_item_catalog_entry('Winter Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Cold weather clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for winter travel.', true, 2210);
   perform public.upsert_item_catalog_entry('Heat Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Hot weather clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for hot climates.', true, 2220);
   perform public.upsert_item_catalog_entry('Rainproof Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Rainproof clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for wet weather.', true, 2230);
-  perform public.upsert_item_catalog_entry('Basic Meal', 'food', 'Common', 'Market Tavern', array['Meal']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A basic meal from the market tavern.', true, 2240);
-  perform public.upsert_item_catalog_entry('Tavern Meal', 'food', 'Common', 'Market Tavern', array['Meal']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A filling tavern meal.', true, 2250);
-  perform public.upsert_item_catalog_entry('Inn Room', 'quest', 'Common', 'Market Tavern', array['Lodging']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A standard inn room voucher.', true, 2260);
-  perform public.upsert_item_catalog_entry('Fine Inn', 'quest', 'Common', 'Market Tavern', array['Fine lodging']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A fine inn voucher.', true, 2270);
   perform public.upsert_item_catalog_entry('Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A riding horse.', true, 2280);
   perform public.upsert_item_catalog_entry('War Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A trained war horse.', true, 2290);
   perform public.upsert_item_catalog_entry('Dog', 'pet', 'Epic', 'Market Stable', array['Pet']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A loyal dog.', true, 2300);
@@ -1672,6 +1670,11 @@ begin
     else storage_capacity
   end
   where item_key in ('waist-pouch', 'back-bag', 'light-duffle', 'heavy-duffle', 'bag-of-holding', 'light-wagon', 'heavy-wagon');
+
+  delete from public.item_catalog
+  where item_key in ('basic-meal', 'tavern-meal', 'inn-room', 'fine-inn')
+    and category = 'Market Tavern';
+
   perform public.upsert_item_catalog_entry('Acer Root', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Strength']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Strength property when used as an ingredient', true, 10);
   perform public.upsert_item_catalog_entry('Aethercap', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Sorcery']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Sorcery property when used as an ingredient', true, 20);
   perform public.upsert_item_catalog_entry('Agilis', 'plant', 'Uncommon', 'Alchemy Ingredient', array['Agility']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Has Agility property when used as an ingredient', true, 30);
@@ -2028,6 +2031,7 @@ as $$
     'parentItemId', p_item.parent_item_id,
     'name', p_item.item_name,
     'displayName', p_item.display_name,
+    'itemDescription', p_item.item_description,
     'type', p_item.item_type,
     'rarity', p_item.rarity,
     'quantity', p_item.quantity,
@@ -2299,6 +2303,7 @@ immutable
 as $$
   select a.item_name = b.item_name
     and coalesce(a.display_name, '') = coalesce(b.display_name, '')
+    and coalesce(a.item_description, '') = coalesce(b.item_description, '')
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
@@ -2328,6 +2333,7 @@ $$;
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text);
+drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text);
 
 create or replace function public.add_character_inventory_item(
   p_session_token text,
@@ -2347,7 +2353,8 @@ create or replace function public.add_character_inventory_item(
   p_is_two_handed boolean default false,
   p_potion_strength text default null,
   p_potion_property text default null,
-  p_potion_quality text default null
+  p_potion_quality text default null,
+  p_item_description text default null
 )
 returns jsonb
 language plpgsql
@@ -2374,6 +2381,7 @@ declare
   v_potion_strength text;
   v_potion_property text;
   v_potion_quality text;
+  v_item_description text := left(trim(coalesce(p_item_description, '')), 1500);
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -2433,12 +2441,12 @@ begin
   if v_make_storage_container then
     insert into public.inventory_items (
       character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
-      is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+      item_description, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
       is_two_handed, potion_strength, potion_property, potion_quality
     )
     values (
       p_character_id, null, public.next_storage_container_slot(p_character_id), v_item_name, v_item_type, v_rarity, 1,
-      true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
+      v_item_description, true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
       nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
       v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
     )
@@ -2465,6 +2473,7 @@ begin
       and coalesce(v_target.display_name, '') = ''
       and v_target.item_type = v_item_type
       and v_target.rarity = v_rarity
+      and coalesce(v_target.item_description, '') = coalesce(v_item_description, '')
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
@@ -2488,12 +2497,12 @@ begin
 
   insert into public.inventory_items (
     character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
-    is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+    item_description, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
     is_two_handed, potion_strength, potion_property, potion_quality
   )
   values (
     p_character_id, p_parent_item_id, p_slot_index, v_item_name, v_item_type, v_rarity, v_quantity,
-    false, 0, v_modifiers, nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
+    v_item_description, false, 0, v_modifiers, nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
     v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
   )
   returning * into v_item;
@@ -2534,7 +2543,7 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality' or v_patch ? 'itemDescription') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -2549,6 +2558,7 @@ begin
       item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
+      item_description = case when v_patch ? 'itemDescription' then left(trim(coalesce(v_patch->>'itemDescription', '')), 1500) else item_description end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
       modifiers = case when v_patch ? 'modifiers' and jsonb_typeof(v_patch->'modifiers') = 'object' then v_patch->'modifiers' else modifiers end,
@@ -2826,7 +2836,7 @@ grant execute on function public.next_storage_container_slot(uuid) to anon, auth
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_mythril(text, text) to anon, authenticated;
-grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text) to anon, authenticated;
+grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
@@ -2853,6 +2863,7 @@ create table if not exists public.house_inventory_items (
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
   item_name text not null,
   display_name text,
+  item_description text not null default '',
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
@@ -2891,6 +2902,7 @@ alter table public.house_inventory_items
 
 alter table public.house_inventory_items
   add column if not exists display_name text,
+  add column if not exists item_description text not null default '',
   add column if not exists enchantment text,
   add column if not exists rune_name text,
   add column if not exists material text,
@@ -3039,6 +3051,7 @@ as $$
     'parentItemId', null,
     'name', p_item.item_name,
     'displayName', p_item.display_name,
+    'itemDescription', p_item.item_description,
     'type', p_item.item_type,
     'rarity', p_item.rarity,
     'quantity', p_item.quantity,
@@ -3083,6 +3096,7 @@ immutable
 as $$
   select a.item_name = b.item_name
     and coalesce(a.display_name, '') = coalesce(b.display_name, '')
+    and coalesce(a.item_description, '') = coalesce(b.item_description, '')
     and a.item_type = b.item_type
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
@@ -3522,6 +3536,7 @@ begin
   where h.owner_user_id = v_character.owner_user_id
     and h.item_name = v_item.item_name
     and coalesce(h.display_name, '') = coalesce(v_item.display_name, '')
+    and coalesce(h.item_description, '') = coalesce(v_item.item_description, '')
     and h.item_type = v_item.item_type
     and h.rarity = v_item.rarity
     and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
@@ -3557,6 +3572,7 @@ begin
     slot_index,
     item_name,
     display_name,
+    item_description,
     item_type,
     rarity,
     quantity,
@@ -3577,6 +3593,7 @@ begin
     v_slot_index,
     v_item.item_name,
     v_item.display_name,
+    v_item.item_description,
     v_item.item_type,
     v_item.rarity,
     v_item.quantity,
@@ -3650,6 +3667,7 @@ begin
   if v_target.id is not null then
     if v_target.item_name = v_item.item_name
       and coalesce(v_target.display_name, '') = coalesce(v_item.display_name, '')
+      and coalesce(v_target.item_description, '') = coalesce(v_item.item_description, '')
       and v_target.item_type = v_item.item_type
       and v_target.rarity = v_item.rarity
       and coalesce(v_target.enchantment, '') = coalesce(v_item.enchantment, '')
@@ -3680,6 +3698,7 @@ begin
     slot_index,
     item_name,
     display_name,
+    item_description,
     item_type,
     rarity,
     quantity,
@@ -3700,6 +3719,7 @@ begin
     p_slot_index,
     v_item.item_name,
     v_item.display_name,
+    v_item.item_description,
     v_item.item_type,
     v_item.rarity,
     v_item.quantity,
@@ -5014,6 +5034,15 @@ $$;
 alter table public.shop_vendors
 add column if not exists npc_name text not null default 'Shopkeeper';
 
+update public.shop_vendors
+set name = 'City Market',
+    facility = 'Market',
+    category = 'General Goods',
+    npc_name = 'Market Stalls',
+    is_hidden = false,
+    display_order = 60
+where vendor_key = 'calostrynn-city-market';
+
 create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
 returns jsonb
 language sql
@@ -5167,6 +5196,30 @@ begin
 
   if not public.city_names_match(v_character.location_name, v_city.name) then
     raise exception 'That character is not in %.', v_city.name;
+  end if;
+
+  if v_vendor.vendor_key = 'calostrynn-city-market'
+    and lower(trim(coalesce(v_product.shop_section, ''))) = 'lucien - tavern keep'
+  then
+    if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
+      raise exception 'Not enough stock.';
+    end if;
+
+    v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
+    v_wallet := public.wallet_total_coin(v_character.id);
+    if v_wallet < v_cost then
+      raise exception 'Not enough currency.';
+    end if;
+
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+
+    if v_product.stock_quantity is not null then
+      update public.market_products
+      set stock_quantity = greatest(0, stock_quantity - v_quantity)
+      where id = v_product.id;
+    end if;
+
+    return public.get_discovered_cities(p_session_token);
   end if;
 
   if v_vendor.vendor_key = 'calostrynn-spells' then
