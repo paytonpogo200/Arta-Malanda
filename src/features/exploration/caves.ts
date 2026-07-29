@@ -1,7 +1,7 @@
 export type CaveCreatureType = 'Beast' | 'Goblin' | 'Hybrid';
 export type CaveLayoutType = 'Snaking Cave' | 'Forking Cave' | 'Multi Cave';
-export type CaveMapNodeType = 'start' | 'entrance' | 'boss' | 'secret' | 'label';
-export type CaveMapEdgeType = 'connector' | 'tunnel' | 'secret';
+export type CaveMapNodeType = 'start' | 'boss' | 'secret' | 'label';
+export type CaveMapEdgeType = 'tunnel' | 'secret';
 
 export type CaveRecord = {
   number: number;
@@ -246,55 +246,71 @@ export function generateCaveMap(cave: CaveRecord): CaveMap {
     const tunnel = index + 1;
     const difficulty = cave.tunnelDifficulties[index] ?? 1;
     const y = laneY(index, cave.tunnelCount, height);
-    const bossX = 1038 + offset(seed, index, 84);
+    const roll = (seed + index * 53) % 100;
     let source = nodes[0];
-    let entryX = 198 + offset(seed, index + 3, 52);
 
     if (index > 0 && cave.layoutType === 'Snaking Cave') {
       const previous = anchors[index - 1];
-      const attachPoint = (seed + index) % 5 === 0
-        ? previous.attach[(seed + index) % previous.attach.length]
-        : previous.boss;
+      const older = anchors[Math.max(0, index - 2)];
+      const attachPoint = roll < 62
+        ? previous.boss
+        : roll < 82
+          ? previous.attach[(seed + index) % previous.attach.length]
+          : roll < 92
+            ? nodes[0]
+            : older.attach[(seed + index * 2) % older.attach.length];
       source = { id: `snake-source-${index}`, type: 'label', label: '', ...attachPoint };
-      entryX = Math.min(920, source.x + 96 + offset(seed, index + 9, 36));
     } else if (index > 0 && cave.layoutType === 'Forking Cave') {
       const parent = anchors[Math.max(0, index - 1 - ((seed + index) % Math.min(index, 2)))];
-      const attachPoint = (seed + index) % 4 === 0 ? nodes[0] : parent.attach[(seed + index * 3) % parent.attach.length];
+      const attachPoint = roll < 64
+        ? parent.attach[(seed + index * 3) % parent.attach.length]
+        : roll < 82
+          ? nodes[0]
+          : parent.boss;
       source = { id: `fork-source-${index}`, type: 'label', label: '', ...attachPoint };
-      entryX = source.id === 'start' ? 190 + offset(seed, index + 7, 48) : Math.min(820, source.x + 92 + offset(seed, index, 38));
     } else if (index > 0 && cave.layoutType === 'Multi Cave') {
-      const frontTunnelCount = Math.max(2, Math.ceil(cave.tunnelCount * 0.7));
-      if (index >= frontTunnelCount) {
-        const parent = anchors[index - 1];
-        const attachPoint = parent.attach[(seed + index * 5) % parent.attach.length];
-        source = { id: `multi-source-${index}`, type: 'label', label: '', ...attachPoint };
-        entryX = Math.min(760, source.x + 86 + offset(seed, index, 34));
-      }
+      const parent = anchors[Math.max(0, index - 1 - ((seed + index) % Math.min(index, 3)))];
+      const attachPoint = roll < 70
+        ? nodes[0]
+        : roll < 88
+          ? parent.attach[(seed + index * 5) % parent.attach.length]
+          : parent.boss;
+      source = { id: `multi-source-${index}`, type: 'label', label: '', ...attachPoint };
     }
 
-    const entry = { x: entryX, y };
-    const boss = { x: bossX, y: y + offset(seed, index + 31, 26) };
+    const entry = roundedPoint(source);
+    const minimumBossX = source.x > 850 ? source.x + 116 : 1010;
+    const boss = {
+      x: clamp(minimumBossX + offset(seed, index, 96), source.x + 92, width - 118),
+      y: clamp(y + offset(seed, index + 31, 28), 72, height - 72)
+    };
     const span = boss.x - entry.x;
+    const firstLift = source.id === 'start' ? y - source.y : offset(seed, index + 10, 70);
+    const secondLift = offset(seed, index + 23, 84);
+    const thirdLift = offset(seed, index + 37, 76);
     const path = [
       roundedPoint(entry),
-      roundedPoint({ x: entry.x + span * 0.18 + offset(seed, index + 21, 38), y: y + offset(seed, index + 13, 46) }),
-      roundedPoint({ x: entry.x + span * 0.38 + offset(seed, index + 25, 52), y: y - offset(seed, index + 29, 44) }),
-      roundedPoint({ x: entry.x + span * 0.62 + offset(seed, index + 33, 50), y: y + offset(seed, index + 41, 42) }),
-      roundedPoint({ x: entry.x + span * 0.82 + offset(seed, index + 47, 36), y: boss.y - offset(seed, index + 53, 34) }),
+      roundedPoint({ x: entry.x + span * 0.12 + offset(seed, index + 21, 42), y: entry.y + firstLift * 0.44 + offset(seed, index + 13, 36) }),
+      roundedPoint({ x: entry.x + span * 0.27 + offset(seed, index + 25, 58), y: y + firstLift * 0.18 + offset(seed, index + 17, 58) }),
+      roundedPoint({ x: entry.x + span * 0.45 + offset(seed, index + 29, 70), y: y + secondLift }),
+      roundedPoint({ x: entry.x + span * 0.66 + offset(seed, index + 33, 62), y: y - thirdLift * 0.6 }),
+      roundedPoint({ x: entry.x + span * 0.84 + offset(seed, index + 47, 44), y: boss.y + offset(seed, index + 53, 36) }),
       roundedPoint(boss)
     ];
     const attach = [pointOnPath(path, 0.28), pointOnPath(path, 0.48), pointOnPath(path, 0.68)].map(roundedPoint);
     const labelAnchor = pointOnPath(path, 0.52);
-    const connectorMid = {
-      x: source.x + (entry.x - source.x) * 0.54 + offset(seed, index + 61, 34),
-      y: source.y + (entry.y - source.y) * 0.54 + offset(seed, index + 67, 46)
-    };
 
-    edges.push({ id: `connector-${tunnel}`, type: 'connector', tunnelIndex: tunnel, points: [roundedPoint(source), roundedPoint(connectorMid), roundedPoint(entry)] });
     edges.push({ id: `tunnel-${tunnel}`, type: 'tunnel', tunnelIndex: tunnel, points: path });
-    nodes.push({ id: `entrance-${tunnel}`, type: 'entrance', label: `T${tunnel}`, tunnelIndex: tunnel, difficulty, ...roundedPoint(entry) });
     nodes.push({ id: `boss-${tunnel}`, type: 'boss', label: `Boss T${tunnel}`, tunnelIndex: tunnel, difficulty, ...roundedPoint(boss) });
-    nodes.push({ id: `label-${tunnel}`, type: 'label', label: `T${tunnel}: Difficulty ${difficulty}`, tunnelIndex: tunnel, difficulty, x: Math.round(labelAnchor.x), y: Math.round(Math.max(58, y - 56)) });
+    nodes.push({
+      id: `label-${tunnel}`,
+      type: 'label',
+      label: `T${tunnel}: Difficulty ${difficulty}`,
+      tunnelIndex: tunnel,
+      difficulty,
+      x: Math.round(clamp(labelAnchor.x, 126, width - 126)),
+      y: Math.round(clamp(y - 56, 58, height - 66))
+    });
     anchors.push({ entry, boss, path, attach });
   }
 
@@ -372,8 +388,10 @@ function validateCaveData() {
     const map = generateCaveMap(cave);
     const bossCount = map.nodes.filter((node) => node.type === 'boss').length;
     const secretCount = map.nodes.filter((node) => node.type === 'secret').length;
+    const tunnelEdgeCount = map.edges.filter((edge) => edge.type === 'tunnel').length;
     if (bossCount !== cave.tunnelCount) errors.push(`Cave ${cave.number} map has ${bossCount} boss rooms.`);
     if (secretCount !== cave.secretRoomCount) errors.push(`Cave ${cave.number} map has ${secretCount} secret rooms.`);
+    if (tunnelEdgeCount !== cave.tunnelCount) errors.push(`Cave ${cave.number} map has ${tunnelEdgeCount} continuous tunnel paths.`);
     const labelBoxes = map.nodes.filter((node) => node.type === 'label').map((node) => ({ node, box: difficultyLabelBox(node) }));
     for (let index = 0; index < labelBoxes.length; index += 1) {
       for (let next = index + 1; next < labelBoxes.length; next += 1) {

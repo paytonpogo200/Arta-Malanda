@@ -28,7 +28,6 @@ function difficultyTone(difficulty: number) {
 
 function edgeColor(edge: CaveMapEdge) {
   if (edge.type === 'secret') return 'rgba(244, 169, 112, 0.76)';
-  if (edge.type === 'connector') return 'rgba(245, 211, 126, 0.74)';
   return 'rgba(185, 238, 211, 0.9)';
 }
 
@@ -36,7 +35,6 @@ function nodeFill(node: CaveMapNode) {
   if (node.type === 'start') return '#56e2c2';
   if (node.type === 'boss') return '#f26d6d';
   if (node.type === 'secret') return '#56e2c2';
-  if (node.type === 'entrance') return '#f5d37e';
   return '#f5d37e';
 }
 
@@ -94,7 +92,7 @@ function CaveMapView({ cave }: { cave: CaveRecord }) {
               stroke="rgba(0, 0, 0, 0.48)"
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={edge.type === 'secret' ? 17 : edge.type === 'connector' ? 24 : 31}
+              strokeWidth={edge.type === 'secret' ? 17 : 31}
             />
             <path
               d={cavePath(edge)}
@@ -102,7 +100,7 @@ function CaveMapView({ cave }: { cave: CaveRecord }) {
               stroke={edgeColor(edge)}
               strokeLinecap="round"
               strokeLinejoin="round"
-              strokeWidth={edge.type === 'secret' ? 7 : edge.type === 'connector' ? 11 : 15}
+              strokeWidth={edge.type === 'secret' ? 7 : 15}
             />
           </g>
         ))}
