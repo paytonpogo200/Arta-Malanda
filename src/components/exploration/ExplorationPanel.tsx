@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { ChevronRight, Compass } from 'lucide-react';
+import { ChevronRight, Compass, Waypoints } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 
 export function ExplorationPanel() {
@@ -19,23 +19,43 @@ export function ExplorationPanel() {
         </div>
       </Card>
 
-      <Card className="overflow-hidden">
-        <Link
-          href="/dashboard/exploration/loot"
-          className="group block w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left text-[var(--paper)] transition hover:border-[var(--brass)]/70 active:scale-[0.99]"
-        >
-          <span className="flex items-start justify-between gap-3">
-            <span className="min-w-0">
-              <span className="eyebrow">Exploration Tool</span>
-              <span className="mt-1 block text-xl font-black leading-tight">Loot Generator</span>
-              <span className="mt-1 block text-xs font-bold text-[var(--muted)]">Workbook import, odds preview, and loot rolling</span>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card className="overflow-hidden">
+          <Link
+            href="/dashboard/exploration/loot"
+            className="group block w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.14)] p-4 text-left text-[var(--paper)] transition hover:border-[var(--brass)]/70 active:scale-[0.99]"
+          >
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="eyebrow">Exploration Tool</span>
+                <span className="mt-1 block text-xl font-black leading-tight">Loot Generator</span>
+                <span className="mt-1 block text-xs font-bold text-[var(--muted)]">Workbook import, odds preview, and loot rolling</span>
+              </span>
+              <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+                <ChevronRight size={18} />
+              </span>
             </span>
-            <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
-              <ChevronRight size={18} />
+          </Link>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <Link
+            href="/dashboard/exploration/caves"
+            className="group block w-full rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(86,226,194,0.13)] via-black/10 to-[rgba(245,180,76,0.16)] p-4 text-left text-[var(--paper)] transition hover:border-[var(--brass)]/70 active:scale-[0.99]"
+          >
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="eyebrow">Exploration Tool</span>
+                <span className="mt-1 flex items-center gap-2 text-xl font-black leading-tight"><Waypoints size={20} className="text-[var(--brass)]" /> Caves</span>
+                <span className="mt-1 block text-xs font-bold text-[var(--muted)]">Cave catalog, tunnel details, nicknames, and generated maps</span>
+              </span>
+              <span className="rounded-full border border-[var(--line)] bg-black/25 p-2 text-[var(--brass)]">
+                <ChevronRight size={18} />
+              </span>
             </span>
-          </span>
-        </Link>
-      </Card>
+          </Link>
+        </Card>
+      </div>
     </div>
   );
 }

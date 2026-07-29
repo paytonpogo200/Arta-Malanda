@@ -9202,6 +9202,85 @@ grant execute on function public.update_loot_item_asset(text, uuid, jsonb) to an
 
 -- Workbook-backed loot generator.
 
+create table if not exists public.exploration_cave_nicknames (
+  cave_number int primary key check (cave_number between 1 and 999),
+  nickname text not null default '',
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.exploration_cave_nicknames enable row level security;
+revoke all on public.exploration_cave_nicknames from anon, authenticated;
+
+drop trigger if exists exploration_cave_nicknames_touch_updated_at on public.exploration_cave_nicknames;
+create trigger exploration_cave_nicknames_touch_updated_at
+before update on public.exploration_cave_nicknames
+for each row execute function public.touch_updated_at();
+
+create or replace function public.get_exploration_cave_nicknames(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can use cave tools.'; end if;
+
+  return jsonb_build_object(
+    'nicknames', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'caveNumber', cave_number,
+        'nickname', nickname,
+        'updatedAt', updated_at
+      ) order by cave_number), '[]'::jsonb)
+      from public.exploration_cave_nicknames
+      where length(trim(nickname)) > 0
+    )
+  );
+end;
+$$;
+
+create or replace function public.set_exploration_cave_nickname(
+  p_session_token text,
+  p_cave_number int,
+  p_nickname text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_nickname text := left(trim(coalesce(p_nickname, '')), 80);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can rename caves.'; end if;
+  if p_cave_number < 1 or p_cave_number > 999 then raise exception 'Cave number is invalid.'; end if;
+
+  if length(v_nickname) = 0 then
+    delete from public.exploration_cave_nicknames where cave_number = p_cave_number;
+  else
+    insert into public.exploration_cave_nicknames (cave_number, nickname, updated_by)
+    values (p_cave_number, v_nickname, v_profile.id)
+    on conflict (cave_number) do update
+      set nickname = excluded.nickname,
+          updated_by = excluded.updated_by,
+          updated_at = now();
+  end if;
+
+  return jsonb_build_object(
+    'caveNumber', p_cave_number,
+    'nickname', v_nickname
+  );
+end;
+$$;
+
 create or replace function public.get_exploration_state(p_session_token text)
 returns jsonb
 language plpgsql
@@ -9679,6 +9758,8 @@ grant execute on function public.shop_vendor_record_to_json(public.shop_vendors,
 grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
 grant execute on function public.get_exploration_state(text) to anon, authenticated;
+grant execute on function public.get_exploration_cave_nicknames(text) to anon, authenticated;
+grant execute on function public.set_exploration_cave_nickname(text, int, text) to anon, authenticated;
 grant execute on function public.import_loot_items(text, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
