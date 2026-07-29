@@ -27,9 +27,9 @@ function difficultyTone(difficulty: number) {
 }
 
 function edgeColor(edge: CaveMapEdge) {
-  if (edge.type === 'secret') return '#56e2c2';
-  if (edge.type === 'connector') return 'rgba(245, 211, 126, 0.48)';
-  return 'rgba(245, 211, 126, 0.84)';
+  if (edge.type === 'secret') return 'rgba(244, 169, 112, 0.76)';
+  if (edge.type === 'connector') return 'rgba(245, 211, 126, 0.74)';
+  return 'rgba(185, 238, 211, 0.9)';
 }
 
 function nodeFill(node: CaveMapNode) {
@@ -40,8 +40,37 @@ function nodeFill(node: CaveMapNode) {
   return '#f5d37e';
 }
 
-function pointsAttribute(edge: CaveMapEdge) {
-  return edge.points.map((point) => `${point.x},${point.y}`).join(' ');
+function cavePath(edge: CaveMapEdge) {
+  const [first, ...rest] = edge.points;
+  if (!first) return '';
+  if (rest.length === 1) {
+    const end = rest[0];
+    const controlX = (first.x + end.x) / 2;
+    const controlY = (first.y + end.y) / 2 - 18;
+    return `M ${first.x} ${first.y} Q ${controlX} ${controlY} ${end.x} ${end.y}`;
+  }
+  return rest.reduce((path, point, index) => {
+    const previous = index === 0 ? first : rest[index - 1];
+    const controlX = (previous.x + point.x) / 2;
+    const controlY = previous.y + (point.y - previous.y) * 0.22;
+    return `${path} Q ${controlX} ${controlY} ${point.x} ${point.y}`;
+  }, `M ${first.x} ${first.y}`);
+}
+
+function difficultyBadgeFill(difficulty = 1) {
+  if (difficulty <= 1) return 'rgba(86, 226, 194, 0.22)';
+  if (difficulty === 2) return 'rgba(143, 227, 136, 0.2)';
+  if (difficulty === 3) return 'rgba(245, 211, 126, 0.22)';
+  if (difficulty === 4) return 'rgba(240, 138, 75, 0.22)';
+  return 'rgba(242, 109, 109, 0.24)';
+}
+
+function difficultyBadgeStroke(difficulty = 1) {
+  if (difficulty <= 1) return '#56e2c2';
+  if (difficulty === 2) return '#8fe388';
+  if (difficulty === 3) return '#f5d37e';
+  if (difficulty === 4) return '#f08a4b';
+  return '#f26d6d';
 }
 
 function CaveMapView({ cave }: { cave: CaveRecord }) {
@@ -53,21 +82,29 @@ function CaveMapView({ cave }: { cave: CaveRecord }) {
         role="img"
         aria-label={`${caveTitle(cave)} tunnel map`}
         viewBox={`0 0 ${map.width} ${map.height}`}
-        className="h-auto w-full min-w-[42rem]"
+        className="h-auto w-full min-w-[68rem]"
       >
         <rect width={map.width} height={map.height} fill="rgba(7, 14, 14, 0.72)" />
         <MapGrid map={map} />
         {map.edges.map((edge) => (
-          <polyline
-            key={edge.id}
-            points={pointsAttribute(edge)}
-            fill="none"
-            stroke={edgeColor(edge)}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeDasharray={edge.type === 'connector' ? '10 10' : edge.type === 'secret' ? '5 8' : undefined}
-            strokeWidth={edge.type === 'tunnel' ? 8 : 4}
-          />
+          <g key={edge.id}>
+            <path
+              d={cavePath(edge)}
+              fill="none"
+              stroke="rgba(0, 0, 0, 0.48)"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={edge.type === 'secret' ? 17 : edge.type === 'connector' ? 24 : 31}
+            />
+            <path
+              d={cavePath(edge)}
+              fill="none"
+              stroke={edgeColor(edge)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={edge.type === 'secret' ? 7 : edge.type === 'connector' ? 11 : 15}
+            />
+          </g>
         ))}
         {map.nodes.map((node) => <MapNode key={node.id} node={node} />)}
       </svg>
@@ -90,20 +127,37 @@ function MapGrid({ map }: { map: CaveMap }) {
 
 function MapNode({ node }: { node: CaveMapNode }) {
   if (node.type === 'label') {
+    const badgeWidth = 188;
+    const badgeHeight = 50;
     return (
-      <text x={node.x} y={node.y} textAnchor="middle" className="fill-[var(--paper)] text-[22px] font-black">
-        {node.label}
-      </text>
+      <g>
+        <rect
+          x={node.x - badgeWidth / 2}
+          y={node.y - badgeHeight / 2}
+          width={badgeWidth}
+          height={badgeHeight}
+          rx="16"
+          fill={difficultyBadgeFill(node.difficulty)}
+          stroke={difficultyBadgeStroke(node.difficulty)}
+          strokeWidth="3"
+        />
+        <text x={node.x} y={node.y - 3} textAnchor="middle" className="fill-[var(--paper)] text-[18px] font-black">
+          Tunnel {node.tunnelIndex}
+        </text>
+        <text x={node.x} y={node.y + 17} textAnchor="middle" fill={difficultyBadgeStroke(node.difficulty)} className="text-[18px] font-black">
+          Difficulty {node.difficulty}
+        </text>
+      </g>
     );
   }
 
   if (node.type === 'secret') {
-    const points = `${node.x},${node.y - 18} ${node.x + 24},${node.y} ${node.x},${node.y + 18} ${node.x - 24},${node.y}`;
+    const secretNumber = node.id.replace('secret-', 'S');
     return (
       <g>
-        <polygon points={points} fill="rgba(86, 226, 194, 0.2)" stroke={nodeFill(node)} strokeWidth="3" />
-        <text x={node.x} y={node.y + 36} textAnchor="middle" className="fill-[#56e2c2] text-[18px] font-black">
-          {node.label}
+        <rect x={node.x - 24} y={node.y - 18} width="48" height="36" rx="12" fill="rgba(244, 169, 112, 0.2)" stroke="#f4a970" strokeWidth="3" />
+        <text x={node.x} y={node.y + 6} textAnchor="middle" className="fill-[#ffe7b0] text-[16px] font-black">
+          {secretNumber}
         </text>
       </g>
     );
@@ -123,7 +177,7 @@ function MapNode({ node }: { node: CaveMapNode }) {
   return (
     <g>
       <circle cx={node.x} cy={node.y} r={node.type === 'start' ? 22 : 16} fill="rgba(245, 211, 126, 0.16)" stroke={nodeFill(node)} strokeWidth="4" />
-      <text x={node.x} y={node.y + (node.type === 'start' ? -34 : 34)} textAnchor="middle" className="fill-[var(--paper)] text-[18px] font-black">
+      <text x={node.type === 'start' ? node.x + 34 : node.x} y={node.y + (node.type === 'start' ? 7 : 34)} textAnchor={node.type === 'start' ? 'start' : 'middle'} className="fill-[var(--paper)] text-[18px] font-black">
         {node.label}
       </text>
     </g>
@@ -200,7 +254,7 @@ export function CavesPanel() {
   }
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[26rem_1fr]">
+    <div className="grid min-w-0 gap-4 xl:grid-cols-[26rem_minmax(0,1fr)]">
       <Card className="xl:sticky xl:top-4 xl:max-h-[calc(100dvh-2rem)] xl:overflow-y-auto">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -248,7 +302,7 @@ export function CavesPanel() {
       </Card>
 
       {selectedCave && (
-        <div className="grid gap-4">
+        <div className="grid min-w-0 gap-4">
           <Card>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -282,7 +336,7 @@ export function CavesPanel() {
 
           <Card>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Generated Cave Map</h3></div>
-            <div className="overflow-x-auto pb-2">
+            <div className="max-w-full overflow-x-auto pb-2">
               <CaveMapView cave={selectedCave} />
             </div>
           </Card>
