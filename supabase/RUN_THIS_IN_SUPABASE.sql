@@ -97,6 +97,7 @@ create table if not exists public.characters (
   current_mana int not null default 0 check (current_mana >= 0),
   magic_resist int not null default 0 check (magic_resist >= 0),
   inventory_slots int not null default 12 check (inventory_slots between 0 and 120),
+  gift_inventory_open boolean not null default true,
   spell_slots int not null default 0 check (spell_slots >= 0),
   attributes jsonb not null default '{}'::jsonb check (jsonb_typeof(attributes) = 'object'),
   class_passives jsonb not null default '[]'::jsonb check (jsonb_typeof(class_passives) = 'array'),
@@ -480,6 +481,9 @@ alter table public.characters
 alter table public.characters
   add column if not exists previous_owner_name text not null default '';
 
+alter table public.characters
+  add column if not exists gift_inventory_open boolean not null default true;
+
 create index if not exists characters_class_key_idx on public.characters(class_key);
 
 create or replace function public.profile_from_campaign_session(p_session_token text)
@@ -518,6 +522,7 @@ as $$
     'currentMana', p_character.current_mana,
     'magicResist', p_character.magic_resist,
     'inventorySlots', p_character.inventory_slots,
+    'giftInventoryOpen', p_character.gift_inventory_open,
     'spellSlots', p_character.spell_slots,
     'attributes', p_character.attributes,
     'classPassives', p_character.class_passives,
@@ -1325,11 +1330,54 @@ begin
     current_mana = case when v_patch ? 'currentMana' then greatest(0, (v_patch->>'currentMana')::int) else current_mana end,
     magic_resist = case when v_patch ? 'magicResist' then greatest(0, (v_patch->>'magicResist')::int) when v_template.id is not null then v_template.base_magic_resist else magic_resist end,
     inventory_slots = case when v_patch ? 'inventorySlots' then greatest(0, least((v_patch->>'inventorySlots')::int, 120)) else inventory_slots end,
+    gift_inventory_open = case when v_patch ? 'giftInventoryOpen' then (v_patch->>'giftInventoryOpen')::boolean else gift_inventory_open end,
     spell_slots = case when v_patch ? 'spellSlots' then greatest(0, (v_patch->>'spellSlots')::int) else spell_slots end,
     attributes = case when v_patch ? 'attributes' and jsonb_typeof(v_patch->'attributes') = 'object' then v_patch->'attributes' else attributes end,
     personal_passives = case when v_patch ? 'personalPassives' then coalesce(v_patch->>'personalPassives', '') else personal_passives end,
     token_color = case when v_patch ? 'tokenColor' then coalesce(nullif(trim(v_patch->>'tokenColor'), ''), token_color) else token_color end,
     location_name = case when v_patch ? 'locationName' then coalesce(nullif(trim(v_patch->>'locationName'), ''), location_name) else location_name end
+  where id = p_character_id
+  returning * into v_character;
+
+  return public.character_record_to_json(v_character);
+end;
+$$;
+
+create or replace function public.set_character_gift_inventory_open(
+  p_session_token text,
+  p_character_id uuid,
+  p_open boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+begin
+  select * into v_profile
+  from public.profile_from_campaign_session(p_session_token);
+
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_character
+  from public.characters
+  where id = p_character_id;
+
+  if v_character.id is null then
+    raise exception 'Character not found.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role and v_character.owner_user_id is distinct from v_profile.id then
+    raise exception 'You can only change gifting for your own character.';
+  end if;
+
+  update public.characters
+  set gift_inventory_open = coalesce(p_open, false)
   where id = p_character_id
   returning * into v_character;
 
@@ -2346,6 +2394,8 @@ as $$
     and a.is_two_handed = b.is_two_handed
     and a.is_accessory = b.is_accessory
     and a.modifiers = b.modifiers
+    and a.item_type <> 'pet'
+    and b.item_type <> 'pet'
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -2898,7 +2948,8 @@ create table if not exists public.player_houses (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null unique references public.profiles(id) on delete cascade,
   city_name text not null default 'Calostrynn',
-  inventory_slots int not null default 50 check (inventory_slots between 0 and 500),
+  inventory_slots int not null default 45 check (inventory_slots between 0 and 500),
+  stable_slots int not null default 5 check (stable_slots between 0 and 200),
   property_slots int not null default 10 check (property_slots between 0 and 200),
   is_locked boolean not null default false,
   created_at timestamptz not null default now(),
@@ -2973,7 +3024,46 @@ create unique index if not exists house_inventory_parent_slot_unique
 create index if not exists house_inventory_parent_idx on public.house_inventory_items(parent_item_id);
 
 alter table public.player_houses
-  add column if not exists is_locked boolean not null default false;
+  add column if not exists is_locked boolean not null default false,
+  add column if not exists stable_slots int not null default 5 check (stable_slots between 0 and 200);
+
+alter table public.player_houses
+  alter column inventory_slots set default 45,
+  alter column stable_slots set default 5;
+
+update public.player_houses
+set inventory_slots = 45,
+    stable_slots = case
+      when exists (
+        select 1
+        from public.profiles p
+        where p.id = public.player_houses.owner_user_id
+          and (lower(p.username::text) = 'm0' or lower(p.display_name) = 'm0')
+      ) or exists (
+        select 1
+        from public.characters c
+        where c.owner_user_id = public.player_houses.owner_user_id
+          and lower(c.name) in ('toren', 'rylas', 'halric')
+      )
+        then 20
+      else 5
+    end
+where inventory_slots <> 45
+   or stable_slots <> case
+      when exists (
+        select 1
+        from public.profiles p
+        where p.id = public.player_houses.owner_user_id
+          and (lower(p.username::text) = 'm0' or lower(p.display_name) = 'm0')
+      ) or exists (
+        select 1
+        from public.characters c
+        where c.owner_user_id = public.player_houses.owner_user_id
+          and lower(c.name) in ('toren', 'rylas', 'halric')
+      )
+        then 20
+      else 5
+    end;
 
 update public.house_inventory_items
 set item_type = public.normalize_item_type(item_type),
@@ -2994,6 +3084,66 @@ set item_type = 'potion',
     potion_property = null,
     potion_quality = null
 where lower(item_name) in ('empty flask', 'arcane nector');
+
+with ranked_house_items as (
+  select id,
+    row_number() over (partition by owner_user_id order by greatest(slot_index, 0), created_at, id) as item_rank
+  from public.house_inventory_items
+  where parent_item_id is null
+    and item_type <> 'pet'
+    and slot_index >= 0
+)
+update public.house_inventory_items i
+set slot_index = 200000 + ranked_house_items.item_rank
+from ranked_house_items
+where i.id = ranked_house_items.id;
+
+with ranked_house_pets as (
+  select id,
+    row_number() over (partition by owner_user_id order by greatest(slot_index, 0), created_at, id) as pet_rank
+  from public.house_inventory_items
+  where parent_item_id is null
+    and item_type = 'pet'
+)
+update public.house_inventory_items i
+set slot_index = 300000 + ranked_house_pets.pet_rank
+from ranked_house_pets
+where i.id = ranked_house_pets.id;
+
+with ranked_house_items as (
+  select id,
+    row_number() over (partition by owner_user_id order by slot_index, created_at, id) as item_rank
+  from public.house_inventory_items
+  where parent_item_id is null
+    and item_type <> 'pet'
+    and slot_index >= 200000
+)
+update public.house_inventory_items i
+set slot_index = case
+  when ranked_house_items.item_rank <= 45 then ranked_house_items.item_rank - 1
+  else 200000 + ranked_house_items.item_rank
+end
+from ranked_house_items
+where i.id = ranked_house_items.id;
+
+with ranked_house_pets as (
+  select i.id,
+    i.owner_user_id,
+    coalesce(h.stable_slots, 5) as stable_slots,
+    row_number() over (partition by owner_user_id order by slot_index, created_at, id) as pet_rank
+  from public.house_inventory_items i
+  join public.player_houses h on h.owner_user_id = i.owner_user_id
+  where i.parent_item_id is null
+    and i.item_type = 'pet'
+    and i.slot_index >= 300000
+)
+update public.house_inventory_items i
+set slot_index = case
+  when ranked_house_pets.pet_rank <= ranked_house_pets.stable_slots then 45 + ranked_house_pets.pet_rank - 1
+  else 300000 + ranked_house_pets.pet_rank
+end
+from ranked_house_pets
+where i.id = ranked_house_pets.id;
 
 create table if not exists public.campaign_properties (
   id uuid primary key default gen_random_uuid(),
@@ -3111,6 +3261,7 @@ as $$
     'ownerUserId', p_house.owner_user_id,
     'cityName', p_house.city_name,
     'inventorySlots', p_house.inventory_slots,
+    'stableSlots', p_house.stable_slots,
     'propertySlots', p_house.property_slots,
     'locked', p_house.is_locked
   )
@@ -3186,6 +3337,8 @@ as $$
     and a.is_two_handed = b.is_two_handed
     and a.is_accessory = b.is_accessory
     and a.modifiers = b.modifiers
+    and a.item_type <> 'pet'
+    and b.item_type <> 'pet'
     and a.is_storage = false
     and b.is_storage = false
 $$;
@@ -3220,6 +3373,87 @@ begin
   end loop;
 
   return null;
+end;
+$$;
+
+create or replace function public.house_stable_slot_offset()
+returns int
+language sql
+immutable
+as $$
+  select 45
+$$;
+
+create or replace function public.find_first_free_house_stable_slot(
+  p_owner_user_id uuid,
+  p_house public.player_houses
+)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_slot int;
+  v_start int := public.house_stable_slot_offset();
+  v_end int := public.house_stable_slot_offset() + greatest(coalesce(p_house.stable_slots, 0), 0) - 1;
+begin
+  if coalesce(p_house.stable_slots, 0) <= 0 then
+    return null;
+  end if;
+
+  for v_slot in v_start..v_end loop
+    if not exists (
+      select 1
+      from public.house_inventory_items i
+      where i.owner_user_id = p_owner_user_id
+        and i.parent_item_id is null
+        and i.slot_index = v_slot
+    ) then
+      return v_slot;
+    end if;
+  end loop;
+
+  return null;
+end;
+$$;
+
+create or replace function public.assert_house_item_slot_capacity(
+  p_house public.player_houses,
+  p_parent_item_id uuid,
+  p_slot_index int,
+  p_item_type text
+)
+returns int
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_capacity int;
+  v_stable_start int := public.house_stable_slot_offset();
+begin
+  if p_slot_index < 0 then
+    raise exception 'House slot is invalid.';
+  end if;
+
+  if p_parent_item_id is null
+    and public.normalize_item_type(p_item_type) = 'pet'
+    and p_slot_index >= v_stable_start
+    and p_slot_index < v_stable_start + p_house.stable_slots
+  then
+    return p_house.stable_slots;
+  end if;
+
+  v_capacity := public.assert_house_slot_capacity(p_house, p_parent_item_id, p_slot_index);
+
+  if p_parent_item_id is null
+    and p_slot_index >= p_house.inventory_slots
+  then
+    raise exception 'Only animals can be placed in stable slots.';
+  end if;
+
+  return v_capacity;
 end;
 $$;
 
@@ -3350,8 +3584,6 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   v_house := public.assert_house_access(v_profile, p_owner_user_id, true);
 
-  perform public.assert_house_slot_capacity(v_house, p_parent_item_id, p_slot_index);
-
   if length(trim(coalesce(v_item_name, ''))) = 0 then
     raise exception 'Item name is required.';
   end if;
@@ -3395,6 +3627,8 @@ begin
     end if;
   end if;
 
+  perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, p_slot_index, v_item_type);
+
   select * into v_target
   from public.house_inventory_items i
   where i.owner_user_id = p_owner_user_id
@@ -3418,6 +3652,7 @@ begin
       and v_target.is_two_handed = v_is_two_handed
       and v_target.is_accessory = v_is_accessory
       and v_target.modifiers = v_modifiers
+      and v_target.item_type <> 'pet'
       and v_target.is_storage = false
       and not coalesce(p_is_storage, false)
     then
@@ -3592,7 +3827,7 @@ begin
       return public.house_item_record_to_json(v_item);
     end if;
 
-    perform public.assert_house_slot_capacity(v_house, v_parent_item_id, v_slot_index);
+    perform public.assert_house_item_slot_capacity(v_house, v_parent_item_id, v_slot_index, v_item.item_type);
 
     select * into v_target
     from public.house_inventory_items i
@@ -3731,6 +3966,7 @@ begin
     and h.is_two_handed = v_item.is_two_handed
     and h.is_accessory = v_item.is_accessory
     and h.modifiers = v_item.modifiers
+    and h.item_type <> 'pet'
     and h.is_storage = false
     and v_item.is_storage = false
   order by h.slot_index
@@ -3745,8 +3981,14 @@ begin
     return public.get_player_house(p_session_token, v_character.owner_user_id);
   end if;
 
-  v_slot_index := public.find_first_free_house_slot(v_character.owner_user_id, null::uuid, v_house.inventory_slots);
+  v_slot_index := case
+    when v_item.item_type = 'pet' then public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house)
+    else public.find_first_free_house_slot(v_character.owner_user_id, null::uuid, v_house.inventory_slots)
+  end;
   if v_slot_index is null then
+    if v_item.item_type = 'pet' then
+      raise exception 'No open stable slot.';
+    end if;
     raise exception 'No open house inventory slot.';
   end if;
 
@@ -3844,7 +4086,7 @@ begin
   end if;
 
   v_house := public.ensure_player_house(v_character.owner_user_id);
-  perform public.assert_house_slot_capacity(v_house, p_parent_item_id, p_slot_index);
+  perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, p_slot_index, v_item.item_type);
 
   select * into v_target
   from public.house_inventory_items h
@@ -3869,6 +4111,7 @@ begin
       and v_target.is_two_handed = v_item.is_two_handed
       and v_target.is_accessory = v_item.is_accessory
       and v_target.modifiers = v_item.modifiers
+      and v_target.item_type <> 'pet'
       and v_target.is_storage = false
       and v_item.is_storage = false
     then
@@ -4549,7 +4792,10 @@ grant execute on function public.property_record_to_json(public.campaign_propert
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_wagon(text, text) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
+grant execute on function public.house_stable_slot_offset() to anon, authenticated;
+grant execute on function public.find_first_free_house_stable_slot(uuid, public.player_houses) to anon, authenticated;
 grant execute on function public.assert_house_slot_capacity(public.player_houses, uuid, int) to anon, authenticated;
+grant execute on function public.assert_house_item_slot_capacity(public.player_houses, uuid, int, text) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
@@ -9101,6 +9347,173 @@ begin
 end;
 $$;
 
+drop function if exists public.gift_inventory_item(text, uuid, uuid, numeric);
+
+create or replace function public.gift_inventory_item(
+  p_session_token text,
+  p_item_id uuid,
+  p_target_character_id uuid,
+  p_quantity numeric default 1
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_source_item public.inventory_items%rowtype;
+  v_sender public.characters%rowtype;
+  v_target_character public.characters%rowtype;
+  v_target_item public.inventory_items%rowtype;
+  v_quantity numeric;
+  v_slot_index int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_source_item
+  from public.inventory_items
+  where id = p_item_id
+  for update;
+
+  if v_source_item.id is null then raise exception 'Item was not found.'; end if;
+
+  v_sender := public.assert_inventory_access(v_profile, v_source_item.character_id, false);
+
+  select * into v_target_character
+  from public.characters
+  where id = p_target_character_id;
+
+  if v_target_character.id is null then raise exception 'Target character was not found.'; end if;
+  if v_target_character.id = v_sender.id then raise exception 'Choose another character to gift this to.'; end if;
+  if v_target_character.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
+  if v_source_item.loadout_slot is not null then raise exception 'Unequip that item before gifting it.'; end if;
+  if v_source_item.is_storage then raise exception 'Storage containers cannot be gifted.'; end if;
+
+  if v_sender.owner_user_id is distinct from v_target_character.owner_user_id
+    and v_profile.role <> 'dm'::public.user_role
+    and not coalesce(v_target_character.gift_inventory_open, true)
+  then
+    raise exception 'This persons inventory is closed from gifting efforts and grows tired of your pranks';
+  end if;
+
+  v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+  if v_quantity > v_source_item.quantity then raise exception 'Not enough quantity to gift.'; end if;
+
+  select * into v_target_item
+  from public.inventory_items i
+  where i.character_id = v_target_character.id
+    and i.parent_item_id is null
+    and i.loadout_slot is null
+    and i.item_name = v_source_item.item_name
+    and coalesce(i.display_name, '') = coalesce(v_source_item.display_name, '')
+    and coalesce(i.item_description, '') = coalesce(v_source_item.item_description, '')
+    and i.item_type = v_source_item.item_type
+    and i.rarity = v_source_item.rarity
+    and coalesce(i.enchantment, '') = coalesce(v_source_item.enchantment, '')
+    and coalesce(i.rune_name, '') = coalesce(v_source_item.rune_name, '')
+    and coalesce(i.material, '') = coalesce(v_source_item.material, '')
+    and coalesce(i.potion_strength, '') = coalesce(v_source_item.potion_strength, '')
+    and coalesce(i.potion_property, '') = coalesce(v_source_item.potion_property, '')
+    and coalesce(i.potion_quality, '') = coalesce(v_source_item.potion_quality, '')
+    and i.enhancement_count = v_source_item.enhancement_count
+    and i.is_two_handed = v_source_item.is_two_handed
+    and i.is_accessory = v_source_item.is_accessory
+    and i.modifiers = v_source_item.modifiers
+    and i.item_type <> 'pet'
+    and i.is_storage = false
+    and v_source_item.is_storage = false
+  order by i.slot_index
+  limit 1;
+
+  if v_target_item.id is not null then
+    update public.inventory_items
+    set quantity = quantity + v_quantity
+    where id = v_target_item.id;
+  else
+    v_slot_index := public.find_first_free_inventory_slot(v_target_character.id, null::uuid, v_target_character.inventory_slots);
+    if v_slot_index is null then raise exception 'Target inventory is full.'; end if;
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      display_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_accessory,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      rune_name,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_target_character.id,
+      null,
+      v_slot_index,
+      v_source_item.item_name,
+      v_source_item.display_name,
+      v_source_item.item_description,
+      v_source_item.item_type,
+      v_source_item.rarity,
+      v_quantity,
+      v_source_item.is_accessory,
+      false,
+      0,
+      v_source_item.modifiers,
+      v_source_item.enchantment,
+      v_source_item.rune_name,
+      v_source_item.material,
+      v_source_item.enhancement_count,
+      v_source_item.is_two_handed,
+      v_source_item.potion_strength,
+      v_source_item.potion_property,
+      v_source_item.potion_quality
+    );
+  end if;
+
+  if v_quantity >= v_source_item.quantity then
+    delete from public.inventory_items where id = v_source_item.id;
+  else
+    update public.inventory_items
+    set quantity = quantity - v_quantity
+    where id = v_source_item.id;
+  end if;
+
+  if v_sender.owner_user_id is distinct from v_target_character.owner_user_id then
+    insert into public.campaign_notifications (
+      recipient_user_id,
+      title,
+      body,
+      notice_kind,
+      source_type,
+      location_name
+    )
+    values (
+      v_target_character.owner_user_id,
+      v_sender.name || ' gave something to ' || v_target_character.name,
+      v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name) || ' was placed into ' || v_target_character.name || '''s inventory.',
+      'notice',
+      'gift',
+      v_target_character.location_name
+    );
+  end if;
+
+  return public.get_character_inventory(p_session_token, v_sender.id);
+end;
+$$;
+
 create or replace function public.update_trade_offer_status(
   p_session_token text,
   p_trade_id uuid,
@@ -9290,6 +9703,7 @@ grant execute on function public.mark_notification_read(text, uuid) to anon, aut
 grant execute on function public.create_campaign_announcement(text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
 grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric) to anon, authenticated;
+grant execute on function public.gift_inventory_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_trade_offer_status(text, uuid, text) to anon, authenticated;
 
 
@@ -10157,6 +10571,7 @@ grant execute on function public.get_character_ledger(text) to anon, authenticat
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.ensure_character_starter_armor(uuid) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.set_character_gift_inventory_open(text, uuid, boolean) to anon, authenticated;
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;
 grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;

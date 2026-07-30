@@ -145,6 +145,7 @@ export type Character = {
   magicResist: number;
   inventorySlots: number;
   inventoryOpenSlots?: number;
+  giftInventoryOpen: boolean;
   spellSlots: number;
   attributes: CharacterAttributes;
   classPassives: string[];
@@ -211,6 +212,7 @@ export type House = {
   ownerUserId: string;
   cityName: string;
   inventorySlots: number;
+  stableSlots: number;
   propertySlots: number;
   locked: boolean;
 };

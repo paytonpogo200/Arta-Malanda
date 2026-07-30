@@ -1,13 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Eye, Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { calculateCharacterSheetStats } from '@/features/characters/stats';
@@ -29,6 +28,62 @@ const EMPTY_ROOM: BattleRoomPayload = {
   inventoryItems: [],
   bestiary: []
 };
+
+function CombatantStatField({
+  label,
+  icon,
+  toneClass,
+  value,
+  min = 0,
+  max,
+  onCommit
+}: {
+  label: string;
+  icon?: ReactNode;
+  toneClass: string;
+  value: number;
+  min?: number;
+  max?: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft(String(value));
+  }, [value]);
+
+  const commit = useCallback(() => {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) {
+      setDraft(String(value));
+      return;
+    }
+    const rounded = Math.round(parsed);
+    const clamped = Math.max(min, max === undefined ? rounded : Math.min(max, rounded));
+    setDraft(String(clamped));
+    if (clamped !== value) onCommit(clamped);
+  }, [draft, max, min, onCommit, value]);
+
+  return (
+    <label>
+      <span className={`mb-1 block text-[10px] font-black uppercase ${toneClass}`}>{icon} {label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={draft}
+        className="field"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </label>
+  );
+}
 
 export function BattleRoom({ profile }: { profile: Profile }) {
   const [room, setRoom] = useState<BattleRoomPayload>(EMPTY_ROOM);
@@ -459,9 +514,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         <Card>
           <div className="mb-4 flex items-center gap-2"><ShieldAlert size={18} className="text-[var(--brass)]" /><h3 className="font-black">DM Controls - {selectedCharacter.name}</h3></div>
           <div className="grid grid-cols-3 gap-2">
-            <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]"><Heart className="mr-1 inline" size={11} /> Health</span><NumberInput min={0} value={selectedCombatant.currentHp} onValueChange={(currentHp) => updateCombatant(selectedCombatant, { currentHp })} /></label>
-            <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--blue)]"><Sparkles className="mr-1 inline" size={11} /> Mana</span><NumberInput min={0} value={selectedCombatant.currentMana} onValueChange={(currentMana) => updateCombatant(selectedCombatant, { currentMana })} /></label>
-            <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Initiative</span><NumberInput min={1} max={20} value={selectedCombatant.initiative ?? 1} emptyFallback={1} onValueChange={(initiative) => updateCombatant(selectedCombatant, { initiative })} /></label>
+            <CombatantStatField label="Health" icon={<Heart className="mr-1 inline" size={11} />} toneClass="text-[var(--red)]" value={selectedCombatant.currentHp} onCommit={(currentHp) => updateCombatant(selectedCombatant, { currentHp })} />
+            <CombatantStatField label="Mana" icon={<Sparkles className="mr-1 inline" size={11} />} toneClass="text-[var(--blue)]" value={selectedCombatant.currentMana} onCommit={(currentMana) => updateCombatant(selectedCombatant, { currentMana })} />
+            <CombatantStatField label="Initiative" toneClass="text-[var(--muted)]" value={selectedCombatant.initiative ?? 1} min={1} max={20} onCommit={(initiative) => updateCombatant(selectedCombatant, { initiative })} />
           </div>
         </Card>
       )}

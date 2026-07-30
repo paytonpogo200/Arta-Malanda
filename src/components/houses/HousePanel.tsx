@@ -46,10 +46,13 @@ const EMPTY_PROPERTY: PropertyDraft = {
   storageCapacity: 0
 };
 
+const STABLE_SLOT_OFFSET = 45;
+
 export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
-  const [inventorySlots, setInventorySlots] = useState(50);
+  const [inventorySlots, setInventorySlots] = useState(45);
+  const [stableSlots, setStableSlots] = useState(5);
   const [propertySlots, setPropertySlots] = useState(10);
   const [houseLocked, setHouseLocked] = useState(false);
   const [loading, setLoading] = useState(Boolean(ownerUserId));
@@ -66,8 +69,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
   useDragAutoScroll();
 
-  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
+  const stableItems = useMemo(() => items.filter((item) => (
+    sameContainer(item, null)
+    && item.type === 'pet'
+    && item.slotIndex >= STABLE_SLOT_OFFSET
+    && item.slotIndex < STABLE_SLOT_OFFSET + stableSlots
+  )), [items, stableSlots]);
+  const stableItemIds = useMemo(() => new Set(stableItems.map((item) => item.id)), [stableItems]);
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage && !stableItemIds.has(item.id)), [items, stableItemIds]);
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
+  const stableItemBySlot = useMemo(() => new Map(stableItems.map((item) => [item.slotIndex, item])), [stableItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
 
   const loadHouse = useCallback(async (showLoading = true) => {
@@ -82,7 +93,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       const normalized = normalizeHousePayload(payload);
       setItems(normalized.items);
       setProperties(normalized.properties);
-      setInventorySlots(normalized.house?.inventorySlots ?? 50);
+      setInventorySlots(normalized.house?.inventorySlots ?? 45);
+      setStableSlots(normalized.house?.stableSlots ?? 5);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
       setHouseLocked(Boolean(normalized.house?.locked));
     } catch (loadError) {
@@ -182,6 +194,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   async function addItem(event: FormEvent) {
     event.preventDefault();
     if (!ownerUserId || !itemModal || itemModal.item || !itemDraft.name.trim() || !canAdd) return;
+    if (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET && itemDraft.type !== 'pet') {
+      setError('Only animals can be placed in stable slots.');
+      return;
+    }
     await requestHouseChange(`/api/houses/${ownerUserId}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -196,6 +212,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   async function updateItem(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || !itemDraft.name.trim() || !canAdd) return;
+    if (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET && itemDraft.type !== 'pet') {
+      setError('Only animals can be placed in stable slots.');
+      return;
+    }
     await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -227,6 +247,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     if (!canManage) return;
     const movingHouseItem = items.find((item) => item.id === itemId);
     if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
+    if (parentItemId === null && slotIndex >= STABLE_SLOT_OFFSET) {
+      if (movingHouseItem && movingHouseItem.type !== 'pet') {
+        setError('Only animals can be placed in stable slots.');
+        return;
+      }
+      if (slotIndex >= STABLE_SLOT_OFFSET + stableSlots) {
+        setError('That stable slot does not exist.');
+        return;
+      }
+    }
 
     setTargetSlot(`${parentItemId ?? 'main'}:${slotIndex}`);
     const existingHouseItem = items.some((item) => item.id === itemId);
@@ -345,6 +375,33 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
                   />
                 );
               })}
+            </div>
+            <div className="mt-5">
+              <div className="rule-title mb-3">
+                <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-wider">
+                  <PawPrint size={16} className="text-[var(--brass)]" />
+                  Stable
+                </h3>
+              </div>
+              <p className="mb-3 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{stableItems.length}/{stableSlots} animals housed</p>
+              <div className="grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-5 lg:grid-cols-5">
+                {Array.from({ length: stableSlots }, (_, slot) => {
+                  const actualSlot = STABLE_SLOT_OFFSET + slot;
+                  const item = stableItemBySlot.get(actualSlot);
+                  return (
+                    <InventorySlot
+                      key={actualSlot}
+                      slot={slot}
+                      item={item}
+                      canEdit={canManage}
+                      canAdd={canAdd}
+                      target={targetSlot === `main:${actualSlot}`}
+                      onOpen={() => openItem(actualSlot, null, item)}
+                      onDropItem={(itemId) => moveItem(itemId, actualSlot, null)}
+                    />
+                  );
+                })}
+              </div>
             </div>
             {storageItems.length > 0 && (
               <div className="mt-5 space-y-2">

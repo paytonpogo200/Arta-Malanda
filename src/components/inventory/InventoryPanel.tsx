@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
+import { ArrowRightLeft, Gift, Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -147,6 +147,7 @@ export function InventoryPanel({
   const [tradeTargetId, setTradeTargetId] = useState('');
   const [tradeQuantity, setTradeQuantity] = useState(1);
   const [tradeMessage, setTradeMessage] = useState('');
+  const [giftOpen, setGiftOpen] = useState(character.giftInventoryOpen);
   const inventoryLoadedRef = useRef(false);
   const loadedCharacterIdRef = useRef(character.id);
   useDragAutoScroll();
@@ -317,6 +318,7 @@ export function InventoryPanel({
   const tradeTargets = useMemo(() => (tradeCharacters ?? [])
     .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId))
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
+  const tradeTargetCharacter = useMemo(() => tradeTargets.find((entry) => entry.id === tradeTargetId) ?? null, [tradeTargetId, tradeTargets]);
   const battleStats = useMemo(() => calculateCharacterSheetStats(character, items, classTemplate), [character, classTemplate, items]);
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
@@ -327,6 +329,10 @@ export function InventoryPanel({
   useEffect(() => {
     setTradeTargetId((current) => tradeTargets.some((entry) => entry.id === current) ? current : tradeTargets[0]?.id ?? '');
   }, [tradeTargets]);
+
+  useEffect(() => {
+    setGiftOpen(character.giftInventoryOpen);
+  }, [character.giftInventoryOpen, character.id]);
 
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
@@ -601,12 +607,73 @@ export function InventoryPanel({
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'Trade offer could not be sent.');
-      setNotice('Trade offer sent. The other player will see it in notifications.');
+      setNotice('Trade request sent. The other player will see it in notifications.');
       setTradeMessage('');
     } catch (tradeError) {
       setError(tradeError instanceof Error ? tradeError.message : 'Trade offer could not be sent.');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function giftItem(item: InventoryItem) {
+    if (!canManage || !tradeTargetId || item.loadoutSlot || item.isStorage) return;
+    const targetCharacter = tradeTargetCharacter;
+    if (!targetCharacter) return;
+    if (targetCharacter.ownerUserId !== character.ownerUserId && !targetCharacter.giftInventoryOpen) {
+      window.alert('This persons inventory is closed from gifting efforts and grows tired of your pranks');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const quantity = Math.min(item.quantity, Math.max(quantityStepForItem(item), tradeQuantity));
+      const response = await fetch(`/api/inventory/items/${item.id}/gift`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetCharacterId: targetCharacter.id,
+          quantity
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Gift could not be delivered.');
+      const normalized = normalizeCharacterInventoryPayload(payload.inventory ?? {});
+      setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+      setModal(null);
+      setNotice(`Gift delivered to ${targetCharacter.name}.`);
+    } catch (giftError) {
+      const message = giftError instanceof Error ? giftError.message : 'Gift could not be delivered.';
+      setError(message);
+      if (message.includes('gifting efforts')) window.alert(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleGiftInventoryOpen() {
+    if (!canManage) return;
+    const nextOpen = !giftOpen;
+    setGiftOpen(nextOpen);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/gifting`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ open: nextOpen })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Gift access could not be changed.');
+      setGiftOpen(Boolean(payload.character?.giftInventoryOpen));
+    } catch (giftError) {
+      setGiftOpen(!nextOpen);
+      setError(giftError instanceof Error ? giftError.message : 'Gift access could not be changed.');
     }
   }
 
@@ -763,7 +830,20 @@ export function InventoryPanel({
 
           <LoadoutPanel items={items} spells={spells} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
 
-          <div className="mt-5 rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
+          <div className="mt-5 mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="rule-title min-w-0 flex-1"><h3 className="text-sm font-black uppercase tracking-wider">Inventory</h3></div>
+            {canManage && (
+              <Button
+                variant={giftOpen ? 'teal' : 'secondary'}
+                className="px-3 py-2 text-xs"
+                onClick={toggleGiftInventoryOpen}
+                disabled={saving}
+              >
+                <Gift className="mr-2 inline" size={14} />
+                {giftOpen ? 'Open to gifts' : 'Closed to gifts'}
+              </Button>
+            )}
+          </div>
           <div className="inventory-grid grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-4 lg:grid-cols-6">
             {Array.from({ length: character.inventorySlots }, (_, slot) => {
               const item = itemByMainSlot.get(slot);
@@ -987,15 +1067,33 @@ export function InventoryPanel({
                   {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
                   {tradeTargets.length > 0 && !modal.item.loadoutSlot && !modal.item.isStorage && (
                     <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-                      <p className="text-xs font-black uppercase tracking-wider text-[var(--brass)]">Give or trade</p>
+                      <p className="text-xs font-black uppercase tracking-wider text-[var(--brass)]">Gift or request trade</p>
                       <SelectField value={tradeTargetId} onChange={(event) => setTradeTargetId(event.target.value)}>
-                        {tradeTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                        {tradeTargets.map((target) => (
+                          <option key={target.id} value={target.id}>
+                            {target.name}{target.ownerUserId === character.ownerUserId ? ' - your character' : target.giftInventoryOpen ? ' - gifts open' : ' - gifts closed'}
+                          </option>
+                        ))}
                       </SelectField>
-                      <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">
+                      <div className="grid gap-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)]">
                         <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={tradeQuantity} onValueChange={setTradeQuantity} />
-                        <TextField value={tradeMessage} onChange={(event) => setTradeMessage(event.target.value)} placeholder="Optional note" />
+                        <TextField value={tradeMessage} onChange={(event) => setTradeMessage(event.target.value)} placeholder="Optional trade note" />
                       </div>
-                      <Button variant="teal" onClick={() => sendItemTrade(modal.item!)} disabled={!tradeTargetId || saving}>Send offer</Button>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <Button variant="teal" onClick={() => giftItem(modal.item!)} disabled={!tradeTargetId || saving}>
+                          <Gift className="mr-2 inline" size={15} />
+                          {tradeTargetCharacter?.ownerUserId === character.ownerUserId ? 'Move now' : 'Gift now'}
+                        </Button>
+                        {tradeTargetCharacter?.ownerUserId !== character.ownerUserId && (
+                          <Button variant="secondary" onClick={() => sendItemTrade(modal.item!)} disabled={!tradeTargetId || saving}>
+                            <ArrowRightLeft className="mr-2 inline" size={15} />
+                            Request trade
+                          </Button>
+                        )}
+                      </div>
+                      {tradeTargetCharacter && tradeTargetCharacter.ownerUserId !== character.ownerUserId && !tradeTargetCharacter.giftInventoryOpen && (
+                        <p className="rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-2 text-xs font-black text-[var(--red)]">Gifts are closed for this character. Trades can still be requested.</p>
+                      )}
                     </div>
                   )}
                   {tradeTargets.length > 0 && modal.item.loadoutSlot && (
