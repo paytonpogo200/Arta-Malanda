@@ -13,6 +13,7 @@ import {
   type CaveMapNode,
   type CaveRecord
 } from '@/features/exploration/caves';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 
 function caveTitle(cave: CaveRecord) {
   return cave.nickname ? `Cave ${cave.number} - ${cave.nickname}` : `Cave ${cave.number}`;
@@ -220,7 +221,8 @@ export function CavesPanel() {
     ].join(' ').toLowerCase().includes(term));
   }, [caves, search]);
 
-  const loadCaves = useCallback(async () => {
+  const loadCaves = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/exploration/caves', { cache: 'no-store' });
@@ -233,9 +235,11 @@ export function CavesPanel() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Caves could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['caves', 'exploration'], () => loadCaves(false));
 
   useEffect(() => {
     void loadCaves();
@@ -274,7 +278,7 @@ export function CavesPanel() {
             <p className="eyebrow">Exploration Tool</p>
             <h2 className="mt-1 flex items-center gap-2 text-2xl font-black"><Waypoints className="text-[var(--brass)]" /> Caves</h2>
           </div>
-          <Button variant="secondary" className="p-3" onClick={loadCaves} aria-label="Refresh caves"><RefreshCw size={16} /></Button>
+          <Button variant="secondary" className="p-3" onClick={() => void loadCaves()} aria-label="Refresh caves"><RefreshCw size={16} /></Button>
         </div>
         {error && <div className="mt-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
         <label className="relative mt-4 block">

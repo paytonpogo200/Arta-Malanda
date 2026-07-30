@@ -12,6 +12,7 @@ import { ResourceBar } from '@/components/ui/ResourceBar';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/battle/data';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { Character, Combatant, InventoryItem, Profile } from '@/lib/types';
 
 type TokenView = Combatant & { character: Character | undefined };
@@ -88,7 +89,8 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     return bestiaryOptions.filter((entity) => `${entity.name} ${entity.category} ${entity.summary}`.toLowerCase().includes(needle));
   }, [bestiaryOptions, bestiarySearch]);
 
-  const loadRoom = useCallback(async () => {
+  const loadRoom = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/battle', { cache: 'no-store' });
@@ -100,9 +102,11 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Battlefield could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['battle', 'characters', 'inventory', 'spells', 'bestiary'], () => loadRoom(false), { debounceMs: 150 });
 
   useEffect(() => {
     void loadRoom();

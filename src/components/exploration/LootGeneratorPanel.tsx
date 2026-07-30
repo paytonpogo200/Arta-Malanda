@@ -18,6 +18,7 @@ import {
   type LootRarityMath,
   type LootRollPayload
 } from '@/features/exploration/data';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { rarityClass } from '@/lib/utils/rarity';
 
 const EMPTY: ExplorationPayload = {
@@ -76,7 +77,8 @@ export function LootGeneratorPanel() {
   const rollCount = useMemo(() => getLootRollCount(payload.settings, poolSize, roomType), [payload.settings, poolSize, roomType]);
   const defaultCharacterId = payload.characters[0]?.id ?? '';
 
-  const loadExploration = useCallback(async () => {
+  const loadExploration = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/exploration', { cache: 'no-store' });
@@ -92,9 +94,11 @@ export function LootGeneratorPanel() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Exploration tools could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['exploration', 'inventory', 'characters'], () => loadExploration(false));
 
   useEffect(() => {
     void loadExploration();
@@ -170,7 +174,7 @@ export function LootGeneratorPanel() {
         ...current,
         [dropId]: { ...draft, quantity: Math.max(1, Math.min(drop.remaining - quantity, quantity)) }
       }));
-      await loadExploration();
+      await loadExploration(false);
     } catch (awardError) {
       setError(awardError instanceof Error ? awardError.message : 'Loot could not be given.');
     } finally {
@@ -190,7 +194,7 @@ export function LootGeneratorPanel() {
             <p className="eyebrow">DM Tools</p>
             <h2 className="mt-1 flex items-center gap-2 text-2xl font-black"><Compass className="text-[var(--brass)]" /> Exploration</h2>
           </div>
-          <Button variant="secondary" className="p-3" onClick={loadExploration} aria-label="Refresh exploration"><RefreshCw size={16} /></Button>
+          <Button variant="secondary" className="p-3" onClick={() => void loadExploration()} aria-label="Refresh exploration"><RefreshCw size={16} /></Button>
         </div>
         {error && <div className="mt-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
       </Card>

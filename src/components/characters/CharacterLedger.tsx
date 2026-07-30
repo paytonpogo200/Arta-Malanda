@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/Card';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeLedgerPayload, type CampaignProfile } from '@/features/characters/data';
 import { armorDefenseBase } from '@/features/characters/stats';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { CLASS_TEMPLATES } from '@/lib/constants/classes';
 import type { Character, ClassTemplate, Profile } from '@/lib/types';
 
@@ -49,8 +50,8 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
 
   const isDm = profile.role === 'dm';
 
-  const loadLedger = useCallback(async () => {
-    setLoading(true);
+  const loadLedger = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
 
     try {
@@ -77,9 +78,11 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'The character ledger could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['characters', 'inventory', 'spells', 'trades'], () => loadLedger(false));
 
   useEffect(() => {
     void loadLedger();
@@ -203,7 +206,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
               <h2 className="mt-1 text-2xl font-black">Party roster</h2>
             </div>
             <div className="flex gap-2">
-              <Button variant="secondary" className="p-3" onClick={loadLedger} aria-label="Refresh ledger">
+              <Button variant="secondary" className="p-3" onClick={() => void loadLedger()} aria-label="Refresh ledger">
                 <RefreshCw size={17} />
               </Button>
               {isDm && (

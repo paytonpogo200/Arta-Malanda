@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { TextField } from '@/components/ui/Field';
 import { categoryLabel, normalizeBestiaryPayload, type BestiaryPayload } from '@/features/bestiary/data';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { BestiaryCategoryRecord, BestiaryEntity, Profile } from '@/lib/types';
 
 const EMPTY: BestiaryPayload = {
@@ -107,7 +108,8 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const isDm = profile.role === 'dm';
 
-  const loadBestiary = useCallback(async () => {
+  const loadBestiary = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/bestiary', { cache: 'no-store' });
@@ -117,9 +119,11 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Bestiary could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['bestiary'], () => loadBestiary(false));
 
   useEffect(() => {
     void loadBestiary();
@@ -266,7 +270,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
                 </Button>
               </>
             )}
-            <Button variant="secondary" className="p-3" onClick={loadBestiary} aria-label="Refresh bestiary"><RefreshCw size={16} /></Button>
+            <Button variant="secondary" className="p-3" onClick={() => void loadBestiary()} aria-label="Refresh bestiary"><RefreshCw size={16} /></Button>
           </div>
         </div>
 

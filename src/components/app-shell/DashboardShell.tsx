@@ -5,6 +5,7 @@ import { BookOpen, Compass, Landmark, LogOut, PawPrint, ScrollText, Settings2, S
 import { NotificationHub } from '@/components/app-shell/NotificationHub';
 import type { DashboardStatePayload } from '@/features/dashboard/state';
 import { normalizeDashboardState } from '@/features/dashboard/state';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { Profile } from '@/lib/types';
 
 export type DashboardTabId = 'battle' | 'characters' | 'cities' | 'bestiary' | 'exploration' | 'scroll' | 'assets';
@@ -83,6 +84,8 @@ function useDashboardState(isDm: boolean, onBattleLock: () => void) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [refresh]);
+
+  useLiveRefresh(['dashboard', 'battle', 'notifications', 'trades'], refresh);
 
   return { state, refresh };
 }

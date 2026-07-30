@@ -13,6 +13,7 @@ import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { CampaignProperty, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
 
 type HousePanelProps = {
@@ -94,6 +95,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   useEffect(() => {
     void loadHouse();
   }, [loadHouse]);
+
+  useLiveRefresh(['house', 'inventory', 'wagon'], () => loadHouse(false), { enabled: Boolean(ownerUserId) });
 
   useEffect(() => {
     if (!canAdd) {

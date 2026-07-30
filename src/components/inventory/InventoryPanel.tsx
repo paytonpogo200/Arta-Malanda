@@ -16,6 +16,7 @@ import { normalizeHousePayload } from '@/features/houses/data';
 import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { normalizeWagonPayload, type WagonActivity, type WagonStorage } from '@/features/inventory/wagons';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import {
   canApplyRune,
   cleanModifiers,
@@ -191,6 +192,11 @@ export function InventoryPanel({
     setWallet([]);
     setLoading(true);
   }, [character.id]);
+
+  useLiveRefresh(['inventory', 'house', 'wagon', 'characters', 'trades'], () => {
+    void loadInventory(false);
+    void loadWagons();
+  });
 
   useEffect(() => {
     void loadInventory(!inventoryLoadedRef.current);

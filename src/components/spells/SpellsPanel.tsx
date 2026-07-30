@@ -8,6 +8,7 @@ import { Modal } from '@/components/ui/Modal';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
 import { spellForEnchantment } from '@/features/inventory/itemDetails';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { spellManaText, spellTypeClass, spellTypes } from '@/lib/utils/spells';
 import type { Character, CharacterSpell, InventoryItem, Spell } from '@/lib/types';
 
@@ -167,8 +168,8 @@ export function SpellsPanel({
     .filter((entry): entry is { item: InventoryItem; spell: Spell } => Boolean(entry.spell))
     .sort((a, b) => a.spell.name.localeCompare(b.spell.name) || (a.item.displayName || a.item.name).localeCompare(b.item.displayName || b.item.name)), [enchantedItems, payload.catalog]);
 
-  const loadSpells = useCallback(async () => {
-    setLoading(true);
+  const loadSpells = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch(`/api/characters/${character.id}/spells`, { cache: 'no-store' });
@@ -180,9 +181,11 @@ export function SpellsPanel({
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Spells could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [character.id]);
+
+  useLiveRefresh(['spells', 'characters', 'battle', 'inventory'], () => loadSpells(false));
 
   useEffect(() => {
     void loadSpells();
@@ -318,7 +321,7 @@ export function SpellsPanel({
         </div>
         <div className="flex gap-2">
           {canGrant && <Button variant="teal" type="button" onClick={() => setGrantModalOpen(true)}>Add spell</Button>}
-          <Button variant="secondary" type="button" className="p-3" onClick={loadSpells} aria-label="Refresh spells"><RefreshCw size={16} /></Button>
+          <Button variant="secondary" type="button" className="p-3" onClick={() => void loadSpells()} aria-label="Refresh spells"><RefreshCw size={16} /></Button>
         </div>
       </div>
 

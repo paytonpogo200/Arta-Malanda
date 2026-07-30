@@ -11,6 +11,7 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
 import { spellTypeClass, spellTypeFromProductSection, spellTypes } from '@/lib/utils/spells';
 import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
@@ -549,6 +550,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [craftRuneProductId, setCraftRuneProductId] = useState('');
   const [craftTargetItemId, setCraftTargetItemId] = useState('');
   const [craftModifier, setCraftModifier] = useState('strength');
+  const [craftRefreshSignal, setCraftRefreshSignal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -593,7 +595,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     .filter((vendor) => isDm || !vendor.hidden)
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [selectedCity?.key, isDm, payload.vendors]);
 
-  const loadCities = useCallback(async () => {
+  const loadCities = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/cities', { cache: 'no-store' });
@@ -606,9 +609,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Discovered cities could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [isDm, profile.id]);
+
+  useLiveRefresh(['cities', 'inventory', 'house', 'characters', 'spells'], () => {
+    void loadCities(false);
+    setCraftRefreshSignal((current) => current + 1);
+  });
 
   useEffect(() => {
     void loadCities();
@@ -647,7 +655,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     return () => {
       active = false;
     };
-  }, [canShop, craftModal, selectedCity, selectedShopper]);
+  }, [canShop, craftModal, craftRefreshSignal, selectedCity, selectedShopper]);
 
   async function replaceFromResponse(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));
@@ -854,7 +862,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to Cities</Button>}
-            <Button variant="secondary" className="p-3" onClick={loadCities} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
+            <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
             {isDm && !selectedVendor && selectedCity && <Button variant={cityLocked ? 'danger' : 'teal'} onClick={toggleCityLock} disabled={saving}>{cityLocked ? <Lock className="mr-2 inline" size={15} /> : <Unlock className="mr-2 inline" size={15} />}{cityLocked ? 'Locked' : 'Open'}</Button>}
           </div>
         </div>
@@ -962,6 +970,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onEditProduct={openProductEdit}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCitiesChanged={setPayload}
+          liveRefreshSignal={craftRefreshSignal}
           setError={setError}
         />
       ) : isSpellVendor(selectedVendor) ? (
@@ -1432,7 +1441,7 @@ function ArmoryPage(props: {
   );
 }
 
-function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct, onCitiesChanged, setError }: {
+function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct, onCitiesChanged, liveRefreshSignal, setError }: {
   vendor: ShopVendor;
   shopper: Character | null;
   isDm: boolean;
@@ -1442,6 +1451,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
   onEditProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   onCitiesChanged: (payload: CitiesPayload) => void;
+  liveRefreshSignal: number;
   setError: (message: string) => void;
 }) {
   const [brewery, setBrewery] = useState<BreweryState>({ definitions: [], availableItems: [], houseAccess: { accessible: false, city: 'Calostrynn' } });
@@ -1483,7 +1493,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     return () => {
       active = false;
     };
-  }, [canShop, setError, shopper]);
+  }, [canShop, liveRefreshSignal, setError, shopper]);
 
   useEffect(() => {
     setPropertySelections({});

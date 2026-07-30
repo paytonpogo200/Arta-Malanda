@@ -10,6 +10,7 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeUpdateAssetsPayload, type UpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
 import { SPELL_SCHOOLS, SPELL_TYPES } from '@/features/spells/data';
+import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type BestiaryEntity, type ClassTemplate, type ItemCatalogEntry, type ItemRarity, type LootItem, type MarketProduct, type Spell } from '@/lib/types';
 import { rarityOptions } from '@/lib/utils/rarity';
 import { spellManaText } from '@/lib/utils/spells';
@@ -63,8 +64,8 @@ export function UpdateAssetsPanel() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const loadAssets = useCallback(async () => {
-    setLoading(true);
+  const loadAssets = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch('/api/assets', { cache: 'no-store' });
@@ -74,9 +75,11 @@ export function UpdateAssetsPanel() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Assets could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, []);
+
+  useLiveRefresh(['assets', 'cities', 'bestiary', 'spells', 'exploration'], () => loadAssets(false));
 
   useEffect(() => {
     void loadAssets();
@@ -140,7 +143,7 @@ export function UpdateAssetsPanel() {
       if (normalized.classes.length || normalized.vendors.length || normalized.itemCatalog.length || normalized.spells.length || normalized.lootItems.length || normalized.bestiary.length) {
         setAssets(normalized);
       } else {
-        await loadAssets();
+        await loadAssets(false);
       }
       setTarget(null);
     } catch (saveError) {
@@ -162,7 +165,7 @@ export function UpdateAssetsPanel() {
             <p className="eyebrow">Dungeon Master</p>
             <h2 className="mt-1 text-3xl font-black">Update Assets</h2>
           </div>
-          <Button variant="secondary" className="p-3" onClick={loadAssets} aria-label="Refresh assets">
+          <Button variant="secondary" className="p-3" onClick={() => void loadAssets()} aria-label="Refresh assets">
             <RefreshCw size={17} />
           </Button>
         </div>

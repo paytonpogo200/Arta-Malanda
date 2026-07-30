@@ -10169,3 +10169,237 @@ grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, 
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 
+
+-- ============================================================
+-- ============================================================
+
+-- Live app refresh signals.
+-- Realtime clients listen to this single table and quietly reload the affected panels.
+
+create table if not exists public.app_live_updates (
+  scope text primary key,
+  version bigint not null default 0,
+  entity_id text,
+  updated_at timestamptz not null default now(),
+  constraint app_live_updates_scope_not_blank check (length(trim(scope)) > 0)
+);
+
+alter table public.app_live_updates enable row level security;
+revoke all on table public.app_live_updates from anon, authenticated;
+grant select on table public.app_live_updates to anon, authenticated;
+
+drop policy if exists app_live_updates_read_all on public.app_live_updates;
+create policy app_live_updates_read_all
+on public.app_live_updates
+for select
+to anon, authenticated
+using (true);
+
+insert into public.app_live_updates (scope)
+values
+  ('dashboard'),
+  ('notifications'),
+  ('battle'),
+  ('characters'),
+  ('inventory'),
+  ('house'),
+  ('wagon'),
+  ('spells'),
+  ('cities'),
+  ('bestiary'),
+  ('assets'),
+  ('exploration'),
+  ('caves'),
+  ('trades')
+on conflict (scope) do nothing;
+
+create or replace function public.touch_app_live_update(
+  p_scope text,
+  p_entity_id text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_scope is null or length(trim(p_scope)) = 0 then
+    return;
+  end if;
+
+  insert into public.app_live_updates (scope, version, entity_id, updated_at)
+  values (trim(p_scope), 1, p_entity_id, now())
+  on conflict (scope) do update
+  set version = public.app_live_updates.version + 1,
+      entity_id = excluded.entity_id,
+      updated_at = excluded.updated_at;
+end;
+$$;
+
+create or replace function public.touch_app_live_update_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_scope text;
+  v_entity_id text;
+begin
+  v_entity_id := coalesce(to_jsonb(new)->>'id', to_jsonb(old)->>'id');
+  foreach v_scope in array string_to_array(coalesce(tg_argv[0], ''), ',')
+  loop
+    perform public.touch_app_live_update(trim(v_scope), v_entity_id);
+  end loop;
+  return coalesce(new, old);
+end;
+$$;
+
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+    and not exists (
+      select 1
+      from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = 'app_live_updates'
+    )
+  then
+    alter publication supabase_realtime add table public.app_live_updates;
+  end if;
+end $$;
+
+drop trigger if exists app_live_profiles on public.profiles;
+create trigger app_live_profiles
+after insert or update or delete on public.profiles
+for each row execute function public.touch_app_live_update_trigger('dashboard,characters,notifications');
+
+drop trigger if exists app_live_class_templates on public.class_templates;
+create trigger app_live_class_templates
+after insert or update or delete on public.class_templates
+for each row execute function public.touch_app_live_update_trigger('battle,characters,assets');
+
+drop trigger if exists app_live_characters on public.characters;
+create trigger app_live_characters
+after insert or update or delete on public.characters
+for each row execute function public.touch_app_live_update_trigger('dashboard,battle,characters,cities,inventory');
+
+drop trigger if exists app_live_currency_units on public.currency_units;
+create trigger app_live_currency_units
+after insert or update or delete on public.currency_units
+for each row execute function public.touch_app_live_update_trigger('assets,cities,inventory');
+
+drop trigger if exists app_live_character_wallet_balances on public.character_wallet_balances;
+create trigger app_live_character_wallet_balances
+after insert or update or delete on public.character_wallet_balances
+for each row execute function public.touch_app_live_update_trigger('battle,characters,cities,inventory');
+
+drop trigger if exists app_live_item_catalog on public.item_catalog;
+create trigger app_live_item_catalog
+after insert or update or delete on public.item_catalog
+for each row execute function public.touch_app_live_update_trigger('assets,cities,inventory,exploration');
+
+drop trigger if exists app_live_inventory_items on public.inventory_items;
+create trigger app_live_inventory_items
+after insert or update or delete on public.inventory_items
+for each row execute function public.touch_app_live_update_trigger('battle,inventory,cities,wagon');
+
+drop trigger if exists app_live_battles on public.battles;
+create trigger app_live_battles
+after insert or update or delete on public.battles
+for each row execute function public.touch_app_live_update_trigger('dashboard,battle');
+
+drop trigger if exists app_live_combatants on public.combatants;
+create trigger app_live_combatants
+after insert or update or delete on public.combatants
+for each row execute function public.touch_app_live_update_trigger('dashboard,battle,characters');
+
+drop trigger if exists app_live_battle_terrain on public.battle_terrain;
+create trigger app_live_battle_terrain
+after insert or update or delete on public.battle_terrain
+for each row execute function public.touch_app_live_update_trigger('battle');
+
+drop trigger if exists app_live_bestiary_entities on public.bestiary_entities;
+create trigger app_live_bestiary_entities
+after insert or update or delete on public.bestiary_entities
+for each row execute function public.touch_app_live_update_trigger('battle,bestiary,assets');
+
+drop trigger if exists app_live_bestiary_categories on public.bestiary_categories;
+create trigger app_live_bestiary_categories
+after insert or update or delete on public.bestiary_categories
+for each row execute function public.touch_app_live_update_trigger('bestiary,assets');
+
+drop trigger if exists app_live_cities on public.cities;
+create trigger app_live_cities
+after insert or update or delete on public.cities
+for each row execute function public.touch_app_live_update_trigger('dashboard,cities,assets');
+
+drop trigger if exists app_live_shop_vendors on public.shop_vendors;
+create trigger app_live_shop_vendors
+after insert or update or delete on public.shop_vendors
+for each row execute function public.touch_app_live_update_trigger('cities,assets');
+
+drop trigger if exists app_live_market_products on public.market_products;
+create trigger app_live_market_products
+after insert or update or delete on public.market_products
+for each row execute function public.touch_app_live_update_trigger('cities,assets');
+
+drop trigger if exists app_live_house_inventory_items on public.house_inventory_items;
+create trigger app_live_house_inventory_items
+after insert or update or delete on public.house_inventory_items
+for each row execute function public.touch_app_live_update_trigger('house,inventory,cities');
+
+drop trigger if exists app_live_campaign_properties on public.campaign_properties;
+create trigger app_live_campaign_properties
+after insert or update or delete on public.campaign_properties
+for each row execute function public.touch_app_live_update_trigger('house,cities,assets');
+
+drop trigger if exists app_live_wagon_activity_log on public.wagon_activity_log;
+create trigger app_live_wagon_activity_log
+after insert or update or delete on public.wagon_activity_log
+for each row execute function public.touch_app_live_update_trigger('wagon,inventory');
+
+drop trigger if exists app_live_spell_catalog on public.spell_catalog;
+create trigger app_live_spell_catalog
+after insert or update or delete on public.spell_catalog
+for each row execute function public.touch_app_live_update_trigger('spells,cities,assets');
+
+drop trigger if exists app_live_character_spells on public.character_spells;
+create trigger app_live_character_spells
+after insert or update or delete on public.character_spells
+for each row execute function public.touch_app_live_update_trigger('battle,characters,spells');
+
+drop trigger if exists app_live_loot_pools on public.loot_pools;
+create trigger app_live_loot_pools
+after insert or update or delete on public.loot_pools
+for each row execute function public.touch_app_live_update_trigger('exploration,assets');
+
+drop trigger if exists app_live_loot_items on public.loot_items;
+create trigger app_live_loot_items
+after insert or update or delete on public.loot_items
+for each row execute function public.touch_app_live_update_trigger('exploration,assets');
+
+drop trigger if exists app_live_loot_workbook_settings on public.loot_workbook_settings;
+create trigger app_live_loot_workbook_settings
+after insert or update or delete on public.loot_workbook_settings
+for each row execute function public.touch_app_live_update_trigger('exploration,assets');
+
+drop trigger if exists app_live_campaign_notifications on public.campaign_notifications;
+create trigger app_live_campaign_notifications
+after insert or update or delete on public.campaign_notifications
+for each row execute function public.touch_app_live_update_trigger('dashboard,notifications,trades');
+
+drop trigger if exists app_live_trade_offers on public.trade_offers;
+create trigger app_live_trade_offers
+after insert or update or delete on public.trade_offers
+for each row execute function public.touch_app_live_update_trigger('dashboard,notifications,trades,inventory');
+
+drop trigger if exists app_live_exploration_cave_nicknames on public.exploration_cave_nicknames;
+create trigger app_live_exploration_cave_nicknames
+after insert or update or delete on public.exploration_cave_nicknames
+for each row execute function public.touch_app_live_update_trigger('caves,exploration');
+
+grant execute on function public.touch_app_live_update(text, text) to anon, authenticated;
+grant execute on function public.touch_app_live_update_trigger() to anon, authenticated;
+
