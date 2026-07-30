@@ -482,6 +482,8 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             canManage
             canAdd={false}
             tradeCharacters={room.characters}
+            showBattleStats
+            classTemplate={classByKey.get(viewedCharacter.classKey)}
             onResourceChanged={(patch) => updateLocalCombatant(viewedCombatant.id, patch)}
           />
         </div>

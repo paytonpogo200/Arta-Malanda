@@ -12,6 +12,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { normalizeWagonPayload, type WagonActivity, type WagonStorage } from '@/features/inventory/wagons';
@@ -28,7 +29,8 @@ import {
 } from '@/features/inventory/itemDetails';
 import { rarityClass } from '@/lib/utils/rarity';
 import { spellManaText } from '@/lib/utils/spells';
-import type { Character, InventoryItem, ItemCatalogEntry, LoadoutModifierKey, LoadoutSlot, Spell, WalletBalance } from '@/lib/types';
+import { signed } from '@/lib/utils/format';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type ItemCatalogEntry, type LoadoutModifierKey, type LoadoutSlot, type Spell, type WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -91,12 +93,20 @@ function quantityText(quantity: number) {
   return Number.isInteger(quantity) ? quantity.toString() : quantity.toFixed(1);
 }
 
+function statToneClass(value: number) {
+  if (value > 0) return 'text-[var(--teal)]';
+  if (value < 0) return 'text-[var(--red)]';
+  return 'text-[var(--paper)]';
+}
+
 export function InventoryPanel({
   character,
   canManage,
   canAdd,
   refreshSignal = 0,
   tradeCharacters,
+  showBattleStats = false,
+  classTemplate,
   onItemsChanged,
   onResourceChanged
 }: {
@@ -105,6 +115,8 @@ export function InventoryPanel({
   canAdd: boolean;
   refreshSignal?: number;
   tradeCharacters?: Character[];
+  showBattleStats?: boolean;
+  classTemplate?: ClassTemplate;
   onItemsChanged?: (items: InventoryItem[]) => void;
   onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
 }) {
@@ -305,6 +317,12 @@ export function InventoryPanel({
   const tradeTargets = useMemo(() => (tradeCharacters ?? [])
     .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId))
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
+  const battleStats = useMemo(() => calculateCharacterSheetStats(character, items, classTemplate), [character, classTemplate, items]);
+  const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
+    key,
+    label: ATTRIBUTE_LABELS[key],
+    value: activeAttributeValue(character, items, key)
+  })), [character, items]);
 
   useEffect(() => {
     setTradeTargetId((current) => tradeTargets.some((entry) => entry.id === current) ? current : tradeTargets[0]?.id ?? '');
@@ -689,22 +707,59 @@ export function InventoryPanel({
         </div>
       ) : (
         <>
-          <section className="mb-5">
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Wallet</h3></div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {wallet.map((entry) => (
-                <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
-                  <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.unit.name}</span>
-                  {canAdd ? (
-                    <NumberInput min={0} value={walletDraft[entry.unit.id] ?? 0} onValueChange={(amount) => setWalletDraft({ ...walletDraft, [entry.unit.id]: amount })} className="mt-2" />
-                  ) : (
-                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.amount}</span>
-                  )}
-                </label>
-              ))}
-            </div>
-            {canAdd && <Button variant="teal" className="mt-2" onClick={saveWallet} disabled={saving}>Save wallet</Button>}
-          </section>
+          {showBattleStats ? (
+            <section className="mb-5 space-y-4">
+              <div>
+                <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Combat Stats</h3></div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Max HP</span>
+                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{battleStats.maxHp}</span>
+                  </div>
+                  <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Max Mana</span>
+                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{battleStats.maxMana}</span>
+                  </div>
+                  <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Defense</span>
+                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{battleStats.defense}</span>
+                  </div>
+                  <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Magic Resist</span>
+                    <span className="mt-1 block text-lg font-black text-[var(--paper)]">{battleStats.magicResist}</span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Attributes & Skills</h3></div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                  {attributeRows.map((entry) => (
+                    <div key={entry.key} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.label}</p>
+                      <p className={`mt-1 text-lg font-black ${statToneClass(entry.value)}`}>{signed(entry.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section className="mb-5">
+              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Wallet</h3></div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {wallet.map((entry) => (
+                  <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.unit.name}</span>
+                    {canAdd ? (
+                      <NumberInput min={0} value={walletDraft[entry.unit.id] ?? 0} onValueChange={(amount) => setWalletDraft({ ...walletDraft, [entry.unit.id]: amount })} className="mt-2" />
+                    ) : (
+                      <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.amount}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              {canAdd && <Button variant="teal" className="mt-2" onClick={saveWallet} disabled={saving}>Save wallet</Button>}
+            </section>
+          )}
 
           <LoadoutPanel items={items} spells={spells} canMove={canManage} onOpen={(item) => openSlot(item.slotIndex, item.parentItemId, item)} onEquip={equipItem} />
 
