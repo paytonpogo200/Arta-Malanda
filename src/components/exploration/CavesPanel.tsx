@@ -39,20 +39,35 @@ function nodeFill(node: CaveMapNode) {
 }
 
 function cavePath(edge: CaveMapEdge) {
-  const [first, ...rest] = edge.points;
-  if (!first) return '';
-  if (rest.length === 1) {
-    const end = rest[0];
-    const controlX = (first.x + end.x) / 2;
-    const controlY = (first.y + end.y) / 2 - 18;
-    return `M ${first.x} ${first.y} Q ${controlX} ${controlY} ${end.x} ${end.y}`;
+  const points = edge.points;
+  if (!points.length) return '';
+  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
+  if (points.length === 2) {
+    const [start, end] = points;
+    const controlX = (start.x + end.x) / 2;
+    const controlY = (start.y + end.y) / 2 - 18;
+    return `M ${start.x} ${start.y} Q ${controlX} ${controlY} ${end.x} ${end.y}`;
   }
-  return rest.reduce((path, point, index) => {
-    const previous = index === 0 ? first : rest[index - 1];
-    const controlX = (previous.x + point.x) / 2;
-    const controlY = previous.y + (point.y - previous.y) * 0.22;
-    return `${path} Q ${controlX} ${controlY} ${point.x} ${point.y}`;
-  }, `M ${first.x} ${first.y}`);
+  if (edge.type === 'tunnel' && points.length === 4) {
+    const [start, controlOne, controlTwo, end] = points;
+    return `M ${start.x} ${start.y} C ${controlOne.x} ${controlOne.y}, ${controlTwo.x} ${controlTwo.y}, ${end.x} ${end.y}`;
+  }
+
+  const tension = edge.type === 'secret' ? 0.22 : 0.72;
+  return points.slice(0, -1).reduce((path, point, index) => {
+    const previous = points[Math.max(0, index - 1)];
+    const next = points[index + 1];
+    const afterNext = points[Math.min(points.length - 1, index + 2)];
+    const controlOne = {
+      x: point.x + (next.x - previous.x) * tension / 6,
+      y: point.y + (next.y - previous.y) * tension / 6
+    };
+    const controlTwo = {
+      x: next.x - (afterNext.x - point.x) * tension / 6,
+      y: next.y - (afterNext.y - point.y) * tension / 6
+    };
+    return `${path} C ${controlOne.x} ${controlOne.y}, ${controlTwo.x} ${controlTwo.y}, ${next.x} ${next.y}`;
+  }, `M ${points[0].x} ${points[0].y}`);
 }
 
 function difficultyBadgeFill(difficulty = 1) {

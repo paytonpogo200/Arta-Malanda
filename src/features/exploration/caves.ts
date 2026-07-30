@@ -58,6 +58,13 @@ type MapBox = {
   bottom: number;
 };
 
+type CaveLabelRequest = {
+  tunnel: number;
+  difficulty: number;
+  path: CaveMapPoint[];
+  laneY: number;
+};
+
 const CAVE_SOURCE_ROWS: CaveSourceRow[] = [
   [1, 5, 'Beast', 2, 'Multi Cave', [4, 5, 4, 2, 4]],
   [2, 3, 'Beast', 1, 'Forking Cave', [2, 3, 4]],
@@ -182,7 +189,31 @@ function secretRoomBox(point: CaveMapPoint): MapBox {
   return { left: point.x - 34, right: point.x + 34, top: point.y - 28, bottom: point.y + 28 };
 }
 
+function expandBox(box: MapBox, padding: number): MapBox {
+  return {
+    left: box.left - padding,
+    right: box.right + padding,
+    top: box.top - padding,
+    bottom: box.bottom + padding
+  };
+}
+
+function pointInBox(point: CaveMapPoint, box: MapBox) {
+  return point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom;
+}
+
+function cubicPoint(points: CaveMapPoint[], percent: number): CaveMapPoint {
+  const [start, controlOne, controlTwo, end] = points;
+  const t = clamp(percent, 0, 1);
+  const inverse = 1 - t;
+  return {
+    x: inverse ** 3 * start.x + 3 * inverse ** 2 * t * controlOne.x + 3 * inverse * t ** 2 * controlTwo.x + t ** 3 * end.x,
+    y: inverse ** 3 * start.y + 3 * inverse ** 2 * t * controlOne.y + 3 * inverse * t ** 2 * controlTwo.y + t ** 3 * end.y
+  };
+}
+
 function pointOnPath(points: CaveMapPoint[], percent: number) {
+  if (points.length === 4) return cubicPoint(points, percent);
   const clamped = Math.max(0, Math.min(1, percent));
   const position = clamped * (points.length - 1);
   const index = Math.min(points.length - 2, Math.floor(position));
@@ -195,9 +226,46 @@ function pointOnPath(points: CaveMapPoint[], percent: number) {
   };
 }
 
+function sampledPath(points: CaveMapPoint[], samples = 72) {
+  return Array.from({ length: samples + 1 }, (_, index) => pointOnPath(points, index / samples));
+}
+
+function boxTouchesPath(box: MapBox, path: CaveMapPoint[]) {
+  const expanded = expandBox(box, 24);
+  return sampledPath(path).some((point) => pointInBox(point, expanded));
+}
+
+function chooseLabelPosition(request: CaveLabelRequest, paths: CaveMapPoint[][], occupiedBoxes: MapBox[], width: number, height: number): CaveMapPoint {
+  const percentOptions = [0.52, 0.38, 0.66, 0.28, 0.78, 0.18, 0.88];
+  const verticalOptions = [-104, 104, -146, 146, -188, 188, -232, 232, -276, 276];
+  const horizontalOptions = [0, -86, 86, -150, 150, -224, 224, -304, 304];
+
+  for (const percent of percentOptions) {
+    const anchor = pointOnPath(request.path, percent);
+    for (const vertical of verticalOptions) {
+      for (const horizontal of horizontalOptions) {
+        const candidate = roundedPoint({
+          x: clamp(anchor.x + horizontal, 126, width - 126),
+          y: clamp(anchor.y + vertical, 58, height - 66)
+        });
+        const box = difficultyLabelBox(candidate);
+        if (occupiedBoxes.some((occupied) => boxesOverlap(occupied, box))) continue;
+        if (paths.some((path) => boxTouchesPath(box, path))) continue;
+        return candidate;
+      }
+    }
+  }
+
+  const fallback = roundedPoint({
+    x: clamp(pointOnPath(request.path, 0.52).x, 126, width - 126),
+    y: clamp(request.laneY - 118, 58, height - 66)
+  });
+  return fallback;
+}
+
 function laneY(index: number, tunnelCount: number, height: number) {
-  const usableTop = 124;
-  const usableBottom = height - 116;
+  const usableTop = 158;
+  const usableBottom = height - 128;
   if (tunnelCount === 1) return height / 2;
   return usableTop + ((usableBottom - usableTop) * index) / (tunnelCount - 1);
 }
@@ -236,11 +304,12 @@ export function normalizeCavesPayload(value: unknown): CaveRecord[] {
 export function generateCaveMap(cave: CaveRecord): CaveMap {
   const seed = seedFor(cave);
   const width = 1280;
-  const height = 760;
+  const height = 900;
   const midY = height / 2;
   const nodes: CaveMapNode[] = [{ id: 'start', type: 'start', label: 'Cave Opening', x: 72, y: midY }];
   const edges: CaveMapEdge[] = [];
   const anchors: Array<{ entry: CaveMapPoint; boss: CaveMapPoint; path: CaveMapPoint[]; attach: CaveMapPoint[] }> = [];
+  const labelRequests: CaveLabelRequest[] = [];
 
   for (let index = 0; index < cave.tunnelCount; index += 1) {
     const tunnel = index + 1;
@@ -270,9 +339,9 @@ export function generateCaveMap(cave: CaveRecord): CaveMap {
       source = { id: `fork-source-${index}`, type: 'label', label: '', ...attachPoint };
     } else if (index > 0 && cave.layoutType === 'Multi Cave') {
       const parent = anchors[Math.max(0, index - 1 - ((seed + index) % Math.min(index, 3)))];
-      const attachPoint = roll < 70
+      const attachPoint = roll < 86
         ? nodes[0]
-        : roll < 88
+        : roll < 95
           ? parent.attach[(seed + index * 5) % parent.attach.length]
           : parent.boss;
       source = { id: `multi-source-${index}`, type: 'label', label: '', ...attachPoint };
@@ -285,38 +354,44 @@ export function generateCaveMap(cave: CaveRecord): CaveMap {
       y: clamp(y + offset(seed, index + 31, 28), 72, height - 72)
     };
     const span = boss.x - entry.x;
-    const firstLift = source.id === 'start' ? y - source.y : offset(seed, index + 10, 70);
-    const secondLift = offset(seed, index + 23, 84);
-    const thirdLift = offset(seed, index + 37, 76);
+    const laneDelta = y - entry.y;
+    const laneWiggle = offset(seed, index + 23, 34);
+    const branchWiggle = source.id === 'start' ? 0 : offset(seed, index + 10, 24);
     const path = [
       roundedPoint(entry),
-      roundedPoint({ x: entry.x + span * 0.12 + offset(seed, index + 21, 42), y: entry.y + firstLift * 0.44 + offset(seed, index + 13, 36) }),
-      roundedPoint({ x: entry.x + span * 0.27 + offset(seed, index + 25, 58), y: y + firstLift * 0.18 + offset(seed, index + 17, 58) }),
-      roundedPoint({ x: entry.x + span * 0.45 + offset(seed, index + 29, 70), y: y + secondLift }),
-      roundedPoint({ x: entry.x + span * 0.66 + offset(seed, index + 33, 62), y: y - thirdLift * 0.6 }),
-      roundedPoint({ x: entry.x + span * 0.84 + offset(seed, index + 47, 44), y: boss.y + offset(seed, index + 53, 36) }),
+      roundedPoint({
+        x: entry.x + span * 0.28 + offset(seed, index + 21, 64),
+        y: entry.y + laneDelta * 0.18 + branchWiggle + laneWiggle * 1.7
+      }),
+      roundedPoint({
+        x: entry.x + span * 0.72 + offset(seed, index + 33, 64),
+        y: boss.y - laneDelta * 0.14 - laneWiggle * 1.35 + offset(seed, index + 41, 26)
+      }),
       roundedPoint(boss)
     ];
     const attach = [pointOnPath(path, 0.28), pointOnPath(path, 0.48), pointOnPath(path, 0.68)].map(roundedPoint);
-    const labelAnchor = pointOnPath(path, 0.52);
 
     edges.push({ id: `tunnel-${tunnel}`, type: 'tunnel', tunnelIndex: tunnel, points: path });
     nodes.push({ id: `boss-${tunnel}`, type: 'boss', label: `Boss T${tunnel}`, tunnelIndex: tunnel, difficulty, ...roundedPoint(boss) });
-    nodes.push({
-      id: `label-${tunnel}`,
-      type: 'label',
-      label: `T${tunnel}: Difficulty ${difficulty}`,
-      tunnelIndex: tunnel,
-      difficulty,
-      x: Math.round(clamp(labelAnchor.x, 126, width - 126)),
-      y: Math.round(clamp(y - 56, 58, height - 66))
-    });
+    labelRequests.push({ tunnel, difficulty, path, laneY: y });
     anchors.push({ entry, boss, path, attach });
   }
 
-  const occupiedLabelBoxes = nodes
-    .filter((node) => node.type === 'label')
-    .map(difficultyLabelBox);
+  const occupiedLabelBoxes: MapBox[] = [];
+  const tunnelPaths = edges.filter((edge) => edge.type === 'tunnel').map((edge) => edge.points);
+  for (const request of labelRequests) {
+    const labelPoint = chooseLabelPosition(request, tunnelPaths, occupiedLabelBoxes, width, height);
+    const labelNode = {
+      id: `label-${request.tunnel}`,
+      type: 'label' as const,
+      label: `T${request.tunnel}: Difficulty ${request.difficulty}`,
+      tunnelIndex: request.tunnel,
+      difficulty: request.difficulty,
+      ...labelPoint
+    };
+    nodes.push(labelNode);
+    occupiedLabelBoxes.push(difficultyLabelBox(labelNode));
+  }
 
   for (let index = 0; index < cave.secretRoomCount; index += 1) {
     const tunnelIndex = (seed + index * 2) % cave.tunnelCount;
@@ -397,6 +472,10 @@ function validateCaveData() {
       for (let next = index + 1; next < labelBoxes.length; next += 1) {
         if (boxesOverlap(labelBoxes[index].box, labelBoxes[next].box)) errors.push(`Cave ${cave.number} has overlapping tunnel difficulty labels.`);
       }
+    }
+    const tunnelPaths = map.edges.filter((edge) => edge.type === 'tunnel').map((edge) => edge.points);
+    for (const { box } of labelBoxes) {
+      if (tunnelPaths.some((path) => boxTouchesPath(box, path))) errors.push(`Cave ${cave.number} has a tunnel passing under a difficulty label.`);
     }
     for (const secret of map.nodes.filter((node) => node.type === 'secret')) {
       const secretBox = secretRoomBox(secret);
