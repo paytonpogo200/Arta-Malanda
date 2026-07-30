@@ -9039,7 +9039,6 @@ begin
     raise exception 'You can only offer trades from your own characters.';
   end if;
   if v_target.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
-  if v_target.owner_user_id = v_sender.owner_user_id then raise exception 'That trade is already within the same player account.'; end if;
 
   if p_offered_item_id is not null then
     select * into v_offered_item

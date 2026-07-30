@@ -12,6 +12,7 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
 import { quantityStepForItem } from '@/features/inventory/data';
+import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import type { CampaignProperty, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
 
 type HousePanelProps = {
@@ -62,14 +63,15 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [spells, setSpells] = useState<Spell[]>([]);
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
+  useDragAutoScroll();
 
   const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
 
-  const loadHouse = useCallback(async () => {
+  const loadHouse = useCallback(async (showLoading = true) => {
     if (!ownerUserId) return;
-    setLoading(true);
+    if (showLoading) setLoading(true);
     setError('');
 
     try {
@@ -85,7 +87,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'House could not be loaded.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }, [ownerUserId]);
 
@@ -157,7 +159,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       if (!response.ok) throw new Error(payload.error ?? 'House action failed.');
       setItemModal(null);
       setPropertyModal(null);
-      await loadHouse();
+      await loadHouse(false);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'House action failed.');
     } finally {
@@ -304,7 +306,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
           {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" className="p-3" onClick={loadHouse} aria-label="Refresh house"><RefreshCw size={16} /></Button>
+          <Button variant="secondary" className="p-3" onClick={() => void loadHouse()} aria-label="Refresh house"><RefreshCw size={16} /></Button>
           {canAdd && (
             <Button variant={houseLocked ? 'danger' : 'teal'} className="p-3" onClick={toggleHouseLock} aria-label={houseLocked ? 'Unlock house' : 'Lock house'}>
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}

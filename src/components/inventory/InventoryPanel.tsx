@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
@@ -15,6 +15,7 @@ import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { normalizeWagonPayload, type WagonActivity, type WagonStorage } from '@/features/inventory/wagons';
+import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import {
   canApplyRune,
   cleanModifiers,
@@ -133,6 +134,9 @@ export function InventoryPanel({
   const [tradeTargetId, setTradeTargetId] = useState('');
   const [tradeQuantity, setTradeQuantity] = useState(1);
   const [tradeMessage, setTradeMessage] = useState('');
+  const inventoryLoadedRef = useRef(false);
+  const loadedCharacterIdRef = useRef(character.id);
+  useDragAutoScroll();
 
   const loadWagons = useCallback(async () => {
     if (!canManage && !canAdd) {
@@ -159,8 +163,8 @@ export function InventoryPanel({
     }
   }, [canAdd, canManage, character.id]);
 
-  const loadInventory = useCallback(async () => {
-    setLoading(true);
+  const loadInventory = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     setError('');
     try {
       const response = await fetch(`/api/characters/${character.id}/inventory`, { cache: 'no-store' });
@@ -174,12 +178,22 @@ export function InventoryPanel({
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Inventory could not be loaded.');
     } finally {
-      setLoading(false);
+      inventoryLoadedRef.current = true;
+      if (showLoading) setLoading(false);
     }
   }, [character.id, onItemsChanged]);
 
   useEffect(() => {
-    void loadInventory();
+    if (loadedCharacterIdRef.current === character.id) return;
+    loadedCharacterIdRef.current = character.id;
+    inventoryLoadedRef.current = false;
+    setItems([]);
+    setWallet([]);
+    setLoading(true);
+  }, [character.id]);
+
+  useEffect(() => {
+    void loadInventory(!inventoryLoadedRef.current);
     void loadWagons();
   }, [loadInventory, loadWagons, refreshSignal]);
 
@@ -283,8 +297,8 @@ export function InventoryPanel({
     return [...inventoryRunes, ...homeRunes].sort((a, b) => a.item.name.localeCompare(b.item.name) || a.source.localeCompare(b.source));
   }, [houseRunes, items, modal?.item]);
   const tradeTargets = useMemo(() => (tradeCharacters ?? [])
-    .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId) && entry.ownerUserId !== character.ownerUserId)
-    .sort((a, b) => a.name.localeCompare(b.name)), [character.id, character.ownerUserId, tradeCharacters]);
+    .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId))
+    .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
 
   useEffect(() => {
     setTradeTargetId((current) => tradeTargets.some((entry) => entry.id === current) ? current : tradeTargets[0]?.id ?? '');
@@ -333,7 +347,7 @@ export function InventoryPanel({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
       setModal(null);
-      await loadInventory();
+      await loadInventory(false);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Inventory action failed.');
     } finally {
@@ -356,7 +370,7 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
       const updated = payload.item ? normalizeInventoryItem(payload.item) : null;
       if (!updated) {
-        await loadInventory();
+        await loadInventory(false);
         setItems((current) => {
           const next = current.filter((item) => item.id !== itemId);
           onItemsChanged?.(next);
@@ -366,7 +380,7 @@ export function InventoryPanel({
         return;
       }
       setModal((current) => current?.item?.id === updated.id ? { ...current, item: updated } : current);
-      await loadInventory();
+      await loadInventory(false);
     } catch (actionError) {
       setItems(previousItems);
       onItemsChanged?.(previousItems);
@@ -478,7 +492,7 @@ export function InventoryPanel({
         onItemsChanged?.(next);
         return next;
       });
-      await loadInventory();
+      await loadInventory(false);
       const normalized = normalizeWagonPayload(payload);
       const sharedWagons = normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id);
       const sharedWagonIds = new Set(sharedWagons.map((entry) => entry.wagon.id));
@@ -488,7 +502,7 @@ export function InventoryPanel({
       setModal(null);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Item could not be moved into the wagon.');
-      await loadInventory();
+      await loadInventory(false);
       await loadWagons();
     } finally {
       setSaving(false);
@@ -655,7 +669,7 @@ export function InventoryPanel({
           <p className="eyebrow">Possessions</p>
           <h3 className="mt-1 text-xl font-black">Inventory & Loadout</h3>
         </div>
-        <Button variant="secondary" className="p-3" onClick={loadInventory} aria-label="Refresh inventory">
+        <Button variant="secondary" className="p-3" onClick={() => void loadInventory()} aria-label="Refresh inventory">
           <RefreshCw size={16} />
         </Button>
       </div>
