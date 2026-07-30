@@ -3086,12 +3086,12 @@ set item_type = 'potion',
 where lower(item_name) in ('empty flask', 'arcane nector');
 
 with ranked_house_items as (
-  select id,
-    row_number() over (partition by owner_user_id order by greatest(slot_index, 0), created_at, id) as item_rank
-  from public.house_inventory_items
-  where parent_item_id is null
-    and item_type <> 'pet'
-    and slot_index >= 0
+  select i.id,
+    row_number() over (partition by i.owner_user_id order by greatest(i.slot_index, 0), i.created_at, i.id) as item_rank
+  from public.house_inventory_items i
+  where i.parent_item_id is null
+    and i.item_type <> 'pet'
+    and i.slot_index >= 0
 )
 update public.house_inventory_items i
 set slot_index = 200000 + ranked_house_items.item_rank
@@ -3099,11 +3099,11 @@ from ranked_house_items
 where i.id = ranked_house_items.id;
 
 with ranked_house_pets as (
-  select id,
-    row_number() over (partition by owner_user_id order by greatest(slot_index, 0), created_at, id) as pet_rank
-  from public.house_inventory_items
-  where parent_item_id is null
-    and item_type = 'pet'
+  select i.id,
+    row_number() over (partition by i.owner_user_id order by greatest(i.slot_index, 0), i.created_at, i.id) as pet_rank
+  from public.house_inventory_items i
+  where i.parent_item_id is null
+    and i.item_type = 'pet'
 )
 update public.house_inventory_items i
 set slot_index = 300000 + ranked_house_pets.pet_rank
@@ -3111,12 +3111,12 @@ from ranked_house_pets
 where i.id = ranked_house_pets.id;
 
 with ranked_house_items as (
-  select id,
-    row_number() over (partition by owner_user_id order by slot_index, created_at, id) as item_rank
-  from public.house_inventory_items
-  where parent_item_id is null
-    and item_type <> 'pet'
-    and slot_index >= 200000
+  select i.id,
+    row_number() over (partition by i.owner_user_id order by i.slot_index, i.created_at, i.id) as item_rank
+  from public.house_inventory_items i
+  where i.parent_item_id is null
+    and i.item_type <> 'pet'
+    and i.slot_index >= 200000
 )
 update public.house_inventory_items i
 set slot_index = case
@@ -3130,7 +3130,7 @@ with ranked_house_pets as (
   select i.id,
     i.owner_user_id,
     coalesce(h.stable_slots, 5) as stable_slots,
-    row_number() over (partition by owner_user_id order by slot_index, created_at, id) as pet_rank
+    row_number() over (partition by i.owner_user_id order by i.slot_index, i.created_at, i.id) as pet_rank
   from public.house_inventory_items i
   join public.player_houses h on h.owner_user_id = i.owner_user_id
   where i.parent_item_id is null
@@ -3437,11 +3437,15 @@ begin
     raise exception 'House slot is invalid.';
   end if;
 
-  if p_parent_item_id is null
-    and public.normalize_item_type(p_item_type) = 'pet'
-    and p_slot_index >= v_stable_start
-    and p_slot_index < v_stable_start + p_house.stable_slots
-  then
+  if p_parent_item_id is null and p_slot_index >= v_stable_start then
+    if public.normalize_item_type(p_item_type) <> 'pet' then
+      raise exception 'Only animals can be placed in stable slots.';
+    end if;
+
+    if p_slot_index >= v_stable_start + p_house.stable_slots then
+      raise exception 'Stable slot is outside the stable capacity.';
+    end if;
+
     return p_house.stable_slots;
   end if;
 
@@ -4240,6 +4244,8 @@ begin
     and i.is_two_handed = v_house_item.is_two_handed
     and i.is_accessory = v_house_item.is_accessory
     and i.modifiers = v_house_item.modifiers
+    and i.item_type <> 'pet'
+    and v_house_item.item_type <> 'pet'
     and i.is_storage = false
     and v_house_item.is_storage = false
   order by i.slot_index
