@@ -144,6 +144,7 @@ export type Character = {
   currentMana: number;
   magicResist: number;
   inventorySlots: number;
+  inventoryOpenSlots?: number;
   spellSlots: number;
   attributes: CharacterAttributes;
   classPassives: string[];

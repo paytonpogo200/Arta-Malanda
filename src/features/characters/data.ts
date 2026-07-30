@@ -72,6 +72,7 @@ export function normalizeCharacter(value: unknown): Character {
     currentMana: numberFrom(source.currentMana, 0),
     magicResist: numberFrom(source.magicResist, 0),
     inventorySlots: numberFrom(source.inventorySlots, 12),
+    inventoryOpenSlots: source.inventoryOpenSlots === undefined ? undefined : Math.max(0, numberFrom(source.inventoryOpenSlots, 0)),
     spellSlots: numberFrom(source.spellSlots, 0),
     attributes: normalizeAttributes(source.attributes),
     classPassives: normalizeTextList(source.classPassives),

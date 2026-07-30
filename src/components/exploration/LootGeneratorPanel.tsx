@@ -51,6 +51,11 @@ function findRarity(rarities: LootRarityMath[], rarity: LootRarityMath['rarity']
   };
 }
 
+function characterInventoryFull(characterId: string, payload: ExplorationPayload) {
+  const character = payload.characters.find((entry) => entry.id === characterId);
+  return character?.inventoryOpenSlots !== undefined && character.inventoryOpenSlots <= 0;
+}
+
 export function LootGeneratorPanel() {
   const [payload, setPayload] = useState<ExplorationPayload>(EMPTY);
   const [biome, setBiome] = useState(DEFAULT_LOOT_GENERATOR_SETTINGS.biomes[0]);
@@ -165,6 +170,7 @@ export function LootGeneratorPanel() {
         ...current,
         [dropId]: { ...draft, quantity: Math.max(1, Math.min(drop.remaining - quantity, quantity)) }
       }));
+      await loadExploration();
     } catch (awardError) {
       setError(awardError instanceof Error ? awardError.message : 'Loot could not be given.');
     } finally {
@@ -313,6 +319,8 @@ export function LootGeneratorPanel() {
           <div className="grid gap-3">
             {rollPayload.drops.map((drop) => {
               const draft = awardDrafts[drop.id] ?? { characterId: defaultCharacterId, quantity: Math.max(1, drop.remaining) };
+              const selectedCharacter = payload.characters.find((character) => character.id === draft.characterId);
+              const selectedInventoryFull = drop.type !== 'currency' && characterInventoryFull(draft.characterId, payload);
               return (
                 <div key={drop.id} className={`rounded-2xl border p-3 ${rarityClass(drop.rarity)}`}>
                   <div className="flex flex-wrap items-start gap-3">
@@ -325,10 +333,19 @@ export function LootGeneratorPanel() {
                   {drop.remaining > 0 ? (
                     <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_8rem_auto]">
                       <SelectField value={draft.characterId} onChange={(event) => setAwardDrafts((current) => ({ ...current, [drop.id]: { ...draft, characterId: event.target.value } }))}>
-                        {payload.characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}
+                        {payload.characters.map((character) => (
+                          <option key={character.id} value={character.id}>
+                            {character.name}{character.inventoryOpenSlots !== undefined ? ` - ${character.inventoryOpenSlots}/${character.inventorySlots} slots open` : ''}
+                          </option>
+                        ))}
                       </SelectField>
                       <NumberInput min={1} max={drop.remaining} value={Math.max(1, Math.min(draft.quantity, drop.remaining))} onValueChange={(quantity) => setAwardDrafts((current) => ({ ...current, [drop.id]: { ...draft, quantity } }))} />
-                      <Button variant="teal" disabled={!draft.characterId || saving} onClick={() => void giveDrop(drop.id)}><Gift className="mr-2 inline" size={15} /> Give</Button>
+                      <Button variant="teal" disabled={!draft.characterId || saving || selectedInventoryFull} onClick={() => void giveDrop(drop.id)}><Gift className="mr-2 inline" size={15} /> Give</Button>
+                      {selectedInventoryFull && (
+                        <p className="sm:col-span-3 rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-2 text-xs font-black text-[var(--red)]">
+                          {selectedCharacter?.name ?? 'That character'} has no open inventory slots.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="mt-3 rounded-xl border border-[var(--line)] bg-black/20 p-2 text-xs font-black uppercase tracking-wide text-[var(--teal)]">Fully distributed</p>

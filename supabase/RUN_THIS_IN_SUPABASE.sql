@@ -9301,7 +9301,25 @@ begin
 
   return jsonb_build_object(
     'characters', (
-      select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
+      select coalesce(jsonb_agg(
+        public.character_record_to_json(c)
+        || jsonb_build_object(
+          'inventoryOpenSlots',
+          greatest(
+            c.inventory_slots - (
+              select count(*)::int
+              from public.inventory_items i
+              where i.character_id = c.id
+                and i.parent_item_id is null
+                and i.loadout_slot is null
+                and i.slot_index >= 0
+                and i.slot_index < c.inventory_slots
+            ),
+            0
+          )
+        )
+        order by c.name
+      ), '[]'::jsonb)
       from public.characters c
       where c.kind = 'player'
     ),
@@ -9515,6 +9533,9 @@ begin
   end loop;
 end $$;
 
+drop function if exists public.award_exploration_loot_item(text, uuid, uuid, int);
+drop function if exists public.award_exploration_loot_item(text, uuid, uuid, integer);
+
 create or replace function public.award_exploration_loot_item(
   p_session_token text,
   p_character_id uuid,
@@ -9549,6 +9570,7 @@ declare
   v_potion_strength text;
   v_potion_property text;
   v_potion_quality text;
+  v_has_open_inventory_slot boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -9630,6 +9652,11 @@ begin
   end if;
 
   v_inventory_quantity := v_quantity;
+  v_has_open_inventory_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots) is not null;
+
+  if not v_has_open_inventory_slot then
+    raise exception 'Inventory full.';
+  end if;
 
   if v_item_type = 'storage'::text
     and not public.character_storage_container_exists(v_character.id, v_item_name)
