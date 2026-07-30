@@ -18,6 +18,9 @@ export function normalizeTradeOffer(value: unknown): TradeOffer {
     status: normalizeTradeStatus(source.status),
     offerNote: String(source.offerNote ?? source.offer_note ?? ''),
     requestNote: String(source.requestNote ?? source.request_note ?? ''),
+    offeredItemId: source.offeredItemId || source.offered_item_id ? String(source.offeredItemId ?? source.offered_item_id) : null,
+    offeredItemName: String(source.offeredItemName ?? source.offered_item_name ?? ''),
+    offeredQuantity: Math.max(0.5, Number(source.offeredQuantity ?? source.offered_quantity ?? 1)),
     message: String(source.message ?? ''),
     createdAt: source.createdAt || source.created_at ? String(source.createdAt ?? source.created_at) : null,
     updatedAt: source.updatedAt || source.updated_at ? String(source.updatedAt ?? source.updated_at) : null

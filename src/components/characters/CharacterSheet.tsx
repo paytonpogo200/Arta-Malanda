@@ -20,6 +20,7 @@ type CharacterSheetProps = {
   profile: Profile;
   profiles: CampaignProfile[];
   classes: ClassTemplate[];
+  characters: Character[];
   onSaved: (character: Character) => void;
   onOfferTrade?: (character: Character) => void;
 };
@@ -37,7 +38,7 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, onSaved, onOfferTrade }: CharacterSheetProps) {
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved, onOfferTrade }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -280,6 +281,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             canManage={isDm || owned}
             canAdd={isDm}
             refreshSignal={inventoryRefreshSignal}
+            tradeCharacters={characters}
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
           />

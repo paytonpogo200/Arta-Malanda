@@ -176,6 +176,7 @@ export type InventoryItem = {
   quantity: number;
   slotIndex: number;
   loadoutSlot: LoadoutSlot | null;
+  isAccessory: boolean;
   isStorage: boolean;
   storageCapacity: number;
   modifiers: LoadoutModifiers;
@@ -392,6 +393,9 @@ export type TradeOffer = {
   status: TradeStatus;
   offerNote: string;
   requestNote: string;
+  offeredItemId: string | null;
+  offeredItemName: string;
+  offeredQuantity: number;
   message: string;
   createdAt: string | null;
   updatedAt: string | null;

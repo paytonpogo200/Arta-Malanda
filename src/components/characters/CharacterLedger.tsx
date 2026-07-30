@@ -190,6 +190,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
             profile={profile}
             profiles={profiles}
             classes={classes}
+            characters={characters}
             onSaved={updateCharacter}
             onOfferTrade={canOfferTrades ? setTradeTarget : undefined}
           />

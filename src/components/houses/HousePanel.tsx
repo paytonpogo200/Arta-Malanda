@@ -257,6 +257,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     await requestHouseChange(`/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
+  async function takeItem(item: InventoryItem) {
+    if (!canManage) return;
+    await requestHouseChange(`/api/houses/items/${item.id}/take`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characterId: caretakerCharacterId })
+    });
+    onCharacterInventoryChanged?.();
+  }
+
   async function saveProperty(event: FormEvent) {
     event.preventDefault();
     if (!ownerUserId || !propertyModal || !propertyDraft.name.trim()) return;
@@ -424,11 +434,17 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
           )}
           {itemModal.item ? (
             <div className="space-y-3">
-              <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">{itemModal.item.type} · {itemModal.item.rarity} · Quantity {itemModal.item.quantity}</p>
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">
+                <p>{itemModal.item.type} · {itemModal.item.rarity} · Quantity {itemModal.item.quantity}</p>
+                {itemModal.item.isAccessory && <p className="mt-1 font-black uppercase tracking-wide text-[var(--brass)]">Accessory</p>}
+              </div>
               {canManage && (
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                  <NumberInput min={quantityStepForItem(itemModal.item)} step={quantityStepForItem(itemModal.item)} max={itemModal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
-                  <Button variant="danger" onClick={() => dropItem(itemModal.item!)} disabled={saving}>Drop</Button>
+                <div className="grid gap-2">
+                  <Button variant="teal" onClick={() => takeItem(itemModal.item!)} disabled={saving}>Take to inventory</Button>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <NumberInput min={quantityStepForItem(itemModal.item)} step={quantityStepForItem(itemModal.item)} max={itemModal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
+                    <Button variant="danger" onClick={() => dropItem(itemModal.item!)} disabled={saving}>Drop</Button>
+                  </div>
                 </div>
               )}
               {canAdd && (

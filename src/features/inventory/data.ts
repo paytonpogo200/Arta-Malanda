@@ -8,12 +8,12 @@ export type CharacterInventoryPayload = {
 export const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
 export const LOADOUT_SLOTS: LoadoutSlot[] = ['weapon', 'armor', 'shield', 'active-pet', 'accessory-1', 'accessory-2', 'accessory-3', 'accessory-4'];
 
-export function acceptsLoadoutItem(slot: LoadoutSlot, type: ItemType) {
+export function acceptsLoadoutItem(slot: LoadoutSlot, type: ItemType, isAccessory = false) {
   if (slot === 'weapon') return type === 'weapon';
   if (slot === 'armor') return type === 'armor';
   if (slot === 'shield') return type === 'shield';
   if (slot === 'active-pet') return type === 'pet';
-  return type === 'accessory';
+  return type === 'accessory' || isAccessory;
 }
 
 function numberFrom(value: unknown, fallback = 0) {
@@ -68,6 +68,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     quantity: Math.max(0.5, numberFrom(source.quantity, 1)),
     slotIndex: Math.max(0, numberFrom(source.slotIndex, 0)),
     loadoutSlot: normalizeLoadoutSlot(source.loadoutSlot),
+    isAccessory: Boolean(source.isAccessory),
     isStorage: Boolean(source.isStorage),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
     modifiers: normalizeModifiers(source.modifiers),

@@ -8,7 +8,7 @@ import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { LoadoutPanel } from '@/components/inventory/LoadoutPanel';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { TextField } from '@/components/ui/Field';
+import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
@@ -94,6 +94,7 @@ export function InventoryPanel({
   canManage,
   canAdd,
   refreshSignal = 0,
+  tradeCharacters,
   onItemsChanged,
   onResourceChanged
 }: {
@@ -101,6 +102,7 @@ export function InventoryPanel({
   canManage: boolean;
   canAdd: boolean;
   refreshSignal?: number;
+  tradeCharacters?: Character[];
   onItemsChanged?: (items: InventoryItem[]) => void;
   onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
 }) {
@@ -127,6 +129,10 @@ export function InventoryPanel({
   const [nearbyWagonActivity, setNearbyWagonActivity] = useState<WagonActivity[]>([]);
   const [runeLoading, setRuneLoading] = useState(false);
   const [runeError, setRuneError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [tradeTargetId, setTradeTargetId] = useState('');
+  const [tradeQuantity, setTradeQuantity] = useState(1);
+  const [tradeMessage, setTradeMessage] = useState('');
 
   const loadWagons = useCallback(async () => {
     if (!canManage && !canAdd) {
@@ -276,6 +282,13 @@ export function InventoryPanel({
     const homeRunes = houseRunes.map((item) => ({ source: 'house' as const, item }));
     return [...inventoryRunes, ...homeRunes].sort((a, b) => a.item.name.localeCompare(b.item.name) || a.source.localeCompare(b.source));
   }, [houseRunes, items, modal?.item]);
+  const tradeTargets = useMemo(() => (tradeCharacters ?? [])
+    .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId) && entry.ownerUserId !== character.ownerUserId)
+    .sort((a, b) => a.name.localeCompare(b.name)), [character.id, character.ownerUserId, tradeCharacters]);
+
+  useEffect(() => {
+    setTradeTargetId((current) => tradeTargets.some((entry) => entry.id === current) ? current : tradeTargets[0]?.id ?? '');
+  }, [tradeTargets]);
 
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
@@ -286,6 +299,9 @@ export function InventoryPanel({
     setAddMode(item ? 'custom' : 'catalog');
     setEnhanceOpen(false);
     setEnhanceStat('strength');
+    setNotice('');
+    setTradeQuantity(item ? quantityStepForItem(item) : 1);
+    setTradeMessage('');
   }
 
   function chooseCatalogItem(item: ItemCatalogEntry) {
@@ -301,6 +317,7 @@ export function InventoryPanel({
       material: item.material,
       enhancementCount: 0,
       isTwoHanded: item.isTwoHanded,
+      isAccessory: false,
       modifiers: cleanModifiers(item.defaultModifiers),
       potionStrength: '',
       potionProperty: '',
@@ -339,6 +356,7 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
       const updated = payload.item ? normalizeInventoryItem(payload.item) : null;
       if (!updated) {
+        await loadInventory();
         setItems((current) => {
           const next = current.filter((item) => item.id !== itemId);
           onItemsChanged?.(next);
@@ -348,13 +366,7 @@ export function InventoryPanel({
         return;
       }
       setModal((current) => current?.item?.id === updated.id ? { ...current, item: updated } : current);
-      setItems((current) => {
-        const withoutMoved = current.filter((item) => item.id !== itemId);
-        const replaced = withoutMoved.map((item) => item.id === updated.id ? updated : item);
-        const next = replaced.some((item) => item.id === updated.id) ? replaced : [...withoutMoved, updated];
-        onItemsChanged?.(next);
-        return next;
-      });
+      await loadInventory();
     } catch (actionError) {
       setItems(previousItems);
       onItemsChanged?.(previousItems);
@@ -466,6 +478,7 @@ export function InventoryPanel({
         onItemsChanged?.(next);
         return next;
       });
+      await loadInventory();
       const normalized = normalizeWagonPayload(payload);
       const sharedWagons = normalized.wagons.filter((entry) => entry.ownerCharacterId !== character.id);
       const sharedWagonIds = new Set(sharedWagons.map((entry) => entry.wagon.id));
@@ -526,6 +539,37 @@ export function InventoryPanel({
   async function sendToHouse(item: InventoryItem) {
     if (!canManage || !character.ownerUserId) return;
     await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
+  }
+
+  async function sendItemTrade(item: InventoryItem) {
+    if (!canManage || !tradeTargetId || item.loadoutSlot || item.isStorage) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const quantity = Math.min(item.quantity, Math.max(quantityStepForItem(item), tradeQuantity));
+      const response = await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderCharacterId: character.id,
+          targetCharacterId: tradeTargetId,
+          offeredItemId: item.id,
+          offeredQuantity: quantity,
+          offerNote: `${quantityText(quantity)} ${item.displayName || item.name}`,
+          requestNote: '',
+          message: tradeMessage
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Trade offer could not be sent.');
+      setNotice('Trade offer sent. The other player will see it in notifications.');
+      setTradeMessage('');
+    } catch (tradeError) {
+      setError(tradeError instanceof Error ? tradeError.message : 'Trade offer could not be sent.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function consumePotion(item: InventoryItem, confirmDropFlask = false) {
@@ -617,6 +661,7 @@ export function InventoryPanel({
       </div>
 
       {error && <div className="mb-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
+      {notice && <div className="mb-3 rounded-2xl border border-[#56e2c2]/40 bg-[#56e2c2]/10 p-3 text-sm text-[#56e2c2]">{notice}</div>}
 
       {loading ? (
         <div className="grid h-32 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
@@ -771,6 +816,9 @@ export function InventoryPanel({
                     {modal.item.type === 'pet' && (
                       <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Animal: {modal.item.name}</p>
                     )}
+                    {modal.item.isAccessory && (
+                      <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Accessory</p>
+                    )}
                     {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">Material: {modal.item.material}</p>}
                     {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
                     {modal.item.runeName && <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#56e2c2]">Rune: {modal.item.runeName}</p>}
@@ -855,13 +903,32 @@ export function InventoryPanel({
                   {!modal.item.loadoutSlot && (
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       {(['weapon', 'armor', 'shield', 'active-pet', 'accessory-1', 'accessory-2', 'accessory-3', 'accessory-4'] as LoadoutSlot[])
-                        .filter((slot) => acceptsLoadoutItem(slot, modal.item!.type))
+                        .filter((slot) => acceptsLoadoutItem(slot, modal.item!.type, modal.item!.isAccessory))
                         .map((slot) => <Button key={slot} variant="secondary" onClick={() => equipItem(modal.item!.id, slot)}>Equip {slot.replace('-', ' ')}</Button>)}
                     </div>
                   )}
                   {modal.item.loadoutSlot && <Button variant="secondary" onClick={() => equipItem(modal.item!.id, null)}>Unequip to first open slot</Button>}
                   {isPotionConsumable(modal.item) && <Button variant="teal" onClick={() => consumePotion(modal.item!)} disabled={saving}>Consume</Button>}
                   {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
+                  {tradeTargets.length > 0 && !modal.item.loadoutSlot && !modal.item.isStorage && (
+                    <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                      <p className="text-xs font-black uppercase tracking-wider text-[var(--brass)]">Give or trade</p>
+                      <SelectField value={tradeTargetId} onChange={(event) => setTradeTargetId(event.target.value)}>
+                        {tradeTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}
+                      </SelectField>
+                      <div className="grid gap-2 sm:grid-cols-[1fr_1fr]">
+                        <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={tradeQuantity} onValueChange={setTradeQuantity} />
+                        <TextField value={tradeMessage} onChange={(event) => setTradeMessage(event.target.value)} placeholder="Optional note" />
+                      </div>
+                      <Button variant="teal" onClick={() => sendItemTrade(modal.item!)} disabled={!tradeTargetId || saving}>Send offer</Button>
+                    </div>
+                  )}
+                  {tradeTargets.length > 0 && modal.item.loadoutSlot && (
+                    <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">Unequip this item before offering it to another player.</p>
+                  )}
+                  {tradeTargets.length > 0 && modal.item.isStorage && (
+                    <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">Storage containers cannot be offered through trades.</p>
+                  )}
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
                     <Button variant="danger" onClick={() => dropItem(modal.item!)} disabled={saving}>Drop</Button>

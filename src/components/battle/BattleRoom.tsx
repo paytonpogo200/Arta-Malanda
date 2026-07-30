@@ -51,6 +51,13 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     });
     return grouped;
   }, [room.inventoryItems]);
+  const inventoryItemsByCharacterId = useMemo(() => {
+    const grouped = new Map<string, InventoryItem[]>();
+    room.inventoryItems.forEach((item) => {
+      grouped.set(item.characterId, [...(grouped.get(item.characterId) ?? []), item]);
+    });
+    return grouped;
+  }, [room.inventoryItems]);
   const tokens = useMemo<TokenView[]>(() => room.combatants.map((combatant) => ({
     ...combatant,
     character: characterById.get(combatant.characterId)
@@ -463,12 +470,14 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             canGrant={false}
             combatLocked
             activeOnly
+            enchantedItems={inventoryItemsByCharacterId.get(viewedCharacter.id) ?? []}
             onManaChanged={(currentMana) => updateLocalCombatant(viewedCombatant.id, { currentMana })}
           />
           <InventoryPanel
             character={{ ...viewedCharacter, currentHp: viewedCombatant.currentHp, currentMana: viewedCombatant.currentMana }}
             canManage
             canAdd={false}
+            tradeCharacters={room.characters}
             onResourceChanged={(patch) => updateLocalCombatant(viewedCombatant.id, patch)}
           />
         </div>

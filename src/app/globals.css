@@ -245,8 +245,8 @@ h3,
 .spell-type-earth { border-color: #c4a16a; background: linear-gradient(145deg, rgba(169, 123, 63, .38), rgba(54, 36, 18, .94)); }
 .spell-type-wind { border-color: #f8fafc; background: linear-gradient(145deg, rgba(248, 250, 252, .3), rgba(50, 56, 61, .9)); }
 .spell-type-energy { border-color: #86efac; background: linear-gradient(145deg, rgba(134, 239, 172, .34), rgba(14, 57, 35, .94)); }
-.spell-type-defensive-support { border-color: #f87171; background: linear-gradient(145deg, rgba(239, 68, 68, .35), rgba(61, 16, 16, .94)); }
-.spell-type-offensive-support { border-color: #15803d; background: linear-gradient(145deg, rgba(22, 101, 52, .46), rgba(5, 46, 22, .96)); }
+.spell-type-defensive-support { border-color: #15803d; background: linear-gradient(145deg, rgba(22, 101, 52, .46), rgba(5, 46, 22, .96)); }
+.spell-type-offensive-support { border-color: #f87171; background: linear-gradient(145deg, rgba(239, 68, 68, .35), rgba(61, 16, 16, .94)); }
 .spell-type-enhancement { border-color: #f9a8d4; background: linear-gradient(145deg, rgba(244, 114, 182, .35), rgba(70, 18, 48, .94)); }
 .spell-type-utility { border-color: #c084fc; background: linear-gradient(145deg, rgba(147, 51, 234, .36), rgba(48, 20, 78, .94)); }
 

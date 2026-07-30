@@ -51,7 +51,7 @@ export const LoadoutPanel = memo(function LoadoutPanel({
               onDrop={(event) => {
                 const itemId = event.dataTransfer.getData('application/x-arta-item');
                 const dragged = items.find((entry) => entry.id === itemId);
-                if (!canMove || !dragged || !acceptsLoadoutItem(key, dragged.type)) return;
+                if (!canMove || !dragged || !acceptsLoadoutItem(key, dragged.type, dragged.isAccessory)) return;
                 event.preventDefault();
                 onEquip(itemId, key);
               }}

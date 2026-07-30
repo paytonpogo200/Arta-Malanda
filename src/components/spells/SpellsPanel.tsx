@@ -7,8 +7,9 @@ import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { SelectField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
+import { spellForEnchantment } from '@/features/inventory/itemDetails';
 import { spellManaText, spellTypeClass, spellTypes } from '@/lib/utils/spells';
-import type { Character, CharacterSpell, Spell } from '@/lib/types';
+import type { Character, CharacterSpell, InventoryItem, Spell } from '@/lib/types';
 
 const EMPTY_SPELLS: CharacterSpellsPayload = {
   catalog: [],
@@ -65,6 +66,33 @@ function SpellCard({
   );
 }
 
+function EnchantedSpellCard({
+  item,
+  spell,
+  canManage,
+  onUse
+}: {
+  item: InventoryItem;
+  spell: Spell;
+  canManage: boolean;
+  onUse: (item: InventoryItem, spell: Spell) => void;
+}) {
+  return (
+    <article className={`rounded-2xl border p-3 ${spellTypeClass(spell.type)}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-black">{spell.name}</p>
+          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Weapon enchantment; {spellManaText(spell)}</p>
+          <p className="mt-1 truncate text-xs font-black text-[var(--brass)]">{item.displayName || item.name}</p>
+        </div>
+        <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
+      </div>
+      {spell.summary && <p className="mt-2 text-sm leading-5 text-[var(--muted)]">{spell.summary}</p>}
+      {canManage && <Button variant="primary" className="mt-3 w-full px-3 py-2 text-xs" onClick={() => onUse(item, spell)}>Use spell</Button>}
+    </article>
+  );
+}
+
 function GrantSpellButton({
   spell,
   selected,
@@ -92,6 +120,7 @@ export function SpellsPanel({
   canGrant,
   combatLocked = false,
   activeOnly = false,
+  enchantedItems = [],
   onManaChanged
 }: {
   character: Character;
@@ -99,6 +128,7 @@ export function SpellsPanel({
   canGrant: boolean;
   combatLocked?: boolean;
   activeOnly?: boolean;
+  enchantedItems?: InventoryItem[];
   onManaChanged?: (currentMana: number) => void;
 }) {
   const [payload, setPayload] = useState<CharacterSpellsPayload>(EMPTY_SPELLS);
@@ -131,6 +161,11 @@ export function SpellsPanel({
   const activeSlots = useMemo(() => new Map(activeSpells.filter((entry) => entry.slotIndex !== null).map((entry) => [entry.slotIndex, entry])), [activeSpells]);
   const unplacedActiveSpells = useMemo(() => activeSpells.filter((entry) => entry.slotIndex === null), [activeSpells]);
   const canActivateInactive = activeSpells.length < activeSlotCount;
+  const enchantedSpells = useMemo(() => enchantedItems
+    .filter((item) => item.type === 'weapon' && Boolean(item.enchantment?.trim()))
+    .map((item) => ({ item, spell: spellForEnchantment(payload.catalog, item.enchantment) }))
+    .filter((entry): entry is { item: InventoryItem; spell: Spell } => Boolean(entry.spell))
+    .sort((a, b) => a.spell.name.localeCompare(b.spell.name) || (a.item.displayName || a.item.name).localeCompare(b.item.displayName || b.item.name)), [enchantedItems, payload.catalog]);
 
   const loadSpells = useCallback(async () => {
     setLoading(true);
@@ -224,6 +259,26 @@ export function SpellsPanel({
     }
   }
 
+  async function useEnchantedSpell(item: InventoryItem, spell: Spell) {
+    if (!canManage) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/spells/enchantment/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, spellId: spell.id })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? 'Enchanted spell could not be used.');
+      if (typeof body.currentMana === 'number') onManaChanged?.(body.currentMana);
+    } catch (useError) {
+      setError(useError instanceof Error ? useError.message : 'Enchanted spell could not be used.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function dragOverSpell(event: DragEvent<HTMLElement>) {
     if (!canManage || activeBattle || !Array.from(event.dataTransfer.types).includes('application/x-arta-spell')) return;
     event.preventDefault();
@@ -278,7 +333,8 @@ export function SpellsPanel({
             {activeOnly ? (
               <div className="grid gap-2 sm:grid-cols-2">
                 {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
-                {!activeSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
+                {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} />)}
+                {!activeSpells.length && !enchantedSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
               </div>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2">

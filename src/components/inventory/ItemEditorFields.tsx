@@ -26,6 +26,7 @@ export type ItemDraft = {
   material: string;
   enhancementCount: number;
   isTwoHanded: boolean;
+  isAccessory: boolean;
   modifiers: LoadoutModifiers;
   potionStrength: string;
   potionProperty: string;
@@ -44,6 +45,7 @@ export const EMPTY_ITEM_DRAFT: ItemDraft = {
   material: '',
   enhancementCount: 0,
   isTwoHanded: false,
+  isAccessory: false,
   modifiers: {},
   potionStrength: '',
   potionProperty: '',
@@ -110,6 +112,7 @@ export function draftFromInventoryItem(item: InventoryItem): ItemDraft {
     material: item.material ?? '',
     enhancementCount: item.enhancementCount,
     isTwoHanded: item.isTwoHanded,
+    isAccessory: item.isAccessory,
     modifiers: cleanModifiers(item.modifiers),
     potionStrength: item.potionStrength ?? '',
     potionProperty: item.potionProperty ?? '',
@@ -129,6 +132,7 @@ export function itemDraftPayload(draft: ItemDraft) {
     material: draft.material.trim(),
     enhancementCount: draft.enhancementCount,
     isTwoHanded: draft.isTwoHanded,
+    isAccessory: draft.isAccessory,
     modifiers: cleanModifiers(draft.modifiers),
     itemDescription: draft.itemDescription.trim(),
     potionStrength: draft.potionStrength,
@@ -200,6 +204,11 @@ export function ItemEditorFields({
         <NumberInput min={quantityStep} step={quantityStep} value={draft.quantity} onValueChange={(quantity) => onDraftChange({ ...draft, quantity })} />
       </div>
       {draft.type === 'storage' && <NumberInput aria-label="Storage capacity" min={1} value={draft.storageCapacity || 6} onValueChange={(storageCapacity) => onDraftChange({ ...draft, storageCapacity })} />}
+
+      <label className="flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 px-3 text-sm font-black">
+        <input type="checkbox" checked={draft.isAccessory} onChange={(event) => onDraftChange({ ...draft, isAccessory: event.target.checked })} />
+        Mark as accessory
+      </label>
 
       {legendaryWeapon && (
         <details className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">

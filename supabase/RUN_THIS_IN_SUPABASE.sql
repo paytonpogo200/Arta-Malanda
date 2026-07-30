@@ -120,6 +120,7 @@ create table if not exists public.inventory_items (
   quantity numeric(12,1) not null default 1 check (quantity > 0),
   slot_index int not null default 0,
   loadout_slot text,
+  is_accessory boolean not null default false,
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
@@ -168,6 +169,7 @@ alter table public.inventory_items
 alter table public.inventory_items
   add column if not exists display_name text,
   add column if not exists item_description text not null default '',
+  add column if not exists is_accessory boolean not null default false,
   add column if not exists enchantment text,
   add column if not exists rune_name text,
   add column if not exists material text,
@@ -2029,7 +2031,9 @@ set item_type = 'potion',
     potion_quality = null
 where lower(item_name) in ('empty flask', 'arcane nector');
 
-create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type text)
+drop function if exists public.loadout_slot_accepts_item(text, text);
+
+create or replace function public.loadout_slot_accepts_item(p_loadout_slot text, p_item_type text, p_is_accessory boolean default false)
 returns boolean
 language sql
 immutable
@@ -2039,7 +2043,7 @@ as $$
     when p_loadout_slot = 'armor' then p_item_type = 'armor'::text
     when p_loadout_slot = 'shield' then p_item_type = 'shield'::text
     when p_loadout_slot = 'active-pet' then p_item_type = 'pet'::text
-    when p_loadout_slot in ('accessory-1', 'accessory-2', 'accessory-3', 'accessory-4') then p_item_type = 'accessory'::text
+    when p_loadout_slot in ('accessory-1', 'accessory-2', 'accessory-3', 'accessory-4') then p_item_type = 'accessory'::text or coalesce(p_is_accessory, false)
     else false
   end
 $$;
@@ -2062,6 +2066,7 @@ as $$
     'quantity', p_item.quantity,
     'slotIndex', p_item.slot_index,
     'loadoutSlot', p_item.loadout_slot,
+    'isAccessory', p_item.is_accessory,
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
@@ -2339,6 +2344,7 @@ as $$
     and coalesce(a.potion_quality, '') = coalesce(b.potion_quality, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
+    and a.is_accessory = b.is_accessory
     and a.modifiers = b.modifiers
     and a.is_storage = false
     and b.is_storage = false
@@ -2371,6 +2377,7 @@ drop function if exists public.add_character_inventory_item(text, uuid, uuid, in
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text);
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text);
+drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean);
 
 create or replace function public.add_character_inventory_item(
   p_session_token text,
@@ -2391,7 +2398,8 @@ create or replace function public.add_character_inventory_item(
   p_potion_strength text default null,
   p_potion_property text default null,
   p_potion_quality text default null,
-  p_item_description text default null
+  p_item_description text default null,
+  p_is_accessory boolean default false
 )
 returns jsonb
 language plpgsql
@@ -2411,6 +2419,7 @@ declare
   v_modifiers jsonb;
   v_material text := '';
   v_is_two_handed boolean := false;
+  v_is_accessory boolean := coalesce(p_is_accessory, false);
   v_enhancement_count int := least(3, greatest(0, coalesce(p_enhancement_count, 0)));
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_make_storage_container boolean := false;
@@ -2478,12 +2487,12 @@ begin
   if v_make_storage_container then
     insert into public.inventory_items (
       character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
-      item_description, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+      item_description, is_accessory, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
       is_two_handed, potion_strength, potion_property, potion_quality
     )
     values (
       p_character_id, null, public.next_storage_container_slot(p_character_id), v_item_name, v_item_type, v_rarity, 1,
-      v_item_description, true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
+      v_item_description, v_is_accessory, true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
       nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
       v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
     )
@@ -2534,12 +2543,12 @@ begin
 
   insert into public.inventory_items (
     character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
-    item_description, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+    item_description, is_accessory, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
     is_two_handed, potion_strength, potion_property, potion_quality
   )
   values (
     p_character_id, p_parent_item_id, p_slot_index, v_item_name, v_item_type, v_rarity, v_quantity,
-    v_item_description, false, 0, v_modifiers, nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
+    v_item_description, v_is_accessory, false, 0, v_modifiers, nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
     v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
   )
   returning * into v_item;
@@ -2580,7 +2589,7 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality' or v_patch ? 'itemDescription') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'isAccessory' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality' or v_patch ? 'itemDescription') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -2596,6 +2605,7 @@ begin
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
       item_description = case when v_patch ? 'itemDescription' then left(trim(coalesce(v_patch->>'itemDescription', '')), 1500) else item_description end,
+      is_accessory = case when v_patch ? 'isAccessory' then (v_patch->>'isAccessory')::boolean else is_accessory end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
       modifiers = case when v_patch ? 'modifiers' and jsonb_typeof(v_patch->'modifiers') = 'object' then v_patch->'modifiers' else modifiers end,
@@ -2686,7 +2696,7 @@ begin
       return public.inventory_item_record_to_json(v_item);
     end if;
 
-    if not public.loadout_slot_accepts_item(v_loadout_slot, v_item.item_type) then
+    if not public.loadout_slot_accepts_item(v_loadout_slot, v_item.item_type, v_item.is_accessory) then
       raise exception 'That item cannot go in that loadout slot.';
     end if;
 
@@ -2862,7 +2872,7 @@ begin
 end;
 $$;
 
-grant execute on function public.loadout_slot_accepts_item(text, text) to anon, authenticated;
+grant execute on function public.loadout_slot_accepts_item(text, text, boolean) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
 grant execute on function public.wallet_balances_for_character(uuid) to anon, authenticated;
 grant execute on function public.get_character_inventory(text, uuid) to anon, authenticated;
@@ -2873,7 +2883,7 @@ grant execute on function public.next_storage_container_slot(uuid) to anon, auth
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_mythril(text, text) to anon, authenticated;
-grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text) to anon, authenticated;
+grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
@@ -2906,6 +2916,7 @@ create table if not exists public.house_inventory_items (
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
   slot_index int not null default 0 check (slot_index >= 0),
+  is_accessory boolean not null default false,
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
@@ -2939,6 +2950,7 @@ alter table public.house_inventory_items
   add column if not exists display_name text,
   add column if not exists parent_item_id uuid references public.house_inventory_items(id) on delete cascade,
   add column if not exists item_description text not null default '',
+  add column if not exists is_accessory boolean not null default false,
   add column if not exists enchantment text,
   add column if not exists rune_name text,
   add column if not exists material text,
@@ -3121,6 +3133,7 @@ as $$
     'quantity', p_item.quantity,
     'slotIndex', p_item.slot_index,
     'loadoutSlot', null,
+    'isAccessory', p_item.is_accessory,
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
@@ -3171,6 +3184,7 @@ as $$
     and coalesce(a.potion_quality, '') = coalesce(b.potion_quality, '')
     and a.enhancement_count = b.enhancement_count
     and a.is_two_handed = b.is_two_handed
+    and a.is_accessory = b.is_accessory
     and a.modifiers = b.modifiers
     and a.is_storage = false
     and b.is_storage = false
@@ -3282,6 +3296,8 @@ $$;
 
 drop function if exists public.add_house_inventory_item(text, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
 drop function if exists public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
+drop function if exists public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text);
+drop function if exists public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean);
 
 create or replace function public.add_house_inventory_item(
   p_session_token text,
@@ -3302,7 +3318,8 @@ create or replace function public.add_house_inventory_item(
   p_potion_strength text default null,
   p_potion_property text default null,
   p_potion_quality text default null,
-  p_item_description text default null
+  p_item_description text default null,
+  p_is_accessory boolean default false
 )
 returns jsonb
 language plpgsql
@@ -3321,6 +3338,7 @@ declare
   v_modifiers jsonb;
   v_material text := '';
   v_is_two_handed boolean := coalesce(p_is_two_handed, false);
+  v_is_accessory boolean := coalesce(p_is_accessory, false);
   v_enhancement_count int := least(3, greatest(0, coalesce(p_enhancement_count, 0)));
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_item_name text := public.normalize_item_name(p_item_name);
@@ -3398,6 +3416,7 @@ begin
       and coalesce(v_target.potion_quality, '') = coalesce(v_potion_quality, '')
       and v_target.enhancement_count = v_enhancement_count
       and v_target.is_two_handed = v_is_two_handed
+      and v_target.is_accessory = v_is_accessory
       and v_target.modifiers = v_modifiers
       and v_target.is_storage = false
       and not coalesce(p_is_storage, false)
@@ -3420,6 +3439,7 @@ begin
     item_type,
     rarity,
     quantity,
+    is_accessory,
     is_storage,
     storage_capacity,
     item_description,
@@ -3440,6 +3460,7 @@ begin
     v_item_type,
     v_rarity,
     v_quantity,
+    v_is_accessory,
     coalesce(p_is_storage, false),
     case when coalesce(p_is_storage, false) then greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)) else 0 end,
     v_item_description,
@@ -3487,7 +3508,7 @@ begin
 
   v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
-  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'itemDescription' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
+  if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'isAccessory' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'itemDescription' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
@@ -3502,6 +3523,7 @@ begin
       item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
       rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
       quantity = case when v_patch ? 'quantity' then public.assert_valid_item_quantity(coalesce(nullif(trim(v_patch->>'name'), ''), item_name), case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end, (v_patch->>'quantity')::numeric) else quantity end,
+      is_accessory = case when v_patch ? 'isAccessory' then (v_patch->>'isAccessory')::boolean else is_accessory end,
       is_storage = case when v_patch ? 'isStorage' then (v_patch->>'isStorage')::boolean else is_storage end,
       storage_capacity = case when v_patch ? 'storageCapacity' then greatest(0, (v_patch->>'storageCapacity')::int) else storage_capacity end,
       item_description = case when v_patch ? 'itemDescription' then left(trim(coalesce(v_patch->>'itemDescription', '')), 1500) else item_description end,
@@ -3707,6 +3729,7 @@ begin
     and coalesce(h.potion_quality, '') = coalesce(v_item.potion_quality, '')
     and h.enhancement_count = v_item.enhancement_count
     and h.is_two_handed = v_item.is_two_handed
+    and h.is_accessory = v_item.is_accessory
     and h.modifiers = v_item.modifiers
     and h.is_storage = false
     and v_item.is_storage = false
@@ -3737,6 +3760,7 @@ begin
     item_type,
     rarity,
     quantity,
+    is_accessory,
     is_storage,
     storage_capacity,
     modifiers,
@@ -3759,6 +3783,7 @@ begin
     v_item.item_type,
     v_item.rarity,
     v_item.quantity,
+    v_item.is_accessory,
     v_item.is_storage,
     v_item.storage_capacity,
     v_item.modifiers,
@@ -3842,6 +3867,7 @@ begin
       and coalesce(v_target.potion_quality, '') = coalesce(v_item.potion_quality, '')
       and v_target.enhancement_count = v_item.enhancement_count
       and v_target.is_two_handed = v_item.is_two_handed
+      and v_target.is_accessory = v_item.is_accessory
       and v_target.modifiers = v_item.modifiers
       and v_target.is_storage = false
       and v_item.is_storage = false
@@ -3867,6 +3893,7 @@ begin
     item_type,
     rarity,
     quantity,
+    is_accessory,
     is_storage,
     storage_capacity,
     modifiers,
@@ -3889,6 +3916,7 @@ begin
     v_item.item_type,
     v_item.rarity,
     v_item.quantity,
+    v_item.is_accessory,
     v_item.is_storage,
     v_item.storage_capacity,
     v_item.modifiers,
@@ -3905,6 +3933,139 @@ begin
 
   delete from public.inventory_items where id = v_item.id;
   return public.get_player_house(p_session_token, v_character.owner_user_id);
+end;
+$$;
+
+create or replace function public.move_house_item_to_inventory(
+  p_session_token text,
+  p_house_item_id uuid,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_slot_index int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_house_item
+  from public.house_inventory_items
+  where id = p_house_item_id;
+
+  if v_house_item.id is null then raise exception 'House item not found.'; end if;
+
+  v_house := public.assert_house_access(v_profile, v_house_item.owner_user_id, false);
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  if v_character.owner_user_id is distinct from v_house.owner_user_id then
+    raise exception 'That character cannot pull from this house.';
+  end if;
+
+  if v_house_item.is_storage and exists (
+    select 1 from public.house_inventory_items child where child.parent_item_id = v_house_item.id
+  ) then
+    raise exception 'Empty this storage item before taking it from the house.';
+  end if;
+
+  select * into v_target
+  from public.inventory_items i
+  where i.character_id = v_character.id
+    and i.parent_item_id is null
+    and i.loadout_slot is null
+    and i.item_name = v_house_item.item_name
+    and coalesce(i.display_name, '') = coalesce(v_house_item.display_name, '')
+    and coalesce(i.item_description, '') = coalesce(v_house_item.item_description, '')
+    and i.item_type = v_house_item.item_type
+    and i.rarity = v_house_item.rarity
+    and coalesce(i.enchantment, '') = coalesce(v_house_item.enchantment, '')
+    and coalesce(i.rune_name, '') = coalesce(v_house_item.rune_name, '')
+    and coalesce(i.material, '') = coalesce(v_house_item.material, '')
+    and coalesce(i.potion_strength, '') = coalesce(v_house_item.potion_strength, '')
+    and coalesce(i.potion_property, '') = coalesce(v_house_item.potion_property, '')
+    and coalesce(i.potion_quality, '') = coalesce(v_house_item.potion_quality, '')
+    and i.enhancement_count = v_house_item.enhancement_count
+    and i.is_two_handed = v_house_item.is_two_handed
+    and i.is_accessory = v_house_item.is_accessory
+    and i.modifiers = v_house_item.modifiers
+    and i.is_storage = false
+    and v_house_item.is_storage = false
+  order by i.slot_index
+  limit 1;
+
+  if v_target.id is not null then
+    update public.inventory_items
+    set quantity = quantity + v_house_item.quantity
+    where id = v_target.id;
+
+    delete from public.house_inventory_items where id = v_house_item.id;
+    return public.get_character_inventory(p_session_token, v_character.id);
+  end if;
+
+  v_slot_index := public.find_first_free_inventory_slot(v_character.id, null::uuid, v_character.inventory_slots);
+  if v_slot_index is null then
+    raise exception 'No open inventory slot.';
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    display_name,
+    item_description,
+    item_type,
+    rarity,
+    quantity,
+    is_accessory,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    v_character.id,
+    null,
+    v_slot_index,
+    v_house_item.item_name,
+    v_house_item.display_name,
+    v_house_item.item_description,
+    v_house_item.item_type,
+    v_house_item.rarity,
+    v_house_item.quantity,
+    v_house_item.is_accessory,
+    v_house_item.is_storage,
+    v_house_item.storage_capacity,
+    v_house_item.modifiers,
+    v_house_item.enchantment,
+    v_house_item.rune_name,
+    v_house_item.material,
+    v_house_item.enhancement_count,
+    v_house_item.is_two_handed,
+    v_house_item.potion_strength,
+    v_house_item.potion_property,
+    v_house_item.potion_quality
+  )
+  returning * into v_item;
+
+  delete from public.house_inventory_items where id = v_house_item.id;
+  return public.get_character_inventory(p_session_token, v_character.id);
 end;
 $$;
 
@@ -4390,11 +4551,12 @@ grant execute on function public.inventory_item_is_wagon(text, text) to anon, au
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.assert_house_slot_capacity(public.player_houses, uuid, int) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
-grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text) to anon, authenticated;
+grant execute on function public.add_house_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.update_house_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_house_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
+grant execute on function public.move_house_item_to_inventory(text, uuid, uuid) to anon, authenticated;
 grant execute on function public.get_location_wagon_storage(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_wagon(text, uuid, uuid, uuid, int) to anon, authenticated;
 grant execute on function public.move_wagon_item_to_inventory(text, uuid, uuid, uuid, int) to anon, authenticated;
@@ -4506,7 +4668,7 @@ begin
     'inventoryItems', (
       select coalesce(jsonb_agg(public.inventory_item_record_to_json(i) order by i.character_id, i.loadout_slot, i.item_name), '[]'::jsonb)
       from public.inventory_items i
-      where i.loadout_slot is not null
+      where (i.loadout_slot is not null or (i.item_type = 'weapon' and i.enchantment is not null))
         and exists (
           select 1
           from public.combatants c
@@ -8133,6 +8295,77 @@ begin
 end;
 $$;
 
+create or replace function public.use_inventory_enchantment_spell(
+  p_session_token text,
+  p_character_id uuid,
+  p_item_id uuid,
+  p_spell_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_spell public.spell_catalog%rowtype;
+  v_combatant public.combatants%rowtype;
+  v_current_mana int;
+  v_remaining_mana int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  select * into v_item
+  from public.inventory_items
+  where id = p_item_id
+    and character_id = v_character.id;
+
+  if v_item.id is null then raise exception 'Enchanted weapon not found.'; end if;
+  if v_item.item_type <> 'weapon' then raise exception 'Only enchanted weapons can cast this way.'; end if;
+  if nullif(trim(coalesce(v_item.enchantment, '')), '') is null then raise exception 'That weapon has no spell enchantment.'; end if;
+
+  select * into v_spell from public.spell_catalog where id = p_spell_id;
+  if v_spell.id is null then raise exception 'Spell not found.'; end if;
+
+  if lower(regexp_replace(v_item.enchantment, '[^a-z0-9]+', ' ', 'g')) <> lower(regexp_replace(v_spell.name, '[^a-z0-9]+', ' ', 'g'))
+     and lower(regexp_replace(v_item.enchantment, '[^a-z0-9]+', ' ', 'g')) <> lower(regexp_replace(v_spell.spell_key, '[^a-z0-9]+', ' ', 'g')) then
+    raise exception 'That spell does not match this weapon enchantment.';
+  end if;
+
+  select cb.* into v_combatant
+  from public.combatants cb
+  join public.battles b on b.id = cb.battle_id
+  where cb.character_id = v_character.id
+    and b.status = 'active'::public.battle_status
+  order by cb.created_at desc
+  limit 1;
+
+  v_current_mana := coalesce(v_combatant.current_mana, v_character.current_mana);
+  if v_current_mana < v_spell.mana_cost then raise exception 'Not enough mana.'; end if;
+
+  v_remaining_mana := v_current_mana - v_spell.mana_cost;
+
+  if v_combatant.id is not null then
+    update public.combatants set current_mana = v_remaining_mana where id = v_combatant.id;
+  end if;
+
+  update public.characters set current_mana = v_remaining_mana where id = v_character.id;
+
+  return jsonb_build_object(
+    'characterId', v_character.id,
+    'currentMana', v_remaining_mana,
+    'manaSpent', v_spell.mana_cost,
+    'spellName', v_spell.name,
+    'itemName', coalesce(v_item.display_name, v_item.item_name)
+  );
+end;
+$$;
+
 grant execute on function public.spell_record_to_json(public.spell_catalog) to anon, authenticated;
 grant execute on function public.character_spell_record_to_json(public.character_spells) to anon, authenticated;
 grant execute on function public.character_has_active_battle(uuid) to anon, authenticated;
@@ -8141,6 +8374,7 @@ grant execute on function public.get_character_spells(text, uuid) to anon, authe
 grant execute on function public.grant_character_spell(text, uuid, uuid) to anon, authenticated;
 grant execute on function public.update_character_spell_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.use_character_spell(text, uuid) to anon, authenticated;
+grant execute on function public.use_inventory_enchantment_spell(text, uuid, uuid, uuid) to anon, authenticated;
 
 
 -- ============================================================
@@ -8554,6 +8788,9 @@ create table if not exists public.trade_offers (
   status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled')),
   offer_note text not null default '',
   request_note text not null default '',
+  offered_item_id uuid references public.inventory_items(id) on delete set null,
+  offered_item_name text not null default '',
+  offered_quantity numeric(12,1) not null default 1 check (offered_quantity > 0),
   message text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -8561,6 +8798,11 @@ create table if not exists public.trade_offers (
 
 create index if not exists trade_offers_sender_idx on public.trade_offers(sender_user_id, status, created_at desc);
 create index if not exists trade_offers_recipient_idx on public.trade_offers(recipient_user_id, status, created_at desc);
+
+alter table public.trade_offers
+  add column if not exists offered_item_id uuid references public.inventory_items(id) on delete set null,
+  add column if not exists offered_item_name text not null default '',
+  add column if not exists offered_quantity numeric(12,1) not null default 1 check (offered_quantity > 0);
 
 alter table public.campaign_notifications enable row level security;
 alter table public.trade_offers enable row level security;
@@ -8605,6 +8847,9 @@ as $$
     'status', p_trade.status,
     'offerNote', p_trade.offer_note,
     'requestNote', p_trade.request_note,
+    'offeredItemId', p_trade.offered_item_id,
+    'offeredItemName', p_trade.offered_item_name,
+    'offeredQuantity', p_trade.offered_quantity,
     'message', p_trade.message,
     'createdAt', p_trade.created_at,
     'updatedAt', p_trade.updated_at
@@ -8756,13 +9001,18 @@ begin
 end;
 $$;
 
+drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text);
+drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric);
+
 create or replace function public.create_trade_offer(
   p_session_token text,
   p_sender_character_id uuid,
   p_target_character_id uuid,
   p_offer_note text default '',
   p_request_note text default '',
-  p_message text default ''
+  p_message text default '',
+  p_offered_item_id uuid default null,
+  p_offered_quantity numeric default 1
 )
 returns jsonb
 language plpgsql
@@ -8773,7 +9023,9 @@ declare
   v_profile public.profiles%rowtype;
   v_sender public.characters%rowtype;
   v_target public.characters%rowtype;
+  v_offered_item public.inventory_items%rowtype;
   v_trade public.trade_offers%rowtype;
+  v_offered_quantity numeric := greatest(0.5, coalesce(p_offered_quantity, 1));
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -8789,6 +9041,18 @@ begin
   if v_target.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
   if v_target.owner_user_id = v_sender.owner_user_id then raise exception 'That trade is already within the same player account.'; end if;
 
+  if p_offered_item_id is not null then
+    select * into v_offered_item
+    from public.inventory_items
+    where id = p_offered_item_id
+      and character_id = v_sender.id;
+
+    if v_offered_item.id is null then raise exception 'Offered item was not found in that inventory.'; end if;
+    if v_offered_item.loadout_slot is not null then raise exception 'Unequip that item before offering it.'; end if;
+    if v_offered_item.is_storage then raise exception 'Storage containers cannot be offered through trades.'; end if;
+    if v_offered_item.quantity < v_offered_quantity then raise exception 'Not enough quantity to offer.'; end if;
+  end if;
+
   insert into public.trade_offers (
     sender_user_id,
     recipient_user_id,
@@ -8796,6 +9060,9 @@ begin
     target_character_id,
     offer_note,
     request_note,
+    offered_item_id,
+    offered_item_name,
+    offered_quantity,
     message
   )
   values (
@@ -8803,8 +9070,11 @@ begin
     v_target.owner_user_id,
     v_sender.id,
     v_target.id,
-    coalesce(p_offer_note, ''),
+    coalesce(nullif(p_offer_note, ''), case when v_offered_item.id is not null then v_offered_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name) else '' end),
     coalesce(p_request_note, ''),
+    v_offered_item.id,
+    coalesce(v_offered_item.display_name, v_offered_item.item_name, ''),
+    v_offered_quantity,
     coalesce(p_message, '')
   )
   returning * into v_trade;
@@ -8821,7 +9091,7 @@ begin
   values (
     v_target.owner_user_id,
     v_sender.name || ' offered a trade to ' || v_target.name,
-    trim(both from concat_ws(E'\n\n', nullif(coalesce(p_message, ''), ''), 'Offers: ' || nullif(coalesce(p_offer_note, ''), ''), 'Requests: ' || nullif(coalesce(p_request_note, ''), ''))),
+    trim(both from concat_ws(E'\n\n', nullif(coalesce(p_message, ''), ''), 'Offers: ' || nullif(coalesce(coalesce(nullif(p_offer_note, ''), case when v_offered_item.id is not null then v_offered_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name) else '' end), ''), ''), 'Requests: ' || nullif(coalesce(p_request_note, ''), ''))),
     'trade',
     'trade',
     v_trade.id,
@@ -8845,6 +9115,10 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_trade public.trade_offers%rowtype;
+  v_source_item public.inventory_items%rowtype;
+  v_target_character public.characters%rowtype;
+  v_target_item public.inventory_items%rowtype;
+  v_slot_index int;
   v_next_status text := lower(trim(coalesce(p_status, '')));
   v_notify_user uuid;
   v_title text;
@@ -8862,6 +9136,110 @@ begin
   end if;
   if v_next_status = 'cancelled' and v_trade.sender_user_id <> v_profile.id and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the offering player can cancel this trade.';
+  end if;
+
+  if v_next_status = 'accepted' and v_trade.offered_item_id is not null then
+    select * into v_source_item
+    from public.inventory_items
+    where id = v_trade.offered_item_id
+    for update;
+
+    if v_source_item.id is null then raise exception 'The offered item is no longer available.'; end if;
+    if v_source_item.character_id <> v_trade.sender_character_id then raise exception 'The offered item is no longer held by the offering character.'; end if;
+    if v_source_item.loadout_slot is not null then raise exception 'The offered item is currently equipped.'; end if;
+    if v_source_item.quantity < v_trade.offered_quantity then raise exception 'The offered item quantity is no longer available.'; end if;
+
+    select * into v_target_character from public.characters where id = v_trade.target_character_id;
+    if v_target_character.id is null then raise exception 'Target character was not found.'; end if;
+
+    select * into v_target_item
+    from public.inventory_items i
+    where i.character_id = v_target_character.id
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.item_name = v_source_item.item_name
+      and coalesce(i.display_name, '') = coalesce(v_source_item.display_name, '')
+      and coalesce(i.item_description, '') = coalesce(v_source_item.item_description, '')
+      and i.item_type = v_source_item.item_type
+      and i.rarity = v_source_item.rarity
+      and coalesce(i.enchantment, '') = coalesce(v_source_item.enchantment, '')
+      and coalesce(i.rune_name, '') = coalesce(v_source_item.rune_name, '')
+      and coalesce(i.material, '') = coalesce(v_source_item.material, '')
+      and coalesce(i.potion_strength, '') = coalesce(v_source_item.potion_strength, '')
+      and coalesce(i.potion_property, '') = coalesce(v_source_item.potion_property, '')
+      and coalesce(i.potion_quality, '') = coalesce(v_source_item.potion_quality, '')
+      and i.enhancement_count = v_source_item.enhancement_count
+      and i.is_two_handed = v_source_item.is_two_handed
+      and i.is_accessory = v_source_item.is_accessory
+      and i.modifiers = v_source_item.modifiers
+      and i.is_storage = false
+      and v_source_item.is_storage = false
+    order by i.slot_index
+    limit 1;
+
+    if v_target_item.id is not null then
+      update public.inventory_items
+      set quantity = quantity + v_trade.offered_quantity
+      where id = v_target_item.id;
+    else
+      v_slot_index := public.find_first_free_inventory_slot(v_target_character.id, null::uuid, v_target_character.inventory_slots);
+      if v_slot_index is null then raise exception 'Target inventory is full.'; end if;
+
+      insert into public.inventory_items (
+        character_id,
+        parent_item_id,
+        slot_index,
+        item_name,
+        display_name,
+        item_description,
+        item_type,
+        rarity,
+        quantity,
+        is_accessory,
+        is_storage,
+        storage_capacity,
+        modifiers,
+        enchantment,
+        rune_name,
+        material,
+        enhancement_count,
+        is_two_handed,
+        potion_strength,
+        potion_property,
+        potion_quality
+      )
+      values (
+        v_target_character.id,
+        null,
+        v_slot_index,
+        v_source_item.item_name,
+        v_source_item.display_name,
+        v_source_item.item_description,
+        v_source_item.item_type,
+        v_source_item.rarity,
+        v_trade.offered_quantity,
+        v_source_item.is_accessory,
+        false,
+        0,
+        v_source_item.modifiers,
+        v_source_item.enchantment,
+        v_source_item.rune_name,
+        v_source_item.material,
+        v_source_item.enhancement_count,
+        v_source_item.is_two_handed,
+        v_source_item.potion_strength,
+        v_source_item.potion_property,
+        v_source_item.potion_quality
+      );
+    end if;
+
+    if v_trade.offered_quantity >= v_source_item.quantity then
+      delete from public.inventory_items where id = v_source_item.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - v_trade.offered_quantity
+      where id = v_source_item.id;
+    end if;
   end if;
 
   update public.trade_offers
@@ -8912,7 +9290,7 @@ grant execute on function public.trade_offer_record_to_json(public.trade_offers)
 grant execute on function public.mark_notification_read(text, uuid) to anon, authenticated;
 grant execute on function public.create_campaign_announcement(text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
-grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text) to anon, authenticated;
+grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_trade_offer_status(text, uuid, text) to anon, authenticated;
 
 

@@ -35,7 +35,9 @@ export async function POST(request: Request) {
       p_target_character_id: String(body.targetCharacterId ?? ''),
       p_offer_note: String(body.offerNote ?? ''),
       p_request_note: String(body.requestNote ?? ''),
-      p_message: String(body.message ?? '')
+      p_message: String(body.message ?? ''),
+      p_offered_item_id: body.offeredItemId ? String(body.offeredItemId) : null,
+      p_offered_quantity: Math.max(0.5, Number(body.offeredQuantity ?? 1))
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
 
