@@ -12,6 +12,7 @@ import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/f
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
+import { potionEffectText } from '@/lib/utils/potions';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
 import { spellTypeClass, spellTypeFromProductSection, spellTypes } from '@/lib/utils/spells';
 import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
@@ -292,6 +293,12 @@ function purchaseActionLabel(product: MarketProduct) {
   return 'Buy';
 }
 
+function productEffectText(product: MarketProduct) {
+  if (product.type === 'potion') return potionEffectText(product);
+  if (isSpellProduct(product)) return product.description;
+  return '';
+}
+
 function productCardClass(product: MarketProduct) {
   const spellType = spellTypeFromProductSection(product.section);
   return spellType ? spellTypeClass(spellType) : rarityClass(product.rarity);
@@ -551,6 +558,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [craftTargetItemId, setCraftTargetItemId] = useState('');
   const [craftModifier, setCraftModifier] = useState('strength');
   const [craftRefreshSignal, setCraftRefreshSignal] = useState(0);
+  const [craftConfirmOpen, setCraftConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -793,6 +801,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         body: JSON.stringify(body)
       }), craftModal.service === 'armory' ? 'Armory work failed.' : 'Blacksmith work failed.');
       setCraftModal(null);
+      setCraftConfirmOpen(false);
       setCraftMaterialProductId('');
       setCraftRuneProductId('');
       setCraftTargetItemId('');
@@ -843,6 +852,82 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setCraftRuneProductId(forgeRunes.find((product) => hasUsableStock(product))?.id ?? '');
     setCraftTargetItemId('');
     setCraftModifier('strength');
+    setCraftConfirmOpen(false);
+  }
+
+  function craftConfirmation() {
+    if (!craftModal || !selectedShopper) return null;
+    if (craftModal.mode === 'craft') {
+      const plan = buildMaterialPlan(craftModal.recipe, craftMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
+      const laborCost = recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
+      const inputs = [
+        ...(plan.product && craftModal.recipe.materialQuantity > 0 ? [{
+          key: 'material',
+          name: plan.product.name,
+          type: plan.product.type,
+          rarity: plan.product.rarity,
+          quantity: craftModal.recipe.materialQuantity
+        }] : []),
+        ...(laborCost > 0 ? [{
+          key: 'labor',
+          name: 'Labor',
+          type: 'currency' as ItemType,
+          rarity: 'Common' as ItemRarity,
+          quantity: formatCoinValue(laborCost)
+        }] : [])
+      ];
+      return {
+        title: `Craft ${craftModal.recipe.name}`,
+        inputs,
+        output: {
+          name: craftModal.recipe.name,
+          type: craftModal.recipe.type,
+          rarity: plan.product?.rarity ?? 'Common' as ItemRarity,
+          quantity: 1,
+          note: craftModal.recipe.note || (craftModal.recipe.twoHanded ? 'Two-handed' : '')
+        }
+      };
+    }
+
+    const target = craftInventory.find((item) => item.id === craftTargetItemId) ?? null;
+    const rune = forgeRunes.find((product) => product.id === craftRuneProductId) ?? null;
+    const requiredRunes = craftModal.mode === 'enchant' && isTalismanistClass(selectedShopper) ? 3 : craftModal.mode === 'enchant' ? 5 : 1;
+    const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
+    return {
+      title: craftModal.mode === 'enhance' ? `Enhance ${target?.displayName || target?.name || 'item'}` : `Enchant ${target?.displayName || target?.name || 'item'}`,
+      inputs: [
+        ...(target ? [{
+          key: 'target',
+          name: target.displayName || target.name,
+          type: target.type,
+          rarity: target.rarity,
+          quantity: 1
+        }] : []),
+        ...(rune ? [{
+          key: 'rune',
+          name: rune.name,
+          type: rune.type,
+          rarity: rune.rarity,
+          quantity: requiredRunes
+        }] : []),
+        ...(laborCost > 0 ? [{
+          key: 'labor',
+          name: 'Labor',
+          type: 'currency' as ItemType,
+          rarity: 'Common' as ItemRarity,
+          quantity: formatCoinValue(laborCost)
+        }] : [])
+      ],
+      output: {
+        name: target?.displayName || target?.name || 'Chosen item',
+        type: target?.type ?? 'misc' as ItemType,
+        rarity: target?.rarity ?? 'Common' as ItemRarity,
+        quantity: 1,
+        note: craftModal.mode === 'enhance'
+          ? `Adds ${ENHANCEMENT_OPTIONS.find((option) => option.key === craftModifier)?.label ?? craftModifier}`
+          : rune ? `Adds ${rune.name.replace(/\s+rune$/i, '')} enchantment` : 'Adds enchantment'
+      }
+    };
   }
 
   if (loading) {
@@ -850,6 +935,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   const pageTitle = selectedVendor ? selectedVendor.name : (selectedCity?.name ?? 'Cities');
+  const craftConfirm = craftConfirmation();
 
   return (
     <div className="space-y-4">
@@ -1026,6 +1112,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   <p className="text-sm text-[var(--muted)]">{selectedProduct.description}</p>
                 </div>
               </div>
+              {productEffectText(selectedProduct) && (
+                <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">{isSpellProduct(selectedProduct) ? 'Spell description' : 'Potion effect'}</p>
+                  <p className="mt-1">{productEffectText(selectedProduct)}</p>
+                </div>
+              )}
             </div>
             {isSinglePurchaseProduct(selectedProduct) ? (
               <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin)}</div>
@@ -1083,10 +1175,36 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 setModifier={setCraftModifier}
               />
             )}
-            <Button variant="primary" disabled={saving || !canConfirmForge} onClick={runForgeAction}>
+            <Button variant="primary" disabled={saving || !canConfirmForge} onClick={() => setCraftConfirmOpen(true)}>
               {craftModal.mode === 'craft' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
-              Confirm work
+              Craft
             </Button>
+          </div>
+        </Modal>
+      )}
+
+      {craftModal && craftConfirmOpen && craftConfirm && (
+        <Modal title={craftConfirm.title} onClose={() => setCraftConfirmOpen(false)}>
+          <div className="grid gap-4">
+            <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+              <div className="grid gap-2">
+                <p className="eyebrow">Using</p>
+                {craftConfirm.inputs.length ? craftConfirm.inputs.map((item) => <CraftPreviewItem key={item.key} item={item} />) : (
+                  <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">No physical materials required.</div>
+                )}
+              </div>
+              <div className="grid place-items-center text-[var(--brass)]">
+                <ArrowRightCraft />
+              </div>
+              <div className="grid gap-2">
+                <p className="eyebrow">Creating</p>
+                <CraftPreviewItem item={{ key: 'output', ...craftConfirm.output }} featured />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => setCraftConfirmOpen(false)}>Back</Button>
+              <Button variant="primary" disabled={saving || !canConfirmForge} onClick={runForgeAction}>Confirm Craft</Button>
+            </div>
           </div>
         </Modal>
       )}
@@ -1734,7 +1852,12 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
                 </span>
               )}
             </span>
-            <p className="line-clamp-2 min-h-8 text-xs text-[var(--muted)]">{product.description}</p>
+            <p className="line-clamp-2 min-h-8 text-xs text-[var(--muted)]">{productEffectText(product) || product.description}</p>
+            {product.type === 'potion' && productEffectText(product) && (
+              <span className="mt-2 block rounded-lg border border-[#56e2c2]/25 bg-[#56e2c2]/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[#56e2c2]">
+                {productEffectText(product)}
+              </span>
+            )}
             <span className="mt-3 flex items-center justify-between gap-2 text-xs font-black">
               <span className="text-[var(--brass)]">{formatCoinValue(product.priceCoin)}</span>
               <span className="text-[var(--muted)]">{product.stockQuantity === null ? 'Stock ∞' : `Stock ${product.stockQuantity}`}</span>
@@ -1744,6 +1867,41 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function ArrowRightCraft() {
+  return (
+    <div className="relative grid h-16 w-full min-w-24 place-items-center md:h-24 md:w-24">
+      <span className="absolute h-1 w-full rounded-full bg-gradient-to-r from-transparent via-[var(--brass)] to-[var(--brass)] shadow-[0_0_18px_rgba(209,168,91,.45)]" />
+      <span className="absolute right-1 h-5 w-5 rotate-45 border-r-4 border-t-4 border-[var(--brass)] shadow-[0_0_18px_rgba(209,168,91,.45)]" />
+      <Sparkles size={20} className="relative rounded-full bg-[#1a100c] p-0.5 text-[var(--brass)]" />
+    </div>
+  );
+}
+
+function CraftPreviewItem({ item, featured = false }: {
+  item: {
+    key: string;
+    name: string;
+    type: ItemType;
+    rarity: ItemRarity;
+    quantity: number | string;
+    note?: string;
+  };
+  featured?: boolean;
+}) {
+  return (
+    <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(item.rarity)} ${featured ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#120907]' : ''}`}>
+      <div className="relative z-10 flex items-start gap-3">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-black/25 text-[var(--brass)]"><ItemIcon type={item.type} size={22} /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block break-words text-sm font-black leading-5">{item.name}</span>
+          <span className="mt-1 block text-xs font-black uppercase tracking-wider text-[var(--muted)]">{item.rarity} {item.type} - x{item.quantity}</span>
+          {item.note && <span className="mt-2 block text-xs leading-5 text-[var(--paper)]">{item.note}</span>}
+        </span>
+      </div>
     </div>
   );
 }

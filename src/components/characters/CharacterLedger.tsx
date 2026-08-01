@@ -308,7 +308,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                     className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
                   >
                     <span className="flex items-center gap-3">
-                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/20" style={{ backgroundColor: character.tokenColor }}>
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/20" style={{ background: character.tokenColor }}>
                         <UserRound size={19} />
                       </span>
                       <span className="min-w-0 flex-1">

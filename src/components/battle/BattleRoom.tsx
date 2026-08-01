@@ -381,7 +381,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                 const chosen = selectedIds.includes(character.id);
                 return (
                   <button key={character.id} onClick={() => toggleParticipant(character.id)} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${chosen ? 'border-[var(--brass)] bg-[#d1a85b0e]' : 'border-[var(--line)] bg-black/10'}`}>
-                    <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 font-black" style={{ backgroundColor: character.tokenColor }}>{character.name[0]}</span>
+                    <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 font-black" style={{ background: character.tokenColor }}>{character.name[0]}</span>
                     <span className="min-w-0 flex-1"><span className="block truncate font-black">{character.name}</span><span className="block truncate text-xs text-[var(--muted)]">Level {character.level} {character.className}</span></span>
                     <span className={`h-5 w-5 rounded-md border ${chosen ? 'border-[var(--brass)] bg-[var(--brass)]' : 'border-[var(--muted)]'}`} />
                   </button>

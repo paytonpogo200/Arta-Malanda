@@ -28,6 +28,7 @@ import {
   spellForEnchantment
 } from '@/features/inventory/itemDetails';
 import { rarityClass } from '@/lib/utils/rarity';
+import { potionEffectText } from '@/lib/utils/potions';
 import { spellManaText } from '@/lib/utils/spells';
 import { signed } from '@/lib/utils/format';
 import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type ItemCatalogEntry, type LoadoutModifierKey, type LoadoutSlot, type Spell, type WalletBalance } from '@/lib/types';
@@ -322,6 +323,7 @@ export function InventoryPanel({
     return source.slice(0, 80);
   }, [catalog, catalogSearch]);
   const modalSpell = useMemo(() => modal?.item ? spellForEnchantment(spells, modal.item.enchantment) : null, [modal, spells]);
+  const modalPotionEffect = useMemo(() => modal?.item ? potionEffectText(modal.item) : '', [modal]);
   const sortedSpells = useMemo(() => [...spells].sort((a, b) => a.name.localeCompare(b.name)), [spells]);
   const availableRunes = useMemo<AvailableRune[]>(() => {
     if (!modal?.item || !canApplyRune(modal.item)) return [];
@@ -1316,6 +1318,12 @@ export function InventoryPanel({
                     <p className="text-lg font-black leading-5">{modal.item.displayName || modal.item.name}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
                     {modal.item.itemDescription && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
+                    {modalPotionEffect && (
+                      <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3 text-sm leading-6 text-[var(--paper)]">
+                        <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Potion effect</p>
+                        <p className="mt-1">{modalPotionEffect}</p>
+                      </div>
+                    )}
                     {modal.item.type === 'pet' && (
                       <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Animal: {modal.item.name}</p>
                     )}

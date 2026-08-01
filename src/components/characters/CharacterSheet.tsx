@@ -149,7 +149,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
       <Card>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
-            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full border border-white/20" style={{ backgroundColor: character.tokenColor }}>
+            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full border border-white/20" style={{ background: character.tokenColor }}>
               <UserRound size={24} />
             </div>
             <div>

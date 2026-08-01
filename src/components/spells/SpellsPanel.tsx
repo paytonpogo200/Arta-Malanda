@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
-import { BookOpen, ChevronDown, ChevronRight, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
@@ -24,7 +24,8 @@ function SpellCard({
   activeBattle,
   canActivate,
   onUse,
-  onToggle
+  onToggle,
+  onInspect
 }: {
   entry: CharacterSpell;
   canManage: boolean;
@@ -32,6 +33,7 @@ function SpellCard({
   canActivate: boolean;
   onUse: (entry: CharacterSpell) => void;
   onToggle: (entry: CharacterSpell, active: boolean) => void;
+  onInspect: (spell: Spell) => void;
 }) {
   return (
     <article
@@ -51,18 +53,19 @@ function SpellCard({
         <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
       </div>
       {entry.spell.summary && <p className="mt-2 text-sm leading-5 text-[var(--muted)]">{entry.spell.summary}</p>}
-      {canManage && (
-        <div className="mt-3 grid gap-2">
-          {entry.active ? (
+      <div className="mt-3 grid gap-2">
+        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onInspect(entry.spell)}>
+          <Eye className="mr-2 inline" size={14} /> Inspect
+        </Button>
+        {canManage && (entry.active ? (
             <div className="grid grid-cols-2 gap-2">
               <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => onUse(entry)}>Use spell</Button>
               <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, false)}>Bench</Button>
             </div>
           ) : (
             <Button variant="teal" className="px-3 py-2 text-xs" disabled={activeBattle || !canActivate} onClick={() => onToggle(entry, true)}>{canActivate ? 'Activate' : 'No open slot'}</Button>
-          )}
-        </div>
-      )}
+          ))}
+      </div>
     </article>
   );
 }
@@ -71,12 +74,14 @@ function EnchantedSpellCard({
   item,
   spell,
   canManage,
-  onUse
+  onUse,
+  onInspect
 }: {
   item: InventoryItem;
   spell: Spell;
   canManage: boolean;
   onUse: (item: InventoryItem, spell: Spell) => void;
+  onInspect: (spell: Spell) => void;
 }) {
   return (
     <article className={`rounded-2xl border p-3 ${spellTypeClass(spell.type)}`}>
@@ -89,7 +94,10 @@ function EnchantedSpellCard({
         <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
       </div>
       {spell.summary && <p className="mt-2 text-sm leading-5 text-[var(--muted)]">{spell.summary}</p>}
-      {canManage && <Button variant="primary" className="mt-3 w-full px-3 py-2 text-xs" onClick={() => onUse(item, spell)}>Use spell</Button>}
+      <div className="mt-3 grid gap-2">
+        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onInspect(spell)}><Eye className="mr-2 inline" size={14} /> Inspect</Button>
+        {canManage && <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => onUse(item, spell)}>Use spell</Button>}
+      </div>
     </article>
   );
 }
@@ -140,6 +148,7 @@ export function SpellsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [inspectedSpell, setInspectedSpell] = useState<Spell | null>(null);
 
   const activeBattle = payload.activeBattle || combatLocked;
   const activeSpells = useMemo(() => payload.spells.filter((entry) => entry.active).sort((a, b) => (a.slotIndex ?? 999) - (b.slotIndex ?? 999)), [payload.spells]);
@@ -335,8 +344,8 @@ export function SpellsPanel({
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{activeOnly ? 'Active spells' : 'Active slots'} {activeSpells.length}/{character.spellSlots}</h3></div>
             {activeOnly ? (
               <div className="grid gap-2 sm:grid-cols-2">
-                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
-                {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} />)}
+                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />)}
+                {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} onInspect={setInspectedSpell} />)}
                 {!activeSpells.length && !enchantedSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
               </div>
             ) : (
@@ -345,7 +354,7 @@ export function SpellsPanel({
                   const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
                   return entry ? (
                     <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
-                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />
+                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />
                     </div>
                   ) : (
                     <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
@@ -359,7 +368,7 @@ export function SpellsPanel({
             <details className="rounded-2xl border border-[var(--line)] bg-black/10">
               <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
               <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} />)}
+                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />)}
                 {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
               </div>
             </details>
@@ -422,6 +431,22 @@ export function SpellsPanel({
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" type="button" onClick={() => setGrantModalOpen(false)}>Cancel</Button>
               <Button variant="teal" type="button" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant spell'}</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {inspectedSpell && (
+        <Modal title={inspectedSpell.name} onClose={() => setInspectedSpell(null)}>
+          <div className={`grid gap-3 rounded-2xl border p-4 ${spellTypeClass(inspectedSpell.type)}`}>
+            <div>
+              <p className="eyebrow">{inspectedSpell.type} Spell</p>
+              <h3 className="mt-1 text-2xl font-black">{inspectedSpell.name}</h3>
+              <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{inspectedSpell.school} - {spellManaText(inspectedSpell)} - {inspectedSpell.rarity}</p>
+            </div>
+            {inspectedSpell.summary && <p className="text-sm font-bold leading-6 text-[var(--paper)]">{inspectedSpell.summary}</p>}
+            <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
+              {inspectedSpell.details || inspectedSpell.summary || 'No spell description entered yet.'}
             </div>
           </div>
         </Modal>

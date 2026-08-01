@@ -41,8 +41,7 @@ const BattleToken = memo(function BattleToken({
       style={{
         left: token.x * CELL_SIZE + 3,
         top: token.y * CELL_SIZE + 3,
-        backgroundColor: character?.tokenColor ?? '#5c665f',
-        backgroundImage: 'radial-gradient(circle at 32% 22%, rgba(255,255,255,0.24), rgba(255,255,255,0) 34%), linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.22))'
+        background: `radial-gradient(circle at 32% 22%, rgba(255,255,255,0.24), rgba(255,255,255,0) 34%), linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.22)), ${character?.tokenColor ?? '#5c665f'}`
       }}
       title={character?.name}
     >

@@ -677,6 +677,35 @@ begin
 end;
 $$;
 
+create or replace function public.bestiary_token_color(p_entity public.bestiary_entities)
+returns text
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_color text := lower(trim(coalesce(p_entity.stats->>'Color', p_entity.stats->>'color', '')));
+begin
+  if p_entity.category = 'bosses' then
+    if v_color like '%turquoise%' and v_color like '%lime%' then
+      return 'linear-gradient(135deg, #18d3c5 0%, #55f2e8 32%, #a3e635 68%, #f4ff8f 100%)';
+    elsif v_color like '%turquoise%' then
+      return 'linear-gradient(135deg, #0f766e 0%, #22d3ee 50%, #99f6e4 100%)';
+    elsif v_color like '%lime%' then
+      return 'linear-gradient(135deg, #3f6212 0%, #84cc16 45%, #ecfccb 100%)';
+    end if;
+    return 'linear-gradient(135deg, #f59e0b 0%, #dc2626 45%, #7c3aed 100%)';
+  end if;
+
+  return case p_entity.category
+    when 'common-wildlife' then '#6f8f55'
+    when 'magical-wildlife' then '#5c7fd8'
+    when 'monsters' then '#9f4f46'
+    else '#7f514d'
+  end;
+end;
+$$;
+
 create or replace function public.get_bestiary(p_session_token text)
 returns jsonb
 language plpgsql
@@ -806,6 +835,7 @@ $$;
 grant execute on function public.bestiary_category_record_to_json(public.bestiary_categories) to anon, authenticated;
 grant execute on function public.bestiary_entity_record_to_json(public.bestiary_entities) to anon, authenticated;
 grant execute on function public.bestiary_stat_number(jsonb, text[]) to anon, authenticated;
+grant execute on function public.bestiary_token_color(public.bestiary_entities) to anon, authenticated;
 grant execute on function public.get_bestiary(text) to anon, authenticated;
 grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
@@ -906,6 +936,74 @@ drop function if exists public.import_bestiary_markdown(text, jsonb, jsonb);
 drop function if exists public.is_retired_bestiary_category(text);
 drop function if exists public.purge_retired_bestiary_categories();
 grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to anon, authenticated;
+
+insert into public.bestiary_categories (category_key, name, is_hidden, display_order)
+values ('bosses', 'Bosses', false, 900)
+on conflict (category_key) do update
+set name = excluded.name,
+    is_hidden = excluded.is_hidden,
+    display_order = excluded.display_order;
+
+insert into public.bestiary_entities (
+  entity_key,
+  name,
+  category,
+  hp,
+  mana,
+  summary,
+  details,
+  stats,
+  is_unlocked,
+  display_order
+)
+values
+  (
+    'boss-seraphel',
+    'Seraphel',
+    'bosses',
+    700,
+    100,
+    'Main boss encounter. Battlefield chip uses the Turquoise/Lime Green boss gradient.',
+    'Boss stats imported from Bestiary.md.',
+    jsonb_build_object('Damage', '35', 'Strength', '+5', 'Vitality', '+6', 'Magic Res', '14', 'Armor / Hide', '10', 'Color', 'Turquoise/Lime green gradient'),
+    true,
+    901
+  ),
+  (
+    'boss-healing-support-1',
+    'Healing Support 1',
+    'bosses',
+    180,
+    90,
+    'Boss support encounter. Battlefield chip uses the Turquoise boss gradient.',
+    'Boss support stats imported from Bestiary.md.',
+    jsonb_build_object('Damage', '18', 'Strength', '+1', 'Vitality', '+3', 'Magic Res', '8', 'Armor / Hide', '7', 'Color', 'Turquoise'),
+    true,
+    902
+  ),
+  (
+    'boss-healing-support-2',
+    'Healing Support 2',
+    'bosses',
+    160,
+    100,
+    'Boss support encounter. Battlefield chip uses the Lime Green boss gradient.',
+    'Boss support stats imported from Bestiary.md.',
+    jsonb_build_object('Damage', '16', 'Strength', '0', 'Vitality', '+2', 'Magic Res', '9', 'Armor / Hide', '7', 'Color', 'Lime Green'),
+    true,
+    903
+  )
+on conflict (entity_key) do update
+set name = excluded.name,
+    category = excluded.category,
+    hp = excluded.hp,
+    mana = excluded.mana,
+    summary = excluded.summary,
+    details = excluded.details,
+    stats = excluded.stats,
+    is_unlocked = excluded.is_unlocked,
+    display_order = excluded.display_order,
+    updated_at = now();
 
 
 -- ============================================================
@@ -1887,20 +1985,20 @@ for each row execute function public.touch_updated_at();
 insert into public.alchemy_potion_definitions (property_key, potion_name, description, automated_effect, display_order)
 values
   ('Healing', 'Healing', 'Restores health when consumed.', 'health', 10),
-  ('Speed', 'Swiftness', 'Improves speed. Resolve the exact effect at the table.', '', 20),
-  ('Agility', 'Agility', 'Improves agility. Resolve the exact effect at the table.', '', 30),
-  ('Strength', 'Strength', 'Improves strength. Resolve the exact effect at the table.', '', 40),
-  ('Sorcery', 'Sorcery', 'Improves sorcery and intelligence. Resolve the exact effect at the table.', '', 50),
+  ('Speed', 'Swiftness', 'Lesser +1 Speed. Greater +2 Speed. Greatest +5 Speed.', '', 20),
+  ('Agility', 'Agility', 'Lesser +1 Agility. Greater +2 Agility. Greatest +5 Agility.', '', 30),
+  ('Strength', 'Strength', 'Lesser +1 Strength. Greater +2 Strength. Greatest +5 Strength.', '', 40),
+  ('Sorcery', 'Sorcery', 'Lesser +1 Intelligence. Greater +2 Intelligence. Greatest +5 Intelligence.', '', 50),
   ('Mana Regen', 'Mana', 'Restores mana when consumed.', 'mana', 60),
-  ('Luck', 'Luck', 'Improves luck rolls. Resolve the exact effect at the table.', '', 70),
-  ('Antidote', 'Antidote', 'Handles poison effects. Resolve the exact effect at the table.', '', 80),
-  ('Warming', 'Warming', 'Protects against cold. Resolve the exact effect at the table.', '', 90),
-  ('Cooling', 'Cooling', 'Protects against heat. Resolve the exact effect at the table.', '', 100),
-  ('Night-Eye', 'Night-Eye', 'Improves sight in darkness. Resolve the exact effect at the table.', '', 110),
-  ('Thickskin', 'Thickskin', 'Improves protection. Resolve the exact effect at the table.', '', 120),
-  ('Clear-Mind', 'Clear-Mind', 'Improves magical resistance. Resolve the exact effect at the table.', '', 130),
-  ('Wake-Up', 'Wake-Up', 'Wakes a target. Resolve the exact effect at the table.', '', 140),
-  ('Clotting', 'Clotting', 'Handles bleeding. Resolve the exact effect at the table.', '', 150)
+  ('Luck', 'Luck', 'Lesser +1 Rolls. Greater +3 Rolls. Greatest +5 Rolls.', '', 70),
+  ('Antidote', 'Antidote', 'Lesser removes poison. Greater removes poison and grants poison resistance for 3 turns. Greatest removes poison and grants poison immunity for 1 scene.', '', 80),
+  ('Warming', 'Warming', 'Lesser protects from cold for 1 scene or travel stretch. Greater protects from extreme cold for 1 scene or travel stretch. Greatest protects from cold, frost damage, and frost-based slowing for 1 scene.', '', 90),
+  ('Cooling', 'Cooling', 'Lesser protects from heat for 1 scene or travel stretch. Greater protects from extreme heat for 1 scene or travel stretch. Greatest protects from heat, fire damage, and burning for 1 scene.', '', 100),
+  ('Night-Eye', 'Night-Eye', 'Lesser allows better sight in darkness for 1 scene. Greater allows clear sight in darkness for 1 scene. Greatest allows clear sight in magical or unnatural darkness for 1 scene.', '', 110),
+  ('Thickskin', 'Thickskin', 'Lesser +1 Armor for 3 turns. Greater +2 Armor for 3 turns. Greatest +4 Armor for 3 turns.', '', 120),
+  ('Clear-Mind', 'Clear-Mind', 'Lesser +1 Magic Res for 3 turns. Greater +2 Magic Res for 3 turns. Greatest +4 Magic Res for 3 turns.', '', 130),
+  ('Wake-Up', 'Wake-Up', 'Lesser wakes an unconscious or magically sleeping target. If unconscious from damage, they wake at 1 HP. Greater wakes the target at 10 HP. Greatest wakes the target at 25 HP.', '', 140),
+  ('Clotting', 'Clotting', 'Lesser stops bleeding effects. Greater stops bleeding effects and restores 10 Health. Greatest stops bleeding effects, restores 25 Health, and prevents bleeding for 1 scene.', '', 150)
 on conflict (property_key) do update
 set potion_name = excluded.potion_name,
     description = excluded.description,
@@ -5506,7 +5604,7 @@ begin
     ),
     jsonb_build_array(coalesce(nullif(v_entity.summary, ''), v_entity.temperament)),
     v_entity.details,
-    '#7f514d',
+    public.bestiary_token_color(v_entity),
     'Battlefield'
   )
   returning * into v_character;
@@ -8416,7 +8514,7 @@ select
   v.id,
   'spell-' || s.spell_key,
   s.name,
-  coalesce(nullif(s.summary, ''), s.spell_type || ' spell - ' || s.mana_label),
+  coalesce(nullif(s.details, ''), nullif(s.summary, ''), s.spell_type || ' spell - ' || s.mana_label),
   'quest',
   s.rarity,
   s.price_coin,
@@ -10792,6 +10890,149 @@ begin
   end loop;
 end $$;
 
+create or replace function public.cleanup_existing_unstackable_item_stacks()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_item public.inventory_items%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_capacity int;
+  v_slot int;
+  v_remaining int;
+  v_inventory_split int := 0;
+  v_house_split int := 0;
+  v_unresolved int := 0;
+begin
+  for v_item in
+    select *
+    from public.inventory_items i
+    where i.quantity > 1
+      and i.loadout_slot is null
+      and i.quantity = floor(i.quantity)
+      and not public.item_catalog_stackable(i.item_name, i.item_type)
+    order by i.created_at, i.id
+  loop
+    select * into v_character from public.characters where id = v_item.character_id;
+    if v_character.id is null then
+      continue;
+    end if;
+
+    v_remaining := floor(v_item.quantity)::int - 1;
+    update public.inventory_items set quantity = 1 where id = v_item.id;
+
+    while v_remaining > 0 loop
+      if v_item.is_storage and v_item.parent_item_id is null then
+        v_slot := public.next_storage_container_slot(v_item.character_id);
+      else
+        if v_item.parent_item_id is null then
+          v_capacity := v_character.inventory_slots;
+        else
+          select storage_capacity into v_capacity
+          from public.inventory_items
+          where id = v_item.parent_item_id
+            and character_id = v_item.character_id
+            and is_storage = true;
+        end if;
+
+        v_slot := public.find_first_free_inventory_slot(v_item.character_id, v_item.parent_item_id, coalesce(v_capacity, 0));
+      end if;
+
+      if v_slot is null then
+        update public.inventory_items
+        set quantity = quantity + v_remaining
+        where id = v_item.id;
+        v_unresolved := v_unresolved + 1;
+        exit;
+      end if;
+
+      insert into public.inventory_items (
+        character_id, parent_item_id, item_name, display_name, item_description, item_type, rarity, quantity, slot_index,
+        loadout_slot, is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material,
+        enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
+      )
+      values (
+        v_item.character_id, v_item.parent_item_id, v_item.item_name, v_item.display_name, v_item.item_description, v_item.item_type, v_item.rarity, 1, v_slot,
+        null, v_item.is_accessory, v_item.is_storage, v_item.storage_capacity, v_item.modifiers, v_item.enchantment, v_item.rune_name, v_item.material,
+        v_item.enhancement_count, v_item.is_two_handed, v_item.potion_strength, v_item.potion_property, v_item.potion_quality
+      );
+
+      v_inventory_split := v_inventory_split + 1;
+      v_remaining := v_remaining - 1;
+    end loop;
+  end loop;
+
+  for v_house_item in
+    select *
+    from public.house_inventory_items h
+    where h.quantity > 1
+      and h.quantity = floor(h.quantity)
+      and not public.item_catalog_stackable(h.item_name, h.item_type)
+    order by h.created_at, h.id
+  loop
+    select * into v_house from public.player_houses where owner_user_id = v_house_item.owner_user_id limit 1;
+    if v_house.id is null then
+      continue;
+    end if;
+
+    v_remaining := floor(v_house_item.quantity)::int - 1;
+    update public.house_inventory_items set quantity = 1 where id = v_house_item.id;
+
+    while v_remaining > 0 loop
+      if v_house_item.parent_item_id is null and public.normalize_item_type(v_house_item.item_type) = 'pet' then
+        v_slot := public.find_first_free_house_stable_slot(v_house_item.owner_user_id, v_house);
+      else
+        if v_house_item.parent_item_id is null then
+          v_capacity := v_house.inventory_slots;
+        else
+          select storage_capacity into v_capacity
+          from public.house_inventory_items
+          where id = v_house_item.parent_item_id
+            and owner_user_id = v_house_item.owner_user_id
+            and is_storage = true;
+        end if;
+
+        v_slot := public.find_first_free_house_slot(v_house_item.owner_user_id, v_house_item.parent_item_id, coalesce(v_capacity, 0));
+      end if;
+
+      if v_slot is null then
+        update public.house_inventory_items
+        set quantity = quantity + v_remaining
+        where id = v_house_item.id;
+        v_unresolved := v_unresolved + 1;
+        exit;
+      end if;
+
+      insert into public.house_inventory_items (
+        owner_user_id, parent_item_id, item_name, display_name, item_description, item_type, rarity, quantity, slot_index,
+        is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material,
+        enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
+      )
+      values (
+        v_house_item.owner_user_id, v_house_item.parent_item_id, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description, v_house_item.item_type, v_house_item.rarity, 1, v_slot,
+        v_house_item.is_accessory, v_house_item.is_storage, v_house_item.storage_capacity, v_house_item.modifiers, v_house_item.enchantment, v_house_item.rune_name, v_house_item.material,
+        v_house_item.enhancement_count, v_house_item.is_two_handed, v_house_item.potion_strength, v_house_item.potion_property, v_house_item.potion_quality
+      );
+
+      v_house_split := v_house_split + 1;
+      v_remaining := v_remaining - 1;
+    end loop;
+  end loop;
+
+  return jsonb_build_object(
+    'inventorySplitCopies', v_inventory_split,
+    'houseSplitCopies', v_house_split,
+    'stacksStillNeedingSlots', v_unresolved
+  );
+end;
+$$;
+
+select public.cleanup_existing_unstackable_item_stacks();
+
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, int);
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, integer);
 
@@ -11052,6 +11293,7 @@ grant execute on function public.import_loot_items(text, jsonb) to anon, authent
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
+grant execute on function public.cleanup_existing_unstackable_item_stacks() to anon, authenticated;
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 
