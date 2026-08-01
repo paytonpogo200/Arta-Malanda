@@ -1551,6 +1551,23 @@ as $$
   end
 $$;
 
+create or replace function public.item_catalog_stackable(p_item_name text, p_item_type text)
+returns boolean
+language sql
+stable
+as $$
+  select case
+    when lower(trim(coalesce(p_item_type, ''))) in ('pet', 'storage') then false
+    else coalesce((
+      select c.is_stackable
+      from public.item_catalog c
+      where c.item_key = public.catalog_key_for_name(p_item_name)
+        and c.is_active = true
+      limit 1
+    ), true)
+  end
+$$;
+
 create or replace function public.catalog_storage_capacity(p_item_name text)
 returns int
 language sql
@@ -2114,6 +2131,7 @@ as $$
     'quantity', p_item.quantity,
     'slotIndex', p_item.slot_index,
     'loadoutSlot', p_item.loadout_slot,
+    'stackable', public.item_catalog_stackable(p_item.item_name, p_item.item_type),
     'isAccessory', p_item.is_accessory,
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
@@ -2377,7 +2395,7 @@ where i.id = active_storage.id;
 create or replace function public.inventory_items_stackable(a public.inventory_items, b public.inventory_items)
 returns boolean
 language sql
-immutable
+stable
 as $$
   select a.item_name = b.item_name
     and coalesce(a.display_name, '') = coalesce(b.display_name, '')
@@ -2398,6 +2416,8 @@ as $$
     and b.item_type <> 'pet'
     and a.is_storage = false
     and b.is_storage = false
+    and public.item_catalog_stackable(a.item_name, a.item_type)
+    and public.item_catalog_stackable(b.item_name, b.item_type)
 $$;
 
 create or replace function public.inventory_item_is_mythril(
@@ -2580,6 +2600,7 @@ begin
       and v_target.is_two_handed = v_is_two_handed
       and v_target.modifiers = v_modifiers
       and v_target.is_storage = false
+      and public.item_catalog_stackable(v_item_name, v_item_type)
     then
       update public.inventory_items
       set quantity = quantity + v_quantity
@@ -2800,10 +2821,22 @@ begin
       and i.id <> v_item.id
     limit 1;
 
-    if v_target.id is not null then
+  if v_target.id is not null then
+    if public.inventory_items_stackable(v_target, v_item) then
       update public.inventory_items
-      set parent_item_id = v_parent_item_id, slot_index = -1000000
-      where id = v_target.id;
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id
+      returning * into v_target;
+
+      delete from public.inventory_items
+      where id = v_item.id;
+
+      return public.inventory_item_record_to_json(v_target);
+    end if;
+
+    update public.inventory_items
+    set parent_item_id = v_parent_item_id, slot_index = -1000000
+    where id = v_target.id;
 
       if v_item.loadout_slot is null then
         update public.inventory_items
@@ -2884,6 +2917,144 @@ begin
 end;
 $$;
 
+drop function if exists public.split_inventory_item_stack(text, uuid, numeric, boolean);
+
+create or replace function public.split_inventory_item_stack(
+  p_session_token text,
+  p_item_id uuid,
+  p_quantity numeric,
+  p_confirm_drop boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_new_item public.inventory_items%rowtype;
+  v_quantity numeric;
+  v_capacity int;
+  v_slot_index int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item
+  from public.inventory_items
+  where id = p_item_id
+  for update;
+
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+
+  if v_item.loadout_slot is not null then
+    raise exception 'Unequip that item before splitting it.';
+  end if;
+
+  if v_item.is_storage or not public.item_catalog_stackable(v_item.item_name, v_item.item_type) then
+    raise exception 'That item cannot be split into stacks.';
+  end if;
+
+  v_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+  if v_quantity >= v_item.quantity then
+    raise exception 'Split quantity must leave something in the original stack.';
+  end if;
+
+  if v_item.parent_item_id is null then
+    v_capacity := v_character.inventory_slots;
+  else
+    select storage_capacity into v_capacity
+    from public.inventory_items
+    where id = v_item.parent_item_id
+      and character_id = v_item.character_id
+      and is_storage = true;
+
+    if v_capacity is null then
+      raise exception 'Storage container not found.';
+    end if;
+  end if;
+
+  v_slot_index := public.find_first_free_inventory_slot(v_item.character_id, v_item.parent_item_id, v_capacity);
+
+  if v_slot_index is null and not coalesce(p_confirm_drop, false) then
+    return jsonb_build_object(
+      'needsDropConfirmation', true,
+      'message', 'No open inventory slot. Split anyway and drop the new stack?',
+      'inventory', public.get_character_inventory(p_session_token, v_item.character_id)
+    );
+  end if;
+
+  update public.inventory_items
+  set quantity = quantity - v_quantity
+  where id = v_item.id
+  returning * into v_item;
+
+  if v_slot_index is null then
+    return jsonb_build_object(
+      'droppedQuantity', v_quantity,
+      'inventory', public.get_character_inventory(p_session_token, v_item.character_id)
+    );
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    display_name,
+    item_description,
+    item_type,
+    rarity,
+    quantity,
+    is_accessory,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    v_item.character_id,
+    v_item.parent_item_id,
+    v_slot_index,
+    v_item.item_name,
+    v_item.display_name,
+    v_item.item_description,
+    v_item.item_type,
+    v_item.rarity,
+    v_quantity,
+    v_item.is_accessory,
+    false,
+    0,
+    v_item.modifiers,
+    v_item.enchantment,
+    v_item.rune_name,
+    v_item.material,
+    v_item.enhancement_count,
+    v_item.is_two_handed,
+    v_item.potion_strength,
+    v_item.potion_property,
+    v_item.potion_quality
+  )
+  returning * into v_new_item;
+
+  return jsonb_build_object(
+    'item', public.inventory_item_record_to_json(v_new_item),
+    'inventory', public.get_character_inventory(p_session_token, v_item.character_id)
+  );
+end;
+$$;
+
 create or replace function public.set_character_wallet_balances(
   p_session_token text,
   p_character_id uuid,
@@ -2923,6 +3094,7 @@ end;
 $$;
 
 grant execute on function public.loadout_slot_accepts_item(text, text, boolean) to anon, authenticated;
+grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
 grant execute on function public.wallet_balances_for_character(uuid) to anon, authenticated;
 grant execute on function public.get_character_inventory(text, uuid) to anon, authenticated;
@@ -2936,6 +3108,7 @@ grant execute on function public.inventory_item_is_mythril(text, text) to anon, 
 grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
+grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
 
 
@@ -3284,6 +3457,7 @@ as $$
     'quantity', p_item.quantity,
     'slotIndex', p_item.slot_index,
     'loadoutSlot', null,
+    'stackable', public.item_catalog_stackable(p_item.item_name, p_item.item_type),
     'isAccessory', p_item.is_accessory,
     'isStorage', p_item.is_storage,
     'storageCapacity', p_item.storage_capacity,
@@ -3320,7 +3494,7 @@ $$;
 create or replace function public.house_inventory_items_stackable(a public.house_inventory_items, b public.house_inventory_items)
 returns boolean
 language sql
-immutable
+stable
 as $$
   select a.item_name = b.item_name
     and coalesce(a.display_name, '') = coalesce(b.display_name, '')
@@ -3341,6 +3515,8 @@ as $$
     and b.item_type <> 'pet'
     and a.is_storage = false
     and b.is_storage = false
+    and public.item_catalog_stackable(a.item_name, a.item_type)
+    and public.item_catalog_stackable(b.item_name, b.item_type)
 $$;
 
 create or replace function public.find_first_free_house_slot(
@@ -3659,6 +3835,7 @@ begin
       and v_target.item_type <> 'pet'
       and v_target.is_storage = false
       and not coalesce(p_is_storage, false)
+      and public.item_catalog_stackable(v_item_name, v_item_type)
     then
       update public.house_inventory_items
       set quantity = quantity + v_quantity
@@ -3842,6 +4019,18 @@ begin
     limit 1;
 
     if v_target.id is not null then
+      if public.house_inventory_items_stackable(v_target, v_item) then
+        update public.house_inventory_items
+        set quantity = quantity + v_item.quantity
+        where id = v_target.id
+        returning * into v_target;
+
+        delete from public.house_inventory_items
+        where id = v_item.id;
+
+        return public.house_item_record_to_json(v_target);
+      end if;
+
       update public.house_inventory_items
       set slot_index = -1
       where id = v_target.id;
@@ -3973,6 +4162,7 @@ begin
     and h.item_type <> 'pet'
     and h.is_storage = false
     and v_item.is_storage = false
+    and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
   order by h.slot_index
   limit 1;
 
@@ -4118,6 +4308,7 @@ begin
       and v_target.item_type <> 'pet'
       and v_target.is_storage = false
       and v_item.is_storage = false
+      and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
     then
       update public.house_inventory_items
       set quantity = quantity + v_item.quantity
@@ -4248,6 +4439,7 @@ begin
     and v_house_item.item_type <> 'pet'
     and i.is_storage = false
     and v_house_item.is_storage = false
+    and public.item_catalog_stackable(v_house_item.item_name, v_house_item.item_type)
   order by i.slot_index
   limit 1;
 
@@ -8655,6 +8847,7 @@ create table if not exists public.loot_items (
   difficulty_max int not null default 5 check (difficulty_max >= difficulty_min),
   loot_weight numeric not null default 1 check (loot_weight >= 0),
   tower_base_only boolean not null default false,
+  is_stackable boolean not null default true,
   min_quantity numeric(12,1) not null default 1 check (min_quantity > 0),
   max_quantity numeric(12,1) not null default 1 check (max_quantity >= min_quantity),
   notes text not null default '',
@@ -8707,6 +8900,7 @@ alter table public.loot_items add column if not exists difficulty_min int not nu
 alter table public.loot_items add column if not exists difficulty_max int not null default 5 check (difficulty_max >= difficulty_min);
 alter table public.loot_items add column if not exists loot_weight numeric not null default 1 check (loot_weight >= 0);
 alter table public.loot_items add column if not exists tower_base_only boolean not null default false;
+alter table public.loot_items add column if not exists is_stackable boolean not null default true;
 
 alter table public.loot_items drop constraint if exists loot_item_type_valid;
 alter table public.loot_items drop constraint if exists loot_items_item_type_valid;
@@ -8793,6 +8987,7 @@ as $$
     'maxQuantity', p_item.max_quantity,
     'weight', p_item.loot_weight,
     'towerBaseOnly', p_item.tower_base_only,
+    'stackable', p_item.is_stackable,
     'notes', p_item.notes
   )
 $$;
@@ -9430,6 +9625,7 @@ begin
     and i.item_type <> 'pet'
     and i.is_storage = false
     and v_source_item.is_storage = false
+    and public.item_catalog_stackable(v_source_item.item_name, v_source_item.item_type)
   order by i.slot_index
   limit 1;
 
@@ -9592,6 +9788,7 @@ begin
       and i.modifiers = v_source_item.modifiers
       and i.is_storage = false
       and v_source_item.is_storage = false
+      and public.item_catalog_stackable(v_source_item.item_name, v_source_item.item_type)
     order by i.slot_index
     limit 1;
 
@@ -9979,6 +10176,7 @@ begin
     end,
     loot_weight = case when v_patch ? 'weight' then greatest(0, (v_patch->>'weight')::numeric) else loot_weight end,
     tower_base_only = case when v_patch ? 'towerBaseOnly' then (v_patch->>'towerBaseOnly')::boolean else tower_base_only end,
+    is_stackable = case when v_patch ? 'stackable' then (v_patch->>'stackable')::boolean else is_stackable end,
     min_quantity = v_min,
     max_quantity = v_max,
     notes = case when v_patch ? 'notes' then coalesce(v_patch->>'notes', '') else notes end,
@@ -10177,6 +10375,7 @@ declare
   v_biomes text[];
   v_min_quantity numeric;
   v_max_quantity numeric;
+  v_stackable boolean;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -10241,6 +10440,15 @@ begin
 
     v_min_quantity := greatest(0.5, coalesce(nullif(v_row->>'minQuantity', '')::numeric, nullif(v_row->>'min_quantity', '')::numeric, nullif(v_row->>'min', '')::numeric, 1));
     v_max_quantity := greatest(v_min_quantity, coalesce(nullif(v_row->>'maxQuantity', '')::numeric, nullif(v_row->>'max_quantity', '')::numeric, nullif(v_row->>'max', '')::numeric, v_min_quantity));
+    v_stackable := case lower(trim(coalesce(v_row->>'stackable', v_row->>'isStackable', v_row->>'is_stackable', '')))
+      when 'false' then false
+      when 'no' then false
+      when '0' then false
+      when 'true' then true
+      when 'yes' then true
+      when '1' then true
+      else true
+    end;
 
     insert into public.loot_pools (pool_key, name, description, display_order)
     values (v_pool_key, v_pool_name, 'Imported item catalog group.', 100)
@@ -10259,6 +10467,7 @@ begin
       difficulty_max,
       loot_weight,
       tower_base_only,
+      is_stackable,
       min_quantity,
       max_quantity,
       notes,
@@ -10274,6 +10483,7 @@ begin
       greatest(greatest(1, coalesce(nullif(v_row->>'minDifficulty', '')::int, nullif(v_row->>'min_difficulty', '')::int, 1)), coalesce(nullif(v_row->>'maxDifficulty', '')::int, nullif(v_row->>'max_difficulty', '')::int, 5)),
       greatest(0, coalesce(nullif(v_row->>'weight', '')::numeric, nullif(v_row->>'lootWeight', '')::numeric, nullif(v_row->>'loot_weight', '')::numeric, 1)),
       coalesce((v_row->>'towerBaseOnly')::boolean, false),
+      v_stackable,
       v_min_quantity,
       v_max_quantity,
       coalesce(v_row->>'notes', ''),
@@ -10287,7 +10497,7 @@ begin
       v_pool_name,
       array[]::text[],
       public.item_quantity_step(v_name, v_type_text),
-      true,
+      v_stackable,
       '{}'::jsonb,
       '',
       false,
@@ -10318,7 +10528,7 @@ begin
       coalesce(v_pool_name, 'Loot Catalog'),
       array[]::text[],
       public.item_quantity_step(v_loot.item_name, v_loot.item_type),
-      true,
+      v_loot.is_stackable,
       '{}'::jsonb,
       '',
       false,
@@ -10449,11 +10659,6 @@ begin
   end if;
 
   v_inventory_quantity := v_quantity;
-  v_has_open_inventory_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots) is not null;
-
-  if not v_has_open_inventory_slot then
-    raise exception 'Inventory full.';
-  end if;
 
   if v_item_type = 'storage'::text
     and not public.character_storage_container_exists(v_character.id, v_item_name)
@@ -10515,6 +10720,7 @@ begin
     and coalesce(i.potion_quality, '') = coalesce(v_potion_quality, '')
     and i.enhancement_count = 0
     and i.is_two_handed = v_is_two_handed
+    and public.item_catalog_stackable(v_item_name, v_item_type)
   order by i.slot_index
   limit 1;
 
@@ -10524,6 +10730,11 @@ begin
     where id = v_target.id
     returning * into v_item;
   else
+    v_has_open_inventory_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots) is not null;
+    if not v_has_open_inventory_slot then
+      raise exception 'Inventory full.';
+    end if;
+
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
 
@@ -10587,7 +10798,9 @@ grant execute on function public.get_exploration_cave_nicknames(text) to anon, a
 grant execute on function public.set_exploration_cave_nickname(text, int, text) to anon, authenticated;
 grant execute on function public.import_loot_items(text, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
+grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 
 

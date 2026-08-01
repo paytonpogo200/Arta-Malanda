@@ -68,6 +68,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     quantity: Math.max(0.5, numberFrom(source.quantity, 1)),
     slotIndex: Math.max(0, numberFrom(source.slotIndex, 0)),
     loadoutSlot: normalizeLoadoutSlot(source.loadoutSlot),
+    stackable: source.stackable === undefined ? true : Boolean(source.stackable),
     isAccessory: Boolean(source.isAccessory),
     isStorage: Boolean(source.isStorage),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),

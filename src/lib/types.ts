@@ -177,6 +177,7 @@ export type InventoryItem = {
   quantity: number;
   slotIndex: number;
   loadoutSlot: LoadoutSlot | null;
+  stackable: boolean;
   isAccessory: boolean;
   isStorage: boolean;
   storageCapacity: number;
@@ -321,6 +322,7 @@ export type LootItem = {
   maxQuantity: number;
   weight: number;
   towerBaseOnly: boolean;
+  stackable: boolean;
   notes: string;
 };
 

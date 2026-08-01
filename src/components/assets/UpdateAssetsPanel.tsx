@@ -371,6 +371,10 @@ export function UpdateAssetsPanel() {
                   <input type="checkbox" checked={Boolean(draft.towerBaseOnly)} onChange={(event) => updateDraft('towerBaseOnly', event.target.checked)} />
                   Tower/Base only
                 </label>
+                <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black">
+                  <input type="checkbox" checked={draft.stackable === undefined ? true : Boolean(draft.stackable)} onChange={(event) => updateDraft('stackable', event.target.checked)} />
+                  Stackable
+                </label>
                 <TextAreaField rows={3} value={String(draft.notes ?? '')} onChange={(event) => updateDraft('notes', event.target.value)} placeholder="Notes" />
               </>
             )}

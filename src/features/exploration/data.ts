@@ -178,6 +178,7 @@ export function normalizeLootItem(value: unknown): LootItem {
     maxQuantity: Math.max(1, numberFrom(source.maxQuantity, 1)),
     weight: Math.max(0, numberFrom(source.weight, 1)),
     towerBaseOnly: Boolean(source.towerBaseOnly),
+    stackable: source.stackable === undefined ? true : Boolean(source.stackable),
     notes: String(source.notes ?? '')
   };
 }

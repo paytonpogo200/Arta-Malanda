@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ArrowRightLeft, Gift, Loader2, PackageOpen, RefreshCw, Search } from 'lucide-react';
+import { ArrowRightLeft, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -44,6 +44,8 @@ type AvailableRune = {
   source: 'inventory' | 'house';
   item: InventoryItem;
 };
+
+type ItemActionModal = null | 'transfer' | 'gift' | 'trade' | 'drop' | 'split';
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
@@ -91,6 +93,11 @@ function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
 
 function quantityText(quantity: number) {
   return Number.isInteger(quantity) ? quantity.toString() : quantity.toFixed(1);
+}
+
+function clampQuantity(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
 }
 
 function statToneClass(value: number) {
@@ -147,6 +154,15 @@ export function InventoryPanel({
   const [tradeTargetId, setTradeTargetId] = useState('');
   const [tradeQuantity, setTradeQuantity] = useState(1);
   const [tradeMessage, setTradeMessage] = useState('');
+  const [itemActionModal, setItemActionModal] = useState<ItemActionModal>(null);
+  const [splitQuantity, setSplitQuantity] = useState(1);
+  const [offerMoney, setOfferMoney] = useState('');
+  const [requestMoney, setRequestMoney] = useState('');
+  const [requestItemId, setRequestItemId] = useState('');
+  const [requestQuantity, setRequestQuantity] = useState(1);
+  const [targetPreview, setTargetPreview] = useState<{ items: InventoryItem[]; wallet: WalletBalance[] } | null>(null);
+  const [targetPreviewLoading, setTargetPreviewLoading] = useState(false);
+  const [targetPreviewError, setTargetPreviewError] = useState('');
   const [giftOpen, setGiftOpen] = useState(character.giftInventoryOpen);
   const inventoryLoadedRef = useRef(false);
   const loadedCharacterIdRef = useRef(character.id);
@@ -319,6 +335,10 @@ export function InventoryPanel({
     .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId))
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
   const tradeTargetCharacter = useMemo(() => tradeTargets.find((entry) => entry.id === tradeTargetId) ?? null, [tradeTargetId, tradeTargets]);
+  const targetPreviewItems = useMemo(() => (targetPreview?.items ?? [])
+    .filter((item) => !item.isStorage && !item.loadoutSlot && item.quantity > 0)
+    .sort((a, b) => (a.slotIndex - b.slotIndex) || a.name.localeCompare(b.name)), [targetPreview]);
+  const requestedItem = useMemo(() => targetPreviewItems.find((item) => item.id === requestItemId) ?? null, [requestItemId, targetPreviewItems]);
   const battleStats = useMemo(() => calculateCharacterSheetStats(character, items, classTemplate), [character, classTemplate, items]);
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
@@ -334,6 +354,35 @@ export function InventoryPanel({
     setGiftOpen(character.giftInventoryOpen);
   }, [character.giftInventoryOpen, character.id]);
 
+  const loadTradePreview = useCallback(async (targetCharacterId: string) => {
+    if (!targetCharacterId) {
+      setTargetPreview(null);
+      return;
+    }
+    setTargetPreviewLoading(true);
+    setTargetPreviewError('');
+    try {
+      const response = await fetch(`/api/characters/${targetCharacterId}/trade-preview`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Trade inventory could not be loaded.');
+      const normalized = normalizeCharacterInventoryPayload(payload);
+      setTargetPreview(normalized);
+      const firstItem = normalized.items.find((item) => !item.isStorage && !item.loadoutSlot && item.quantity > 0);
+      setRequestItemId((current) => normalized.items.some((item) => item.id === current) ? current : firstItem?.id ?? '');
+      setRequestQuantity(firstItem ? quantityStepForItem(firstItem) : 1);
+    } catch (previewError) {
+      setTargetPreview(null);
+      setTargetPreviewError(previewError instanceof Error ? previewError.message : 'Trade inventory could not be loaded.');
+    } finally {
+      setTargetPreviewLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (itemActionModal !== 'trade' || !tradeTargetId) return;
+    void loadTradePreview(tradeTargetId);
+  }, [itemActionModal, loadTradePreview, tradeTargetId]);
+
   function openSlot(slot: number, parentItemId: string | null, item?: InventoryItem) {
     if (!item && !canAdd) return;
     setModal({ slot, parentItemId, item });
@@ -344,8 +393,17 @@ export function InventoryPanel({
     setEnhanceOpen(false);
     setEnhanceStat('strength');
     setNotice('');
-    setTradeQuantity(item ? quantityStepForItem(item) : 1);
+    const step = item ? quantityStepForItem(item) : 1;
+    setTradeQuantity(step);
+    setSplitQuantity(step);
     setTradeMessage('');
+    setItemActionModal(null);
+    setOfferMoney('');
+    setRequestMoney('');
+    setRequestItemId('');
+    setRequestQuantity(1);
+    setTargetPreview(null);
+    setTargetPreviewError('');
   }
 
   function chooseCatalogItem(item: ItemCatalogEntry) {
@@ -580,6 +638,42 @@ export function InventoryPanel({
     await requestInventoryChange(`/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
+  async function splitItemStack(item: InventoryItem, confirmDrop = false) {
+    if (!canManage || !item.stackable || item.quantity <= quantityStepForItem(item)) return;
+    const step = quantityStepForItem(item);
+    const maxSplit = Math.max(step, item.quantity - step);
+    const quantity = clampQuantity(splitQuantity, step, maxSplit);
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`/api/inventory/items/${item.id}/split`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity, confirmDrop })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Stack could not be split.');
+      if (payload.needsDropConfirmation) {
+        setSaving(false);
+        const confirmed = window.confirm(payload.message ?? 'No open inventory slot. Split anyway and drop the new stack?');
+        if (confirmed) await splitItemStack(item, true);
+        return;
+      }
+      const normalized = normalizeCharacterInventoryPayload(payload.inventory ?? {});
+      setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+      setModal(null);
+      setNotice(payload.droppedQuantity ? `${quantityText(Number(payload.droppedQuantity))} ${item.name} split off and dropped.` : 'Stack split into the closest open slot.');
+    } catch (splitError) {
+      setError(splitError instanceof Error ? splitError.message : 'Stack could not be split.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function sendToHouse(item: InventoryItem) {
     if (!canManage || !character.ownerUserId) return;
     await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
@@ -592,6 +686,11 @@ export function InventoryPanel({
     setNotice('');
     try {
       const quantity = Math.min(item.quantity, Math.max(quantityStepForItem(item), tradeQuantity));
+      const requested = requestedItem
+        ? `${quantityText(Math.min(requestedItem.quantity, Math.max(quantityStepForItem(requestedItem), requestQuantity)))} ${requestedItem.displayName || requestedItem.name}`
+        : '';
+      const wantedParts = [requested, requestMoney.trim() ? `${requestMoney.trim()} money` : ''].filter(Boolean);
+      const offeredParts = [`${quantityText(quantity)} ${item.displayName || item.name}`, offerMoney.trim() ? `${offerMoney.trim()} money` : ''].filter(Boolean);
       const response = await fetch('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -600,8 +699,8 @@ export function InventoryPanel({
           targetCharacterId: tradeTargetId,
           offeredItemId: item.id,
           offeredQuantity: quantity,
-          offerNote: `${quantityText(quantity)} ${item.displayName || item.name}`,
-          requestNote: '',
+          offerNote: offeredParts.join(' + '),
+          requestNote: wantedParts.length ? wantedParts.join(' + ') : 'Table-negotiated return',
           message: tradeMessage
         })
       });
@@ -609,6 +708,7 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Trade offer could not be sent.');
       setNotice('Trade request sent. The other player will see it in notifications.');
       setTradeMessage('');
+      setItemActionModal(null);
     } catch (tradeError) {
       setError(tradeError instanceof Error ? tradeError.message : 'Trade offer could not be sent.');
     } finally {
@@ -647,6 +747,7 @@ export function InventoryPanel({
       setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
       setModal(null);
       setNotice(`Gift delivered to ${targetCharacter.name}.`);
+      setItemActionModal(null);
     } catch (giftError) {
       const message = giftError instanceof Error ? giftError.message : 'Gift could not be delivered.';
       setError(message);
@@ -753,6 +854,202 @@ export function InventoryPanel({
       />
     );
   }
+
+  function renderTargetSelect() {
+    return (
+      <SelectField
+        value={tradeTargetId}
+        onChange={(event) => {
+          setTradeTargetId(event.target.value);
+          setRequestItemId('');
+          setTargetPreview(null);
+        }}
+      >
+        {tradeTargets.map((target) => (
+          <option key={target.id} value={target.id}>
+            {target.name}{target.ownerUserId === character.ownerUserId ? ' - your character' : target.giftInventoryOpen ? ' - gifts open' : ' - gifts closed'}
+          </option>
+        ))}
+      </SelectField>
+    );
+  }
+
+  function renderQuantityRange(value: number, min: number, max: number, step: number, onChange: (value: number) => void) {
+    return (
+      <div className="grid gap-2">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={clampQuantity(value, min, max)}
+          onChange={(event) => onChange(clampQuantity(Number(event.target.value), min, max))}
+          className="w-full accent-[var(--brass)]"
+        />
+        <NumberInput min={min} max={max} step={step} value={clampQuantity(value, min, max)} onValueChange={(next) => onChange(clampQuantity(next, min, max))} />
+      </div>
+    );
+  }
+
+  function renderItemActionModal() {
+    if (!modal?.item || !itemActionModal) return null;
+    const item = modal.item;
+    const step = quantityStepForItem(item);
+    const maxQuantity = Math.max(step, item.quantity);
+    const maxSplit = Math.max(step, item.quantity - step);
+    const splitAmount = clampQuantity(splitQuantity, step, maxSplit);
+
+    if (itemActionModal === 'transfer') {
+      return (
+        <Modal title="Gift or trade" onClose={() => setItemActionModal(null)}>
+          <div className="grid gap-3">
+            <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+              <p className="text-xs font-black uppercase tracking-wider text-[var(--muted)]">Selected item</p>
+              <p className="mt-1 text-lg font-black">{item.displayName || item.name}</p>
+              <p className="text-xs text-[var(--muted)]">Quantity {quantityText(item.quantity)}</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button variant="teal" onClick={() => setItemActionModal('gift')}>
+                <Gift className="mr-2 inline" size={15} />
+                Gift
+              </Button>
+              <Button variant="secondary" onClick={() => setItemActionModal('trade')}>
+                <ArrowRightLeft className="mr-2 inline" size={15} />
+                Trade request
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    if (itemActionModal === 'gift') {
+      return (
+        <Modal title="Gift item" onClose={() => setItemActionModal(null)}>
+          <div className="grid gap-3">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-black uppercase text-[var(--muted)]">Recipient</span>
+              {renderTargetSelect()}
+            </label>
+            {tradeTargetCharacter && tradeTargetCharacter.ownerUserId !== character.ownerUserId && !tradeTargetCharacter.giftInventoryOpen && (
+              <p className="rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-3 text-xs font-black text-[var(--red)]">
+                This character is closed to gifts.
+              </p>
+            )}
+            <label className="grid gap-2">
+              <span className="text-[10px] font-black uppercase text-[var(--muted)]">Quantity</span>
+              {renderQuantityRange(tradeQuantity, step, maxQuantity, step, setTradeQuantity)}
+            </label>
+            <Button variant="teal" onClick={() => giftItem(item)} disabled={!tradeTargetId || saving}>
+              <Gift className="mr-2 inline" size={15} />
+              {tradeTargetCharacter?.ownerUserId === character.ownerUserId ? 'Move now' : 'Gift now'}
+            </Button>
+          </div>
+        </Modal>
+      );
+    }
+
+    if (itemActionModal === 'trade') {
+      return (
+        <Modal title="Trade request" onClose={() => setItemActionModal(null)}>
+          <div className="grid gap-4">
+            <label className="grid gap-1">
+              <span className="text-[10px] font-black uppercase text-[var(--muted)]">Trade with</span>
+              {renderTargetSelect()}
+            </label>
+            <section className="grid gap-3 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+              <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">You give</p>
+              <div>
+                <p className="font-black">{item.displayName || item.name}</p>
+                <p className="text-xs text-[var(--muted)]">Available {quantityText(item.quantity)}</p>
+              </div>
+              {renderQuantityRange(tradeQuantity, step, maxQuantity, step, setTradeQuantity)}
+              <TextField value={offerMoney} onChange={(event) => setOfferMoney(event.target.value)} placeholder="Money offered, optional" />
+            </section>
+            <section className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-[var(--brass)]">You want</p>
+                <p className="text-xs text-[var(--muted)]">Pick from their visible inventory and add money if needed.</p>
+              </div>
+              {targetPreviewLoading ? (
+                <div className="grid h-20 place-items-center rounded-xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><Loader2 className="animate-spin" size={16} /></div>
+              ) : targetPreviewError ? (
+                <p className="rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-3 text-xs font-black text-[var(--red)]">{targetPreviewError}</p>
+              ) : (
+                <>
+                  {targetPreviewItems.length > 0 ? (
+                    <div className="thin-scrollbar grid max-h-64 gap-2 overflow-y-auto pr-1">
+                      {targetPreviewItems.map((previewItem) => (
+                        <button
+                          key={previewItem.id}
+                          type="button"
+                          onClick={() => {
+                            setRequestItemId(previewItem.id);
+                            setRequestQuantity(quantityStepForItem(previewItem));
+                          }}
+                          className={`rounded-xl border p-3 text-left transition ${requestItemId === previewItem.id ? 'border-[var(--brass)] bg-[var(--brass)]/15' : 'border-[var(--line)] bg-black/15'}`}
+                        >
+                          <span className="block font-black">{previewItem.displayName || previewItem.name}</span>
+                          <span className="text-xs text-[var(--muted)]">{previewItem.rarity} - {previewItem.type} - Qty {quantityText(previewItem.quantity)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">No tradeable items visible in that inventory.</p>
+                  )}
+                  {requestedItem && renderQuantityRange(requestQuantity, quantityStepForItem(requestedItem), requestedItem.quantity, quantityStepForItem(requestedItem), setRequestQuantity)}
+                  <TextField value={requestMoney} onChange={(event) => setRequestMoney(event.target.value)} placeholder="Money requested, optional" />
+                </>
+              )}
+            </section>
+            <TextField value={tradeMessage} onChange={(event) => setTradeMessage(event.target.value)} placeholder="Optional note for the trade notification" />
+            <Button variant="teal" onClick={() => sendItemTrade(item)} disabled={!tradeTargetId || saving}>
+              <ArrowRightLeft className="mr-2 inline" size={15} />
+              Send trade request
+            </Button>
+          </div>
+        </Modal>
+      );
+    }
+
+    if (itemActionModal === 'split') {
+      return (
+        <Modal title="Split stack" onClose={() => setItemActionModal(null)}>
+          <div className="grid gap-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                <p className="text-[10px] font-black uppercase text-[var(--muted)]">Original keeps</p>
+                <p className="mt-1 text-xl font-black">{quantityText(item.quantity - splitAmount)}</p>
+              </div>
+              <div className="rounded-xl border border-[var(--brass)]/45 bg-[var(--brass)]/10 p-3">
+                <p className="text-[10px] font-black uppercase text-[var(--muted)]">New stack gets</p>
+                <p className="mt-1 text-xl font-black">{quantityText(splitAmount)}</p>
+              </div>
+            </div>
+            {renderQuantityRange(splitQuantity, step, maxSplit, step, setSplitQuantity)}
+            <Button variant="teal" onClick={() => splitItemStack(item)} disabled={saving}>Split stack</Button>
+          </div>
+        </Modal>
+      );
+    }
+
+    return (
+      <Modal title="Drop item" onClose={() => setItemActionModal(null)}>
+        <div className="grid gap-3">
+          <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+            <p className="font-black">{item.displayName || item.name}</p>
+            <p className="text-xs text-[var(--muted)]">Available {quantityText(item.quantity)}</p>
+          </div>
+          {renderQuantityRange(dropQuantity, step, maxQuantity, step, setDropQuantity)}
+          <Button variant="danger" onClick={() => dropItem(item)} disabled={saving}>
+            <Trash2 className="mr-2 inline" size={15} />
+            Drop {quantityText(clampQuantity(dropQuantity, step, maxQuantity))}
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -958,7 +1255,10 @@ export function InventoryPanel({
       )}
 
       {modal && (
-        <Modal title={modal.item ? (modal.item.displayName || modal.item.name) : 'Add item'} onClose={() => setModal(null)}>
+        <Modal title={modal.item ? (modal.item.displayName || modal.item.name) : 'Add item'} onClose={() => {
+          setItemActionModal(null);
+          setModal(null);
+        }}>
           {modal.item ? (
             <div className="space-y-3">
               <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(modal.item.rarity)} ${modal.item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(modal.item) ? 'inventory-enhanced' : ''}`}>
@@ -1066,35 +1366,10 @@ export function InventoryPanel({
                   {isPotionConsumable(modal.item) && <Button variant="teal" onClick={() => consumePotion(modal.item!)} disabled={saving}>Consume</Button>}
                   {character.ownerUserId && <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>Send to house</Button>}
                   {tradeTargets.length > 0 && !modal.item.loadoutSlot && !modal.item.isStorage && (
-                    <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-                      <p className="text-xs font-black uppercase tracking-wider text-[var(--brass)]">Gift or request trade</p>
-                      <SelectField value={tradeTargetId} onChange={(event) => setTradeTargetId(event.target.value)}>
-                        {tradeTargets.map((target) => (
-                          <option key={target.id} value={target.id}>
-                            {target.name}{target.ownerUserId === character.ownerUserId ? ' - your character' : target.giftInventoryOpen ? ' - gifts open' : ' - gifts closed'}
-                          </option>
-                        ))}
-                      </SelectField>
-                      <div className="grid gap-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)]">
-                        <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={tradeQuantity} onValueChange={setTradeQuantity} />
-                        <TextField value={tradeMessage} onChange={(event) => setTradeMessage(event.target.value)} placeholder="Optional trade note" />
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <Button variant="teal" onClick={() => giftItem(modal.item!)} disabled={!tradeTargetId || saving}>
-                          <Gift className="mr-2 inline" size={15} />
-                          {tradeTargetCharacter?.ownerUserId === character.ownerUserId ? 'Move now' : 'Gift now'}
-                        </Button>
-                        {tradeTargetCharacter?.ownerUserId !== character.ownerUserId && (
-                          <Button variant="secondary" onClick={() => sendItemTrade(modal.item!)} disabled={!tradeTargetId || saving}>
-                            <ArrowRightLeft className="mr-2 inline" size={15} />
-                            Request trade
-                          </Button>
-                        )}
-                      </div>
-                      {tradeTargetCharacter && tradeTargetCharacter.ownerUserId !== character.ownerUserId && !tradeTargetCharacter.giftInventoryOpen && (
-                        <p className="rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-2 text-xs font-black text-[var(--red)]">Gifts are closed for this character. Trades can still be requested.</p>
-                      )}
-                    </div>
+                    <Button variant="teal" onClick={() => setItemActionModal('transfer')} disabled={saving}>
+                      <ArrowRightLeft className="mr-2 inline" size={15} />
+                      Gift or trade
+                    </Button>
                   )}
                   {tradeTargets.length > 0 && modal.item.loadoutSlot && (
                     <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">Unequip this item before offering it to another player.</p>
@@ -1102,21 +1377,27 @@ export function InventoryPanel({
                   {tradeTargets.length > 0 && modal.item.isStorage && (
                     <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">Storage containers cannot be offered through trades.</p>
                   )}
-                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <NumberInput min={quantityStepForItem(modal.item)} step={quantityStepForItem(modal.item)} max={modal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
-                    <Button variant="danger" onClick={() => dropItem(modal.item!)} disabled={saving}>Drop</Button>
-                  </div>
+                  {modal.item.stackable && modal.item.quantity > quantityStepForItem(modal.item) && (
+                    <Button variant="secondary" onClick={() => setItemActionModal('split')} disabled={saving}>
+                      <Scissors className="mr-2 inline" size={15} />
+                      Split stack
+                    </Button>
+                  )}
+                  <Button variant="danger" onClick={() => setItemActionModal('drop')} disabled={saving}>
+                    <Trash2 className="mr-2 inline" size={15} />
+                    Drop item
+                  </Button>
                 </div>
               )}
               {modal.source !== 'wagon' && canAdd && (
-                <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                <form onSubmit={updateItem} className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-3">
                   {renderItemDraftControls()}
-                  <Button variant="primary" className="sticky bottom-0 z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)]" disabled={!draft.name.trim() || saving}>Save item</Button>
+                  <Button variant="primary" className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)] sm:bottom-0" disabled={!draft.name.trim() || saving}>Save item</Button>
                 </form>
               )}
             </div>
           ) : (
-            <form onSubmit={addItem} className="grid gap-3">
+            <form onSubmit={addItem} className="grid gap-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:pb-3">
               <div className="grid grid-cols-2 gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-1">
                 <Button type="button" variant={addMode === 'catalog' ? 'primary' : 'ghost'} className="py-2" onClick={() => setAddMode('catalog')}>Catalog</Button>
                 <Button type="button" variant={addMode === 'custom' ? 'primary' : 'ghost'} className="py-2" onClick={() => setAddMode('custom')}>Custom</Button>
@@ -1165,11 +1446,12 @@ export function InventoryPanel({
               )}
 
               {renderItemDraftControls()}
-              <Button variant="primary" className="sticky bottom-0 z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)]" disabled={!draft.name.trim() || saving}>Add item</Button>
+              <Button variant="primary" className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)] sm:bottom-0" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}
         </Modal>
       )}
+      {renderItemActionModal()}
     </Card>
   );
 }

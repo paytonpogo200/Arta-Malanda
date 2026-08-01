@@ -19,6 +19,14 @@ function booleanValue(value: unknown) {
   return ['true', 'yes', '1'].includes(text(value).toLowerCase());
 }
 
+function booleanValueDefault(value: unknown, fallback: boolean) {
+  const cleaned = text(value).toLowerCase();
+  if (!cleaned) return fallback;
+  if (['true', 'yes', '1'].includes(cleaned)) return true;
+  if (['false', 'no', '0'].includes(cleaned)) return false;
+  return fallback;
+}
+
 function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'catalog';
 }
@@ -169,6 +177,7 @@ export function parseLootWorkbook(buffer: Buffer) {
       minQuantity,
       maxQuantity: Math.max(minQuantity, number(row[8], minQuantity)),
       towerBaseOnly: booleanValue(row[9]),
+      stackable: booleanValueDefault(row[10], true),
       notes: ''
     };
   }).filter(Boolean);
