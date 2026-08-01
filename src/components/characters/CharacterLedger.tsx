@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowLeft, Loader2, Plus, RefreshCw, UserRound } from 'lucide-react';
 import { CharacterSheet } from '@/components/characters/CharacterSheet';
-import { TradeModal } from '@/components/trades/TradeModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
@@ -46,7 +45,6 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [tradeTarget, setTradeTarget] = useState<Character | null>(null);
 
   const isDm = profile.role === 'dm';
 
@@ -101,7 +99,6 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
 
   const selectedCharacter = characters.find((entry) => entry.id === selectedId) ?? null;
   const assignmentCharacter = characters.find((entry) => entry.id === assignmentCharacterId) ?? null;
-  const canOfferTrades = useMemo(() => characters.some((character) => character.ownerUserId === profile.id), [characters, profile.id]);
 
   useEffect(() => {
     setAssignmentOwnerUserId(assignmentCharacter?.ownerUserId ?? '');
@@ -195,7 +192,6 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
             classes={classes}
             characters={characters}
             onSaved={updateCharacter}
-            onOfferTrade={canOfferTrades ? setTradeTarget : undefined}
           />
         </>
       ) : (
@@ -330,8 +326,6 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
           )}
         </Card>
       )}
-
-      {tradeTarget && <TradeModal target={tradeTarget} characters={characters} profileId={profile.id} onClose={() => setTradeTarget(null)} />}
     </div>
   );
 }

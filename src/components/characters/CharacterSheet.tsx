@@ -22,7 +22,6 @@ type CharacterSheetProps = {
   classes: ClassTemplate[];
   characters: Character[];
   onSaved: (character: Character) => void;
-  onOfferTrade?: (character: Character) => void;
 };
 
 const LOCATION_PRESETS = ['Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
@@ -38,7 +37,7 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved, onOfferTrade }: CharacterSheetProps) {
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -165,9 +164,6 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {!owned && character.ownerUserId && onOfferTrade && (
-              <Button variant="teal" type="button" onClick={() => onOfferTrade(character)}>Offer trade</Button>
-            )}
             {isDm && (editing ? (
               <>
                 <Button variant="secondary" type="button" disabled={saving} onClick={() => { setDraft(character); setEditing(false); }}>Cancel</Button>

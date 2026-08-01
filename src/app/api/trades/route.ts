@@ -41,7 +41,9 @@ export async function POST(request: Request) {
       p_requested_item_id: body.requestedItemId ? String(body.requestedItemId) : null,
       p_requested_quantity: Math.max(0.5, Number(body.requestedQuantity ?? 1)),
       p_offered_currency: Array.isArray(body.offeredCurrency) ? body.offeredCurrency : [],
-      p_requested_currency: Array.isArray(body.requestedCurrency) ? body.requestedCurrency : []
+      p_requested_currency: Array.isArray(body.requestedCurrency) ? body.requestedCurrency : [],
+      p_offered_items: Array.isArray(body.offeredItems) ? body.offeredItems : [],
+      p_requested_items: Array.isArray(body.requestedItems) ? body.requestedItems : []
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
 

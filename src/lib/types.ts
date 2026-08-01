@@ -386,6 +386,14 @@ export type PersonalScroll = {
 
 export type TradeStatus = 'pending' | 'accepted' | 'declined' | 'cancelled';
 
+export type TradeItem = {
+  itemId: string;
+  name: string;
+  quantity: number;
+  type?: ItemType;
+  rarity?: ItemRarity;
+};
+
 export type TradeOffer = {
   id: string;
   senderUserId: string;
@@ -403,6 +411,8 @@ export type TradeOffer = {
   requestedItemId: string | null;
   requestedItemName: string;
   requestedQuantity: number;
+  offeredItems: TradeItem[];
+  requestedItems: TradeItem[];
   offeredCurrency: { unitId: string; amount: number }[];
   requestedCurrency: { unitId: string; amount: number }[];
   message: string;

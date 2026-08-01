@@ -9353,6 +9353,8 @@ create table if not exists public.trade_offers (
   requested_item_id uuid references public.inventory_items(id) on delete set null,
   requested_item_name text not null default '',
   requested_quantity numeric(12,1) not null default 1 check (requested_quantity > 0),
+  offered_items jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_items) = 'array'),
+  requested_items jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_items) = 'array'),
   offered_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_currency) = 'array'),
   requested_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_currency) = 'array'),
   message text not null default '',
@@ -9370,6 +9372,8 @@ alter table public.trade_offers
   add column if not exists requested_item_id uuid references public.inventory_items(id) on delete set null,
   add column if not exists requested_item_name text not null default '',
   add column if not exists requested_quantity numeric(12,1) not null default 1 check (requested_quantity > 0),
+  add column if not exists offered_items jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_items) = 'array'),
+  add column if not exists requested_items jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_items) = 'array'),
   add column if not exists offered_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_currency) = 'array'),
   add column if not exists requested_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_currency) = 'array');
 
@@ -9422,6 +9426,24 @@ as $$
     'requestedItemId', p_trade.requested_item_id,
     'requestedItemName', p_trade.requested_item_name,
     'requestedQuantity', p_trade.requested_quantity,
+    'offeredItems', case
+      when jsonb_array_length(coalesce(p_trade.offered_items, '[]'::jsonb)) > 0 then p_trade.offered_items
+      when p_trade.offered_item_id is not null then jsonb_build_array(jsonb_build_object(
+        'itemId', p_trade.offered_item_id,
+        'name', p_trade.offered_item_name,
+        'quantity', p_trade.offered_quantity
+      ))
+      else '[]'::jsonb
+    end,
+    'requestedItems', case
+      when jsonb_array_length(coalesce(p_trade.requested_items, '[]'::jsonb)) > 0 then p_trade.requested_items
+      when p_trade.requested_item_id is not null then jsonb_build_array(jsonb_build_object(
+        'itemId', p_trade.requested_item_id,
+        'name', p_trade.requested_item_name,
+        'quantity', p_trade.requested_quantity
+      ))
+      else '[]'::jsonb
+    end,
     'offeredCurrency', p_trade.offered_currency,
     'requestedCurrency', p_trade.requested_currency,
     'message', p_trade.message,
@@ -9659,9 +9681,138 @@ begin
 end;
 $$;
 
+create or replace function public.transfer_trade_inventory_item(
+  p_item_id uuid,
+  p_from_character_id uuid,
+  p_to_character_id uuid,
+  p_quantity numeric
+)
+returns text
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_source_item public.inventory_items%rowtype;
+  v_target_item public.inventory_items%rowtype;
+  v_target_character public.characters%rowtype;
+  v_quantity numeric;
+  v_slot_index int;
+  v_item_label text;
+begin
+  select * into v_source_item
+  from public.inventory_items
+  where id = p_item_id
+  for update;
+
+  if v_source_item.id is null then raise exception 'A trade item is no longer available.'; end if;
+  if v_source_item.character_id <> p_from_character_id then raise exception 'A trade item is no longer held by the expected character.'; end if;
+  if v_source_item.loadout_slot is not null then raise exception 'A trade item is currently equipped.'; end if;
+  if v_source_item.is_storage then raise exception 'Storage containers cannot be traded.'; end if;
+
+  select * into v_target_character from public.characters where id = p_to_character_id;
+  if v_target_character.id is null then raise exception 'Receiving character was not found.'; end if;
+
+  v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+  if v_source_item.quantity < v_quantity then raise exception 'A trade item quantity is no longer available.'; end if;
+  v_item_label := v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name);
+
+  select * into v_target_item
+  from public.inventory_items i
+  where i.character_id = v_target_character.id
+    and i.parent_item_id is null
+    and i.loadout_slot is null
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_source_item.item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_source_item.item_type)
+    and i.rarity = v_source_item.rarity
+    and coalesce(i.enchantment, '') = coalesce(v_source_item.enchantment, '')
+    and coalesce(i.rune_name, '') = coalesce(v_source_item.rune_name, '')
+    and coalesce(i.material, '') = coalesce(v_source_item.material, '')
+    and coalesce(i.potion_strength, '') = coalesce(v_source_item.potion_strength, '')
+    and coalesce(i.potion_property, '') = coalesce(v_source_item.potion_property, '')
+    and coalesce(i.potion_quality, '') = coalesce(v_source_item.potion_quality, '')
+    and i.enhancement_count = v_source_item.enhancement_count
+    and i.is_two_handed = v_source_item.is_two_handed
+    and i.is_accessory = v_source_item.is_accessory
+    and i.modifiers = v_source_item.modifiers
+    and i.is_storage = false
+    and v_source_item.is_storage = false
+    and public.item_catalog_stackable(v_source_item.item_name, v_source_item.item_type)
+  order by i.slot_index
+  limit 1;
+
+  if v_target_item.id is not null then
+    update public.inventory_items
+    set quantity = quantity + v_quantity
+    where id = v_target_item.id;
+  else
+    v_slot_index := public.find_first_free_inventory_slot(v_target_character.id, null::uuid, v_target_character.inventory_slots);
+    if v_slot_index is null then raise exception 'Receiving character inventory is full.'; end if;
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      display_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_accessory,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      rune_name,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_target_character.id,
+      null,
+      v_slot_index,
+      v_source_item.item_name,
+      v_source_item.display_name,
+      v_source_item.item_description,
+      v_source_item.item_type,
+      v_source_item.rarity,
+      v_quantity,
+      v_source_item.is_accessory,
+      false,
+      0,
+      v_source_item.modifiers,
+      v_source_item.enchantment,
+      v_source_item.rune_name,
+      v_source_item.material,
+      v_source_item.enhancement_count,
+      v_source_item.is_two_handed,
+      v_source_item.potion_strength,
+      v_source_item.potion_property,
+      v_source_item.potion_quality
+    );
+  end if;
+
+  if v_quantity >= v_source_item.quantity then
+    delete from public.inventory_items where id = v_source_item.id;
+  else
+    update public.inventory_items
+    set quantity = quantity - v_quantity
+    where id = v_source_item.id;
+  end if;
+
+  return v_item_label;
+end;
+$$;
+
 drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text);
 drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric);
 drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb);
+drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb, jsonb, jsonb);
 
 create or replace function public.create_trade_offer(
   p_session_token text,
@@ -9675,7 +9826,9 @@ create or replace function public.create_trade_offer(
   p_requested_item_id uuid default null,
   p_requested_quantity numeric default 1,
   p_offered_currency jsonb default '[]'::jsonb,
-  p_requested_currency jsonb default '[]'::jsonb
+  p_requested_currency jsonb default '[]'::jsonb,
+  p_offered_items jsonb default '[]'::jsonb,
+  p_requested_items jsonb default '[]'::jsonb
 )
 returns jsonb
 language plpgsql
@@ -9689,10 +9842,21 @@ declare
   v_offered_item public.inventory_items%rowtype;
   v_requested_item public.inventory_items%rowtype;
   v_trade public.trade_offers%rowtype;
+  v_entry jsonb;
+  v_item_id uuid;
+  v_quantity numeric;
   v_offered_quantity numeric := greatest(0.5, coalesce(p_offered_quantity, 1));
   v_requested_quantity numeric := greatest(0.5, coalesce(p_requested_quantity, 1));
   v_offered_currency jsonb := case when jsonb_typeof(coalesce(p_offered_currency, '[]'::jsonb)) = 'array' then coalesce(p_offered_currency, '[]'::jsonb) else '[]'::jsonb end;
   v_requested_currency jsonb := case when jsonb_typeof(coalesce(p_requested_currency, '[]'::jsonb)) = 'array' then coalesce(p_requested_currency, '[]'::jsonb) else '[]'::jsonb end;
+  v_offered_items_source jsonb := case when jsonb_typeof(coalesce(p_offered_items, '[]'::jsonb)) = 'array' then coalesce(p_offered_items, '[]'::jsonb) else '[]'::jsonb end;
+  v_requested_items_source jsonb := case when jsonb_typeof(coalesce(p_requested_items, '[]'::jsonb)) = 'array' then coalesce(p_requested_items, '[]'::jsonb) else '[]'::jsonb end;
+  v_offered_items jsonb := '[]'::jsonb;
+  v_requested_items jsonb := '[]'::jsonb;
+  v_offer_labels text[] := array[]::text[];
+  v_request_labels text[] := array[]::text[];
+  v_first_offered_item_id uuid := null;
+  v_first_requested_item_id uuid := null;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -9707,28 +9871,80 @@ begin
   end if;
   if v_target.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
 
-  if p_offered_item_id is not null then
+  if jsonb_array_length(v_offered_items_source) = 0 and p_offered_item_id is not null then
+    v_offered_items_source := jsonb_build_array(jsonb_build_object('itemId', p_offered_item_id, 'quantity', v_offered_quantity));
+  end if;
+
+  if jsonb_array_length(v_requested_items_source) = 0 and p_requested_item_id is not null then
+    v_requested_items_source := jsonb_build_array(jsonb_build_object('itemId', p_requested_item_id, 'quantity', v_requested_quantity));
+  end if;
+
+  for v_entry in select * from jsonb_array_elements(v_offered_items_source) loop
+    v_item_id := nullif(coalesce(v_entry->>'itemId', v_entry->>'item_id', v_entry->>'id'), '')::uuid;
+    v_quantity := greatest(0.5, coalesce(nullif(v_entry->>'quantity', '')::numeric, 1));
+    if v_item_id is null then continue; end if;
+
     select * into v_offered_item
     from public.inventory_items
-    where id = p_offered_item_id
+    where id = v_item_id
       and character_id = v_sender.id;
 
     if v_offered_item.id is null then raise exception 'Offered item was not found in that inventory.'; end if;
     if v_offered_item.loadout_slot is not null then raise exception 'Unequip that item before offering it.'; end if;
     if v_offered_item.is_storage then raise exception 'Storage containers cannot be offered through trades.'; end if;
-    if v_offered_item.quantity < v_offered_quantity then raise exception 'Not enough quantity to offer.'; end if;
-  end if;
+    v_quantity := public.assert_valid_item_quantity(v_offered_item.item_name, v_offered_item.item_type, v_quantity);
+    if v_offered_item.quantity < v_quantity then raise exception 'Not enough quantity to offer.'; end if;
 
-  if p_requested_item_id is not null then
+    if v_offered_items = '[]'::jsonb then
+      v_first_offered_item_id := v_offered_item.id;
+      v_offered_quantity := v_quantity;
+    end if;
+    v_offered_items := v_offered_items || jsonb_build_array(jsonb_build_object(
+      'itemId', v_offered_item.id,
+      'name', coalesce(v_offered_item.display_name, v_offered_item.item_name),
+      'quantity', v_quantity,
+      'type', v_offered_item.item_type,
+      'rarity', v_offered_item.rarity
+    ));
+    v_offer_labels := array_append(v_offer_labels, v_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name));
+  end loop;
+
+  for v_entry in select * from jsonb_array_elements(v_requested_items_source) loop
+    v_item_id := nullif(coalesce(v_entry->>'itemId', v_entry->>'item_id', v_entry->>'id'), '')::uuid;
+    v_quantity := greatest(0.5, coalesce(nullif(v_entry->>'quantity', '')::numeric, 1));
+    if v_item_id is null then continue; end if;
+
     select * into v_requested_item
     from public.inventory_items
-    where id = p_requested_item_id
+    where id = v_item_id
       and character_id = v_target.id;
 
     if v_requested_item.id is null then raise exception 'Requested item was not found in that inventory.'; end if;
     if v_requested_item.loadout_slot is not null then raise exception 'The requested item is currently equipped.'; end if;
     if v_requested_item.is_storage then raise exception 'Storage containers cannot be requested through trades.'; end if;
-    if v_requested_item.quantity < v_requested_quantity then raise exception 'Not enough quantity to request.'; end if;
+    v_quantity := public.assert_valid_item_quantity(v_requested_item.item_name, v_requested_item.item_type, v_quantity);
+    if v_requested_item.quantity < v_quantity then raise exception 'Not enough quantity to request.'; end if;
+
+    if v_requested_items = '[]'::jsonb then
+      v_first_requested_item_id := v_requested_item.id;
+      v_requested_quantity := v_quantity;
+    end if;
+    v_requested_items := v_requested_items || jsonb_build_array(jsonb_build_object(
+      'itemId', v_requested_item.id,
+      'name', coalesce(v_requested_item.display_name, v_requested_item.item_name),
+      'quantity', v_quantity,
+      'type', v_requested_item.item_type,
+      'rarity', v_requested_item.rarity
+    ));
+    v_request_labels := array_append(v_request_labels, v_quantity::text || ' ' || coalesce(v_requested_item.display_name, v_requested_item.item_name));
+  end loop;
+
+  if jsonb_array_length(v_offered_items) = 0 and jsonb_array_length(v_offered_currency) = 0 then
+    raise exception 'Offer at least one item or some money.';
+  end if;
+
+  if jsonb_array_length(v_requested_items) = 0 and jsonb_array_length(v_requested_currency) = 0 then
+    raise exception 'Request at least one item or some money.';
   end if;
 
   perform public.assert_trade_currency_available(v_sender.id, v_offered_currency);
@@ -9744,9 +9960,11 @@ begin
     offered_item_id,
     offered_item_name,
     offered_quantity,
+    offered_items,
     requested_item_id,
     requested_item_name,
     requested_quantity,
+    requested_items,
     offered_currency,
     requested_currency,
     message
@@ -9756,14 +9974,16 @@ begin
     v_target.owner_user_id,
     v_sender.id,
     v_target.id,
-    coalesce(nullif(p_offer_note, ''), case when v_offered_item.id is not null then v_offered_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name) else '' end),
-    coalesce(p_request_note, ''),
-    v_offered_item.id,
-    coalesce(v_offered_item.display_name, v_offered_item.item_name, ''),
+    coalesce(nullif(p_offer_note, ''), array_to_string(v_offer_labels, ', '), ''),
+    coalesce(nullif(p_request_note, ''), array_to_string(v_request_labels, ', '), ''),
+    v_first_offered_item_id,
+    coalesce(v_offered_items->0->>'name', ''),
     v_offered_quantity,
-    v_requested_item.id,
-    coalesce(v_requested_item.display_name, v_requested_item.item_name, ''),
+    v_offered_items,
+    v_first_requested_item_id,
+    coalesce(v_requested_items->0->>'name', ''),
     v_requested_quantity,
+    v_requested_items,
     v_offered_currency,
     v_requested_currency,
     coalesce(p_message, '')
@@ -9782,7 +10002,7 @@ begin
   values (
     v_target.owner_user_id,
     v_sender.name || ' offered a trade to ' || v_target.name,
-    trim(both from concat_ws(E'\n\n', nullif(coalesce(p_message, ''), ''), 'Offers: ' || nullif(coalesce(coalesce(nullif(p_offer_note, ''), case when v_offered_item.id is not null then v_offered_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name) else '' end), ''), ''), 'Requests: ' || nullif(coalesce(p_request_note, ''), ''))),
+    trim(both from concat_ws(E'\n\n', nullif(coalesce(p_message, ''), ''), 'Offers: ' || nullif(coalesce(nullif(p_offer_note, ''), array_to_string(v_offer_labels, ', '), 'money'), ''), 'Requests: ' || nullif(coalesce(nullif(p_request_note, ''), array_to_string(v_request_labels, ', '), 'money'), ''))),
     'trade',
     'trade',
     v_trade.id,
@@ -9983,6 +10203,7 @@ declare
   v_next_status text := lower(trim(coalesce(p_status, '')));
   v_notify_user uuid;
   v_title text;
+  v_entry jsonb;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -10008,7 +10229,27 @@ begin
     perform public.assert_trade_currency_available(v_target_character.id, v_trade.requested_currency);
   end if;
 
-  if v_next_status = 'accepted' and v_trade.offered_item_id is not null then
+  if v_next_status = 'accepted' then
+    for v_entry in select * from jsonb_array_elements(coalesce(v_trade.offered_items, '[]'::jsonb)) loop
+      perform public.transfer_trade_inventory_item(
+        nullif(coalesce(v_entry->>'itemId', v_entry->>'item_id', v_entry->>'id'), '')::uuid,
+        v_trade.sender_character_id,
+        v_trade.target_character_id,
+        greatest(0.5, coalesce(nullif(v_entry->>'quantity', '')::numeric, 1))
+      );
+    end loop;
+
+    for v_entry in select * from jsonb_array_elements(coalesce(v_trade.requested_items, '[]'::jsonb)) loop
+      perform public.transfer_trade_inventory_item(
+        nullif(coalesce(v_entry->>'itemId', v_entry->>'item_id', v_entry->>'id'), '')::uuid,
+        v_trade.target_character_id,
+        v_trade.sender_character_id,
+        greatest(0.5, coalesce(nullif(v_entry->>'quantity', '')::numeric, 1))
+      );
+    end loop;
+  end if;
+
+  if v_next_status = 'accepted' and v_trade.offered_item_id is not null and jsonb_array_length(coalesce(v_trade.offered_items, '[]'::jsonb)) = 0 then
     select * into v_source_item
     from public.inventory_items
     where id = v_trade.offered_item_id
@@ -10108,7 +10349,7 @@ begin
     end if;
   end if;
 
-  if v_next_status = 'accepted' and v_trade.requested_item_id is not null then
+  if v_next_status = 'accepted' and v_trade.requested_item_id is not null and jsonb_array_length(coalesce(v_trade.requested_items, '[]'::jsonb)) = 0 then
     select * into v_requested_item
     from public.inventory_items
     where id = v_trade.requested_item_id
@@ -10263,7 +10504,8 @@ grant execute on function public.create_campaign_announcement(text, text, text, 
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
 grant execute on function public.assert_trade_currency_available(uuid, jsonb) to anon, authenticated;
 grant execute on function public.transfer_trade_currency(uuid, uuid, jsonb) to anon, authenticated;
-grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb) to anon, authenticated;
+grant execute on function public.transfer_trade_inventory_item(uuid, uuid, uuid, numeric) to anon, authenticated;
+grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.gift_inventory_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_trade_offer_status(text, uuid, text) to anon, authenticated;
 
@@ -11038,8 +11280,6 @@ begin
   );
 end;
 $$;
-
-select public.cleanup_existing_unstackable_item_stacks();
 
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, int);
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, integer);
