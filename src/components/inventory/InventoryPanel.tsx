@@ -156,8 +156,8 @@ export function InventoryPanel({
   const [tradeMessage, setTradeMessage] = useState('');
   const [itemActionModal, setItemActionModal] = useState<ItemActionModal>(null);
   const [splitQuantity, setSplitQuantity] = useState(1);
-  const [offerMoney, setOfferMoney] = useState('');
-  const [requestMoney, setRequestMoney] = useState('');
+  const [offerCurrencyDraft, setOfferCurrencyDraft] = useState<Record<string, number>>({});
+  const [requestCurrencyDraft, setRequestCurrencyDraft] = useState<Record<string, number>>({});
   const [requestItemId, setRequestItemId] = useState('');
   const [requestQuantity, setRequestQuantity] = useState(1);
   const [targetPreview, setTargetPreview] = useState<{ items: InventoryItem[]; wallet: WalletBalance[] } | null>(null);
@@ -398,8 +398,8 @@ export function InventoryPanel({
     setSplitQuantity(step);
     setTradeMessage('');
     setItemActionModal(null);
-    setOfferMoney('');
-    setRequestMoney('');
+    setOfferCurrencyDraft({});
+    setRequestCurrencyDraft({});
     setRequestItemId('');
     setRequestQuantity(1);
     setTargetPreview(null);
@@ -689,8 +689,28 @@ export function InventoryPanel({
       const requested = requestedItem
         ? `${quantityText(Math.min(requestedItem.quantity, Math.max(quantityStepForItem(requestedItem), requestQuantity)))} ${requestedItem.displayName || requestedItem.name}`
         : '';
-      const wantedParts = [requested, requestMoney.trim() ? `${requestMoney.trim()} money` : ''].filter(Boolean);
-      const offeredParts = [`${quantityText(quantity)} ${item.displayName || item.name}`, offerMoney.trim() ? `${offerMoney.trim()} money` : ''].filter(Boolean);
+      const offeredCurrency = wallet
+        .map((entry) => ({ unitId: entry.unit.id, amount: Math.floor(clampQuantity(offerCurrencyDraft[entry.unit.id] ?? 0, 0, entry.amount)) }))
+        .filter((entry) => entry.amount > 0);
+      const requestedCurrency = (targetPreview?.wallet ?? [])
+        .map((entry) => ({ unitId: entry.unit.id, amount: Math.floor(clampQuantity(requestCurrencyDraft[entry.unit.id] ?? 0, 0, entry.amount)) }))
+        .filter((entry) => entry.amount > 0);
+      const offeredCurrencyText = offeredCurrency
+        .map((entry) => {
+          const unit = wallet.find((balance) => balance.unit.id === entry.unitId)?.unit;
+          return unit ? `${entry.amount} ${unit.name}` : '';
+        })
+        .filter(Boolean)
+        .join(' + ');
+      const requestedCurrencyText = requestedCurrency
+        .map((entry) => {
+          const unit = targetPreview?.wallet.find((balance) => balance.unit.id === entry.unitId)?.unit;
+          return unit ? `${entry.amount} ${unit.name}` : '';
+        })
+        .filter(Boolean)
+        .join(' + ');
+      const wantedParts = [requested, requestedCurrencyText].filter(Boolean);
+      const offeredParts = [`${quantityText(quantity)} ${item.displayName || item.name}`, offeredCurrencyText].filter(Boolean);
       const response = await fetch('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -701,7 +721,11 @@ export function InventoryPanel({
           offeredQuantity: quantity,
           offerNote: offeredParts.join(' + '),
           requestNote: wantedParts.length ? wantedParts.join(' + ') : 'Table-negotiated return',
-          message: tradeMessage
+          message: tradeMessage,
+          requestedItemId: requestedItem?.id ?? null,
+          requestedQuantity: requestedItem ? Math.min(requestedItem.quantity, Math.max(quantityStepForItem(requestedItem), requestQuantity)) : 1,
+          offeredCurrency,
+          requestedCurrency
         })
       });
       const payload = await response.json().catch(() => ({}));
@@ -891,6 +915,30 @@ export function InventoryPanel({
     );
   }
 
+  function renderCurrencyInputs(
+    balances: WalletBalance[],
+    draftValues: Record<string, number>,
+    onChange: (values: Record<string, number>) => void
+  ) {
+    if (!balances.length) return null;
+    return (
+      <div className="grid gap-2 sm:grid-cols-2">
+        {balances.map((entry) => (
+          <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+            <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{entry.unit.name} available {entry.amount}</span>
+            <NumberInput
+              min={0}
+              max={entry.amount}
+              step={1}
+              value={Math.floor(clampQuantity(draftValues[entry.unit.id] ?? 0, 0, entry.amount))}
+              onValueChange={(amount) => onChange({ ...draftValues, [entry.unit.id]: Math.floor(clampQuantity(amount, 0, entry.amount)) })}
+            />
+          </label>
+        ))}
+      </div>
+    );
+  }
+
   function renderItemActionModal() {
     if (!modal?.item || !itemActionModal) return null;
     const item = modal.item;
@@ -964,7 +1012,7 @@ export function InventoryPanel({
                 <p className="text-xs text-[var(--muted)]">Available {quantityText(item.quantity)}</p>
               </div>
               {renderQuantityRange(tradeQuantity, step, maxQuantity, step, setTradeQuantity)}
-              <TextField value={offerMoney} onChange={(event) => setOfferMoney(event.target.value)} placeholder="Money offered, optional" />
+              {renderCurrencyInputs(wallet, offerCurrencyDraft, setOfferCurrencyDraft)}
             </section>
             <section className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
               <div>
@@ -998,7 +1046,7 @@ export function InventoryPanel({
                     <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">No tradeable items visible in that inventory.</p>
                   )}
                   {requestedItem && renderQuantityRange(requestQuantity, quantityStepForItem(requestedItem), requestedItem.quantity, quantityStepForItem(requestedItem), setRequestQuantity)}
-                  <TextField value={requestMoney} onChange={(event) => setRequestMoney(event.target.value)} placeholder="Money requested, optional" />
+                  {renderCurrencyInputs(targetPreview?.wallet ?? [], requestCurrencyDraft, setRequestCurrencyDraft)}
                 </>
               )}
             </section>

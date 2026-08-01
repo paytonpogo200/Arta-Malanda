@@ -400,6 +400,11 @@ export type TradeOffer = {
   offeredItemId: string | null;
   offeredItemName: string;
   offeredQuantity: number;
+  requestedItemId: string | null;
+  requestedItemName: string;
+  requestedQuantity: number;
+  offeredCurrency: { unitId: string; amount: number }[];
+  requestedCurrency: { unitId: string; amount: number }[];
   message: string;
   createdAt: string | null;
   updatedAt: string | null;

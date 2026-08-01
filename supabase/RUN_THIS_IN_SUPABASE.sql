@@ -9238,6 +9238,11 @@ create table if not exists public.trade_offers (
   offered_item_id uuid references public.inventory_items(id) on delete set null,
   offered_item_name text not null default '',
   offered_quantity numeric(12,1) not null default 1 check (offered_quantity > 0),
+  requested_item_id uuid references public.inventory_items(id) on delete set null,
+  requested_item_name text not null default '',
+  requested_quantity numeric(12,1) not null default 1 check (requested_quantity > 0),
+  offered_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_currency) = 'array'),
+  requested_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_currency) = 'array'),
   message text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -9249,7 +9254,12 @@ create index if not exists trade_offers_recipient_idx on public.trade_offers(rec
 alter table public.trade_offers
   add column if not exists offered_item_id uuid references public.inventory_items(id) on delete set null,
   add column if not exists offered_item_name text not null default '',
-  add column if not exists offered_quantity numeric(12,1) not null default 1 check (offered_quantity > 0);
+  add column if not exists offered_quantity numeric(12,1) not null default 1 check (offered_quantity > 0),
+  add column if not exists requested_item_id uuid references public.inventory_items(id) on delete set null,
+  add column if not exists requested_item_name text not null default '',
+  add column if not exists requested_quantity numeric(12,1) not null default 1 check (requested_quantity > 0),
+  add column if not exists offered_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(offered_currency) = 'array'),
+  add column if not exists requested_currency jsonb not null default '[]'::jsonb check (jsonb_typeof(requested_currency) = 'array');
 
 alter table public.campaign_notifications enable row level security;
 alter table public.trade_offers enable row level security;
@@ -9297,6 +9307,11 @@ as $$
     'offeredItemId', p_trade.offered_item_id,
     'offeredItemName', p_trade.offered_item_name,
     'offeredQuantity', p_trade.offered_quantity,
+    'requestedItemId', p_trade.requested_item_id,
+    'requestedItemName', p_trade.requested_item_name,
+    'requestedQuantity', p_trade.requested_quantity,
+    'offeredCurrency', p_trade.offered_currency,
+    'requestedCurrency', p_trade.requested_currency,
     'message', p_trade.message,
     'createdAt', p_trade.created_at,
     'updatedAt', p_trade.updated_at
@@ -9448,8 +9463,93 @@ begin
 end;
 $$;
 
+create or replace function public.assert_trade_currency_available(
+  p_character_id uuid,
+  p_currency jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_entry jsonb;
+  v_unit_id uuid;
+  v_amount int;
+  v_available int;
+begin
+  for v_entry in select * from jsonb_array_elements(case when jsonb_typeof(coalesce(p_currency, '[]'::jsonb)) = 'array' then coalesce(p_currency, '[]'::jsonb) else '[]'::jsonb end) loop
+    v_unit_id := nullif(coalesce(v_entry->>'unitId', v_entry->>'unit_id'), '')::uuid;
+    v_amount := greatest(0, floor(coalesce(nullif(v_entry->>'amount', '')::numeric, 0))::int);
+    if v_unit_id is null or v_amount <= 0 then
+      continue;
+    end if;
+
+    if not exists (select 1 from public.currency_units where id = v_unit_id) then
+      raise exception 'A trade currency unit was not found.';
+    end if;
+
+    select coalesce(amount, 0) into v_available
+    from public.character_wallet_balances
+    where character_id = p_character_id
+      and currency_unit_id = v_unit_id;
+
+    if coalesce(v_available, 0) < v_amount then
+      raise exception 'A character does not have enough offered money for this trade.';
+    end if;
+  end loop;
+end;
+$$;
+
+create or replace function public.transfer_trade_currency(
+  p_from_character_id uuid,
+  p_to_character_id uuid,
+  p_currency jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_entry jsonb;
+  v_unit_id uuid;
+  v_amount int;
+  v_available int;
+begin
+  for v_entry in select * from jsonb_array_elements(case when jsonb_typeof(coalesce(p_currency, '[]'::jsonb)) = 'array' then coalesce(p_currency, '[]'::jsonb) else '[]'::jsonb end) loop
+    v_unit_id := nullif(coalesce(v_entry->>'unitId', v_entry->>'unit_id'), '')::uuid;
+    v_amount := greatest(0, floor(coalesce(nullif(v_entry->>'amount', '')::numeric, 0))::int);
+    if v_unit_id is null or v_amount <= 0 then
+      continue;
+    end if;
+
+    select coalesce(amount, 0) into v_available
+    from public.character_wallet_balances
+    where character_id = p_from_character_id
+      and currency_unit_id = v_unit_id
+    for update;
+
+    if coalesce(v_available, 0) < v_amount then
+      raise exception 'A character no longer has enough money for this trade.';
+    end if;
+
+    update public.character_wallet_balances
+    set amount = amount - v_amount
+    where character_id = p_from_character_id
+      and currency_unit_id = v_unit_id;
+
+    insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
+    values (p_to_character_id, v_unit_id, v_amount)
+    on conflict (character_id, currency_unit_id) do update
+    set amount = public.character_wallet_balances.amount + excluded.amount;
+  end loop;
+end;
+$$;
+
 drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text);
 drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric);
+drop function if exists public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb);
 
 create or replace function public.create_trade_offer(
   p_session_token text,
@@ -9459,7 +9559,11 @@ create or replace function public.create_trade_offer(
   p_request_note text default '',
   p_message text default '',
   p_offered_item_id uuid default null,
-  p_offered_quantity numeric default 1
+  p_offered_quantity numeric default 1,
+  p_requested_item_id uuid default null,
+  p_requested_quantity numeric default 1,
+  p_offered_currency jsonb default '[]'::jsonb,
+  p_requested_currency jsonb default '[]'::jsonb
 )
 returns jsonb
 language plpgsql
@@ -9471,8 +9575,12 @@ declare
   v_sender public.characters%rowtype;
   v_target public.characters%rowtype;
   v_offered_item public.inventory_items%rowtype;
+  v_requested_item public.inventory_items%rowtype;
   v_trade public.trade_offers%rowtype;
   v_offered_quantity numeric := greatest(0.5, coalesce(p_offered_quantity, 1));
+  v_requested_quantity numeric := greatest(0.5, coalesce(p_requested_quantity, 1));
+  v_offered_currency jsonb := case when jsonb_typeof(coalesce(p_offered_currency, '[]'::jsonb)) = 'array' then coalesce(p_offered_currency, '[]'::jsonb) else '[]'::jsonb end;
+  v_requested_currency jsonb := case when jsonb_typeof(coalesce(p_requested_currency, '[]'::jsonb)) = 'array' then coalesce(p_requested_currency, '[]'::jsonb) else '[]'::jsonb end;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -9499,6 +9607,21 @@ begin
     if v_offered_item.quantity < v_offered_quantity then raise exception 'Not enough quantity to offer.'; end if;
   end if;
 
+  if p_requested_item_id is not null then
+    select * into v_requested_item
+    from public.inventory_items
+    where id = p_requested_item_id
+      and character_id = v_target.id;
+
+    if v_requested_item.id is null then raise exception 'Requested item was not found in that inventory.'; end if;
+    if v_requested_item.loadout_slot is not null then raise exception 'The requested item is currently equipped.'; end if;
+    if v_requested_item.is_storage then raise exception 'Storage containers cannot be requested through trades.'; end if;
+    if v_requested_item.quantity < v_requested_quantity then raise exception 'Not enough quantity to request.'; end if;
+  end if;
+
+  perform public.assert_trade_currency_available(v_sender.id, v_offered_currency);
+  perform public.assert_trade_currency_available(v_target.id, v_requested_currency);
+
   insert into public.trade_offers (
     sender_user_id,
     recipient_user_id,
@@ -9509,6 +9632,11 @@ begin
     offered_item_id,
     offered_item_name,
     offered_quantity,
+    requested_item_id,
+    requested_item_name,
+    requested_quantity,
+    offered_currency,
+    requested_currency,
     message
   )
   values (
@@ -9521,6 +9649,11 @@ begin
     v_offered_item.id,
     coalesce(v_offered_item.display_name, v_offered_item.item_name, ''),
     v_offered_quantity,
+    v_requested_item.id,
+    coalesce(v_requested_item.display_name, v_requested_item.item_name, ''),
+    v_requested_quantity,
+    v_offered_currency,
+    v_requested_currency,
     coalesce(p_message, '')
   )
   returning * into v_trade;
@@ -9730,9 +9863,13 @@ declare
   v_profile public.profiles%rowtype;
   v_trade public.trade_offers%rowtype;
   v_source_item public.inventory_items%rowtype;
+  v_requested_item public.inventory_items%rowtype;
   v_target_character public.characters%rowtype;
+  v_sender_character public.characters%rowtype;
   v_target_item public.inventory_items%rowtype;
+  v_sender_target_item public.inventory_items%rowtype;
   v_slot_index int;
+  v_sender_slot_index int;
   v_next_status text := lower(trim(coalesce(p_status, '')));
   v_notify_user uuid;
   v_title text;
@@ -9752,6 +9889,15 @@ begin
     raise exception 'Only the offering player can cancel this trade.';
   end if;
 
+  if v_next_status = 'accepted' then
+    select * into v_sender_character from public.characters where id = v_trade.sender_character_id;
+    select * into v_target_character from public.characters where id = v_trade.target_character_id;
+    if v_sender_character.id is null then raise exception 'Offering character was not found.'; end if;
+    if v_target_character.id is null then raise exception 'Target character was not found.'; end if;
+    perform public.assert_trade_currency_available(v_sender_character.id, v_trade.offered_currency);
+    perform public.assert_trade_currency_available(v_target_character.id, v_trade.requested_currency);
+  end if;
+
   if v_next_status = 'accepted' and v_trade.offered_item_id is not null then
     select * into v_source_item
     from public.inventory_items
@@ -9762,9 +9908,6 @@ begin
     if v_source_item.character_id <> v_trade.sender_character_id then raise exception 'The offered item is no longer held by the offering character.'; end if;
     if v_source_item.loadout_slot is not null then raise exception 'The offered item is currently equipped.'; end if;
     if v_source_item.quantity < v_trade.offered_quantity then raise exception 'The offered item quantity is no longer available.'; end if;
-
-    select * into v_target_character from public.characters where id = v_trade.target_character_id;
-    if v_target_character.id is null then raise exception 'Target character was not found.'; end if;
 
     select * into v_target_item
     from public.inventory_items i
@@ -9857,6 +10000,113 @@ begin
     end if;
   end if;
 
+  if v_next_status = 'accepted' and v_trade.requested_item_id is not null then
+    select * into v_requested_item
+    from public.inventory_items
+    where id = v_trade.requested_item_id
+    for update;
+
+    if v_requested_item.id is null then raise exception 'The requested item is no longer available.'; end if;
+    if v_requested_item.character_id <> v_trade.target_character_id then raise exception 'The requested item is no longer held by the target character.'; end if;
+    if v_requested_item.loadout_slot is not null then raise exception 'The requested item is currently equipped.'; end if;
+    if v_requested_item.quantity < v_trade.requested_quantity then raise exception 'The requested item quantity is no longer available.'; end if;
+
+    select * into v_sender_target_item
+    from public.inventory_items i
+    where i.character_id = v_sender_character.id
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.item_name = v_requested_item.item_name
+      and coalesce(i.display_name, '') = coalesce(v_requested_item.display_name, '')
+      and coalesce(i.item_description, '') = coalesce(v_requested_item.item_description, '')
+      and i.item_type = v_requested_item.item_type
+      and i.rarity = v_requested_item.rarity
+      and coalesce(i.enchantment, '') = coalesce(v_requested_item.enchantment, '')
+      and coalesce(i.rune_name, '') = coalesce(v_requested_item.rune_name, '')
+      and coalesce(i.material, '') = coalesce(v_requested_item.material, '')
+      and coalesce(i.potion_strength, '') = coalesce(v_requested_item.potion_strength, '')
+      and coalesce(i.potion_property, '') = coalesce(v_requested_item.potion_property, '')
+      and coalesce(i.potion_quality, '') = coalesce(v_requested_item.potion_quality, '')
+      and i.enhancement_count = v_requested_item.enhancement_count
+      and i.is_two_handed = v_requested_item.is_two_handed
+      and i.is_accessory = v_requested_item.is_accessory
+      and i.modifiers = v_requested_item.modifiers
+      and i.is_storage = false
+      and v_requested_item.is_storage = false
+      and public.item_catalog_stackable(v_requested_item.item_name, v_requested_item.item_type)
+    order by i.slot_index
+    limit 1;
+
+    if v_sender_target_item.id is not null then
+      update public.inventory_items
+      set quantity = quantity + v_trade.requested_quantity
+      where id = v_sender_target_item.id;
+    else
+      v_sender_slot_index := public.find_first_free_inventory_slot(v_sender_character.id, null::uuid, v_sender_character.inventory_slots);
+      if v_sender_slot_index is null then raise exception 'Offering character inventory is full.'; end if;
+
+      insert into public.inventory_items (
+        character_id,
+        parent_item_id,
+        slot_index,
+        item_name,
+        display_name,
+        item_description,
+        item_type,
+        rarity,
+        quantity,
+        is_accessory,
+        is_storage,
+        storage_capacity,
+        modifiers,
+        enchantment,
+        rune_name,
+        material,
+        enhancement_count,
+        is_two_handed,
+        potion_strength,
+        potion_property,
+        potion_quality
+      )
+      values (
+        v_sender_character.id,
+        null,
+        v_sender_slot_index,
+        v_requested_item.item_name,
+        v_requested_item.display_name,
+        v_requested_item.item_description,
+        v_requested_item.item_type,
+        v_requested_item.rarity,
+        v_trade.requested_quantity,
+        v_requested_item.is_accessory,
+        false,
+        0,
+        v_requested_item.modifiers,
+        v_requested_item.enchantment,
+        v_requested_item.rune_name,
+        v_requested_item.material,
+        v_requested_item.enhancement_count,
+        v_requested_item.is_two_handed,
+        v_requested_item.potion_strength,
+        v_requested_item.potion_property,
+        v_requested_item.potion_quality
+      );
+    end if;
+
+    if v_trade.requested_quantity >= v_requested_item.quantity then
+      delete from public.inventory_items where id = v_requested_item.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - v_trade.requested_quantity
+      where id = v_requested_item.id;
+    end if;
+  end if;
+
+  if v_next_status = 'accepted' then
+    perform public.transfer_trade_currency(v_sender_character.id, v_target_character.id, v_trade.offered_currency);
+    perform public.transfer_trade_currency(v_target_character.id, v_sender_character.id, v_trade.requested_currency);
+  end if;
+
   update public.trade_offers
   set status = v_next_status
   where id = v_trade.id
@@ -9905,7 +10155,9 @@ grant execute on function public.trade_offer_record_to_json(public.trade_offers)
 grant execute on function public.mark_notification_read(text, uuid) to anon, authenticated;
 grant execute on function public.create_campaign_announcement(text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
-grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric) to anon, authenticated;
+grant execute on function public.assert_trade_currency_available(uuid, jsonb) to anon, authenticated;
+grant execute on function public.transfer_trade_currency(uuid, uuid, jsonb) to anon, authenticated;
+grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.gift_inventory_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.update_trade_offer_status(text, uuid, text) to anon, authenticated;
 

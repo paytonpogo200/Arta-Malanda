@@ -5,6 +5,19 @@ function normalizeTradeStatus(value: unknown): TradeStatus {
   return 'pending';
 }
 
+function normalizeTradeCurrency(value: unknown): { unitId: string; amount: number }[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      const source = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      return {
+        unitId: String(source.unitId ?? source.unit_id ?? ''),
+        amount: Math.max(0, Math.floor(Number(source.amount ?? 0)))
+      };
+    })
+    .filter((entry) => entry.unitId && entry.amount > 0);
+}
+
 export function normalizeTradeOffer(value: unknown): TradeOffer {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
@@ -21,6 +34,11 @@ export function normalizeTradeOffer(value: unknown): TradeOffer {
     offeredItemId: source.offeredItemId || source.offered_item_id ? String(source.offeredItemId ?? source.offered_item_id) : null,
     offeredItemName: String(source.offeredItemName ?? source.offered_item_name ?? ''),
     offeredQuantity: Math.max(0.5, Number(source.offeredQuantity ?? source.offered_quantity ?? 1)),
+    requestedItemId: source.requestedItemId || source.requested_item_id ? String(source.requestedItemId ?? source.requested_item_id) : null,
+    requestedItemName: String(source.requestedItemName ?? source.requested_item_name ?? ''),
+    requestedQuantity: Math.max(0.5, Number(source.requestedQuantity ?? source.requested_quantity ?? 1)),
+    offeredCurrency: normalizeTradeCurrency(source.offeredCurrency ?? source.offered_currency),
+    requestedCurrency: normalizeTradeCurrency(source.requestedCurrency ?? source.requested_currency),
     message: String(source.message ?? ''),
     createdAt: source.createdAt || source.created_at ? String(source.createdAt ?? source.created_at) : null,
     updatedAt: source.updatedAt || source.updated_at ? String(source.updatedAt ?? source.updated_at) : null
