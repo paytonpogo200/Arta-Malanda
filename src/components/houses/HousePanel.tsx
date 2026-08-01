@@ -198,6 +198,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       setError('Only animals can be placed in stable slots.');
       return;
     }
+    if (itemDraft.type === 'pet' && (itemModal.parentItemId !== null || itemModal.slot < STABLE_SLOT_OFFSET)) {
+      setError('Animals can only be placed in stable slots.');
+      return;
+    }
     await requestHouseChange(`/api/houses/${ownerUserId}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -214,6 +218,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     if (!itemModal?.item || !itemDraft.name.trim() || !canAdd) return;
     if (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET && itemDraft.type !== 'pet') {
       setError('Only animals can be placed in stable slots.');
+      return;
+    }
+    if (itemDraft.type === 'pet' && (itemModal.parentItemId !== null || itemModal.slot < STABLE_SLOT_OFFSET)) {
+      setError('Animals can only be placed in stable slots.');
       return;
     }
     await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
@@ -247,6 +255,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
     if (!canManage) return;
     const movingHouseItem = items.find((item) => item.id === itemId);
     if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
+    if (movingHouseItem?.type === 'pet' && (parentItemId !== null || slotIndex < STABLE_SLOT_OFFSET)) {
+      setError('Animals can only be placed in stable slots.');
+      return;
+    }
     if (parentItemId === null && slotIndex >= STABLE_SLOT_OFFSET) {
       if (movingHouseItem && movingHouseItem.type !== 'pet') {
         setError('Only animals can be placed in stable slots.');

@@ -58,7 +58,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
-    return NextResponse.json({ item: normalizeInventoryItem(data) });
+    return NextResponse.json(data ? { item: normalizeInventoryItem(data) } : { item: null });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Item could not be added.' }, { status: 500 });
   }

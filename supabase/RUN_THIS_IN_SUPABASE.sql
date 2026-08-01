@@ -2645,6 +2645,24 @@ begin
 
   v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
 
+  if v_item_type = 'pet' then
+    return public.place_pet_item_for_character(
+      v_character.id,
+      v_item_name,
+      null,
+      v_item_description,
+      v_rarity,
+      v_quantity,
+      v_is_accessory,
+      v_modifiers,
+      nullif(trim(coalesce(p_enchantment, '')), ''),
+      null,
+      v_material,
+      v_enhancement_count,
+      v_is_two_handed
+    );
+  end if;
+
   v_make_storage_container := v_item_type = 'storage'::text
     and coalesce(p_is_storage, false)
     and p_parent_item_id is null
@@ -2760,6 +2778,10 @@ begin
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
+  if v_item.item_type = 'pet' and coalesce(v_item.loadout_slot, '') <> 'active-pet' then
+    raise exception 'Pets can only occupy active pet slots or house stable slots.';
+  end if;
+
   if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
     raise exception 'Only pet items can be named.';
   end if;
@@ -2852,6 +2874,10 @@ begin
     v_loadout_slot := nullif(v_patch->>'loadoutSlot', '');
 
     if v_loadout_slot is null then
+      if v_item.item_type = 'pet' then
+        raise exception 'Pets can only occupy active pet slots or house stable slots.';
+      end if;
+
       v_slot_index := public.find_first_free_inventory_slot(v_item.character_id, null, v_character.inventory_slots);
       if v_slot_index is null then raise exception 'No open inventory slot.'; end if;
 
@@ -2902,6 +2928,10 @@ begin
   end if;
 
   if v_patch ? 'slotIndex' or v_patch ? 'parentItemId' then
+    if v_item.item_type = 'pet' then
+      raise exception 'Pets can only occupy active pet slots or house stable slots.';
+    end if;
+
     v_original_parent_item_id := v_item.parent_item_id;
     v_original_slot_index := v_item.slot_index;
     v_parent_item_id := case when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid else v_item.parent_item_id end;
@@ -3725,6 +3755,10 @@ begin
     return p_house.stable_slots;
   end if;
 
+  if public.normalize_item_type(p_item_type) = 'pet' then
+    raise exception 'Animals can only be placed in stable slots.';
+  end if;
+
   v_capacity := public.assert_house_slot_capacity(p_house, p_parent_item_id, p_slot_index);
 
   if p_parent_item_id is null
@@ -3736,6 +3770,210 @@ begin
   return v_capacity;
 end;
 $$;
+
+create or replace function public.place_pet_item_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_slot int;
+  v_pet public.inventory_items%rowtype;
+  v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then
+    raise exception 'Receiving character was not found.';
+  end if;
+
+  if v_quantity <> 1 then
+    raise exception 'Pets must be moved one at a time.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.inventory_items i
+    where i.character_id = v_character.id
+      and i.loadout_slot = 'active-pet'
+  ) then
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      loadout_slot,
+      item_name,
+      display_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_accessory,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      rune_name,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_character.id,
+      null,
+      0,
+      'active-pet',
+      public.normalize_item_name(p_item_name),
+      nullif(left(trim(coalesce(p_display_name, '')), 80), ''),
+      left(trim(coalesce(p_item_description, '')), 1500),
+      'pet',
+      p_rarity,
+      1,
+      coalesce(p_is_accessory, false),
+      false,
+      0,
+      case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+      nullif(trim(coalesce(p_enchantment, '')), ''),
+      nullif(trim(coalesce(p_rune_name, '')), ''),
+      trim(coalesce(p_material, '')),
+      least(3, greatest(0, coalesce(p_enhancement_count, 0))),
+      coalesce(p_is_two_handed, false),
+      null,
+      null,
+      null
+    )
+    returning * into v_pet;
+
+    return public.inventory_item_record_to_json(v_pet);
+  end if;
+
+  if v_character.owner_user_id is null then
+    raise exception 'Active pet slot is occupied and that character has no player stable.';
+  end if;
+
+  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_slot := public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house);
+  if v_slot is null then
+    raise exception 'No open active pet or stable slot.';
+  end if;
+
+  insert into public.house_inventory_items (
+    owner_user_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    display_name,
+    item_description,
+    item_type,
+    rarity,
+    quantity,
+    is_accessory,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    v_character.owner_user_id,
+    null,
+    v_slot,
+    public.normalize_item_name(p_item_name),
+    nullif(left(trim(coalesce(p_display_name, '')), 80), ''),
+    left(trim(coalesce(p_item_description, '')), 1500),
+    'pet',
+    p_rarity,
+    1,
+    coalesce(p_is_accessory, false),
+    false,
+    0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    nullif(trim(coalesce(p_enchantment, '')), ''),
+    nullif(trim(coalesce(p_rune_name, '')), ''),
+    trim(coalesce(p_material, '')),
+    least(3, greatest(0, coalesce(p_enhancement_count, 0))),
+    coalesce(p_is_two_handed, false),
+    null,
+    null,
+    null
+  );
+
+  return null;
+end;
+$$;
+
+do $$
+declare
+  v_pet record;
+begin
+  for v_pet in
+    select i.*
+    from public.inventory_items i
+    where public.normalize_item_type(i.item_type) = 'pet'
+      and coalesce(i.loadout_slot, '') <> 'active-pet'
+  loop
+    begin
+      perform public.place_pet_item_for_character(
+        v_pet.character_id,
+        v_pet.item_name,
+        v_pet.display_name,
+        v_pet.item_description,
+        v_pet.rarity,
+        1,
+        v_pet.is_accessory,
+        v_pet.modifiers,
+        v_pet.enchantment,
+        v_pet.rune_name,
+        v_pet.material,
+        v_pet.enhancement_count,
+        v_pet.is_two_handed
+      );
+
+      delete from public.inventory_items
+      where id = v_pet.id;
+    exception when others then
+      if not exists (
+        select 1
+        from public.inventory_items active_pet
+        where active_pet.character_id = v_pet.character_id
+          and active_pet.loadout_slot = 'active-pet'
+      ) then
+        update public.inventory_items
+        set parent_item_id = null,
+            slot_index = 0,
+            loadout_slot = 'active-pet',
+            item_type = 'pet',
+            quantity = 1
+        where id = v_pet.id;
+      end if;
+    end;
+  end loop;
+end $$;
 
 create or replace function public.assert_house_slot_capacity(
   p_house public.player_houses,
@@ -4074,6 +4312,8 @@ begin
       where id = v_item.id
       returning * into v_item;
     end if;
+
+    perform public.assert_house_item_slot_capacity(v_house, v_item.parent_item_id, v_item.slot_index, v_item.item_type);
   end if;
 
   if v_patch ? 'displayName' and v_item.item_type <> 'pet' then
@@ -4517,6 +4757,70 @@ begin
     raise exception 'Empty this storage item before taking it from the house.';
   end if;
 
+  if public.normalize_item_type(v_house_item.item_type) = 'pet' then
+    if exists (
+      select 1
+      from public.inventory_items i
+      where i.character_id = v_character.id
+        and i.loadout_slot = 'active-pet'
+    ) then
+      raise exception 'Active pet slot is occupied.';
+    end if;
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      loadout_slot,
+      item_name,
+      display_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_accessory,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      rune_name,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_character.id,
+      null,
+      0,
+      'active-pet',
+      v_house_item.item_name,
+      v_house_item.display_name,
+      v_house_item.item_description,
+      'pet',
+      v_house_item.rarity,
+      1,
+      v_house_item.is_accessory,
+      false,
+      0,
+      v_house_item.modifiers,
+      v_house_item.enchantment,
+      v_house_item.rune_name,
+      v_house_item.material,
+      v_house_item.enhancement_count,
+      v_house_item.is_two_handed,
+      null,
+      null,
+      null
+    )
+    returning * into v_item;
+
+    delete from public.house_inventory_items where id = v_house_item.id;
+    return public.get_character_inventory(p_session_token, v_character.id);
+  end if;
+
   select * into v_target
   from public.inventory_items i
   where i.character_id = v_character.id
@@ -4719,6 +5023,9 @@ begin
   if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
     raise exception 'Empty this storage item before moving it into a wagon.';
   end if;
+  if public.normalize_item_type(v_item.item_type) = 'pet' then
+    raise exception 'Animals can only occupy active pet slots or house stable slots.';
+  end if;
 
   select * into v_wagon from public.inventory_items where id = p_wagon_id;
   if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
@@ -4814,6 +5121,30 @@ begin
 
   if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
     raise exception 'Empty this storage item before taking it from the wagon.';
+  end if;
+
+  if public.normalize_item_type(v_item.item_type) = 'pet' then
+    insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
+    values (v_wagon.id, v_actor.id, v_actor.name, 'taken', v_item.item_name, 1);
+
+    perform public.place_pet_item_for_character(
+      v_actor.id,
+      v_item.item_name,
+      v_item.display_name,
+      v_item.item_description,
+      v_item.rarity,
+      1,
+      v_item.is_accessory,
+      v_item.modifiers,
+      v_item.enchantment,
+      v_item.rune_name,
+      v_item.material,
+      v_item.enhancement_count,
+      v_item.is_two_handed
+    );
+
+    delete from public.inventory_items where id = v_item.id;
+    return public.get_character_inventory(p_session_token, p_actor_character_id);
   end if;
 
   v_capacity := public.assert_inventory_slot_capacity(v_actor, p_parent_item_id, coalesce(p_slot_index, 0));
@@ -5101,6 +5432,7 @@ grant execute on function public.drop_house_inventory_item_quantity(text, uuid, 
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
 grant execute on function public.move_house_item_to_inventory(text, uuid, uuid) to anon, authenticated;
+grant execute on function public.place_pet_item_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.get_location_wagon_storage(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_wagon(text, uuid, uuid, uuid, int) to anon, authenticated;
 grant execute on function public.move_wagon_item_to_inventory(text, uuid, uuid, uuid, int) to anon, authenticated;
@@ -6454,6 +6786,10 @@ begin
     end if;
   end if;
 
+  if public.normalize_item_type(v_product.item_type) = 'pet' then
+    v_quantity := 1;
+  end if;
+
   if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
     raise exception 'Not enough stock.';
   end if;
@@ -6462,6 +6798,33 @@ begin
   v_wallet := public.wallet_total_coin(v_character.id);
   if v_wallet < v_cost then
     raise exception 'Not enough currency.';
+  end if;
+
+  if public.normalize_item_type(v_product.item_type) = 'pet' then
+    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.place_pet_item_for_character(
+      v_character.id,
+      v_item_name,
+      null,
+      coalesce(v_product.description, ''),
+      v_product.rarity,
+      1,
+      false,
+      v_modifiers,
+      null,
+      null,
+      v_material,
+      0,
+      v_is_two_handed
+    );
+
+    if v_product.stock_quantity is not null then
+      update public.market_products
+      set stock_quantity = greatest(0, stock_quantity - 1)
+      where id = v_product.id;
+    end if;
+
+    return public.get_discovered_cities(p_session_token);
   end if;
 
   v_inventory_quantity := v_quantity;
@@ -9759,7 +10122,7 @@ begin
 
   if v_source_item.id is null then raise exception 'A trade item is no longer available.'; end if;
   if v_source_item.character_id <> p_from_character_id then raise exception 'A trade item is no longer held by the expected character.'; end if;
-  if v_source_item.loadout_slot is not null then raise exception 'A trade item is currently equipped.'; end if;
+  if v_source_item.loadout_slot is not null and public.normalize_item_type(v_source_item.item_type) <> 'pet' then raise exception 'A trade item is currently equipped.'; end if;
   if v_source_item.is_storage then raise exception 'Storage containers cannot be traded.'; end if;
 
   select * into v_target_character from public.characters where id = p_to_character_id;
@@ -9768,6 +10131,34 @@ begin
   v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
   if v_source_item.quantity < v_quantity then raise exception 'A trade item quantity is no longer available.'; end if;
   v_item_label := v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name);
+
+  if public.normalize_item_type(v_source_item.item_type) = 'pet' then
+    perform public.place_pet_item_for_character(
+      v_target_character.id,
+      v_source_item.item_name,
+      v_source_item.display_name,
+      v_source_item.item_description,
+      v_source_item.rarity,
+      v_quantity,
+      v_source_item.is_accessory,
+      v_source_item.modifiers,
+      v_source_item.enchantment,
+      v_source_item.rune_name,
+      v_source_item.material,
+      v_source_item.enhancement_count,
+      v_source_item.is_two_handed
+    );
+
+    if v_quantity >= v_source_item.quantity then
+      delete from public.inventory_items where id = v_source_item.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - v_quantity
+      where id = v_source_item.id;
+    end if;
+
+    return v_item_label;
+  end if;
 
   select * into v_target_item
   from public.inventory_items i
@@ -9942,7 +10333,7 @@ begin
       and character_id = v_sender.id;
 
     if v_offered_item.id is null then raise exception 'Offered item was not found in that inventory.'; end if;
-    if v_offered_item.loadout_slot is not null then raise exception 'Unequip that item before offering it.'; end if;
+    if v_offered_item.loadout_slot is not null and public.normalize_item_type(v_offered_item.item_type) <> 'pet' then raise exception 'Unequip that item before offering it.'; end if;
     if v_offered_item.is_storage then raise exception 'Storage containers cannot be offered through trades.'; end if;
     v_quantity := public.assert_valid_item_quantity(v_offered_item.item_name, v_offered_item.item_type, v_quantity);
     if v_offered_item.quantity < v_quantity then raise exception 'Not enough quantity to offer.'; end if;
@@ -9972,7 +10363,7 @@ begin
       and character_id = v_target.id;
 
     if v_requested_item.id is null then raise exception 'Requested item was not found in that inventory.'; end if;
-    if v_requested_item.loadout_slot is not null then raise exception 'The requested item is currently equipped.'; end if;
+    if v_requested_item.loadout_slot is not null and public.normalize_item_type(v_requested_item.item_type) <> 'pet' then raise exception 'The requested item is currently equipped.'; end if;
     if v_requested_item.is_storage then raise exception 'Storage containers cannot be requested through trades.'; end if;
     v_quantity := public.assert_valid_item_quantity(v_requested_item.item_name, v_requested_item.item_type, v_quantity);
     if v_requested_item.quantity < v_quantity then raise exception 'Not enough quantity to request.'; end if;
@@ -10106,7 +10497,7 @@ begin
   if v_target_character.id is null then raise exception 'Target character was not found.'; end if;
   if v_target_character.id = v_sender.id then raise exception 'Choose another character to gift this to.'; end if;
   if v_target_character.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
-  if v_source_item.loadout_slot is not null then raise exception 'Unequip that item before gifting it.'; end if;
+  if v_source_item.loadout_slot is not null and public.normalize_item_type(v_source_item.item_type) <> 'pet' then raise exception 'Unequip that item before gifting it.'; end if;
   if v_source_item.is_storage then raise exception 'Storage containers cannot be gifted.'; end if;
 
   if v_sender.owner_user_id is distinct from v_target_character.owner_user_id
@@ -10118,6 +10509,53 @@ begin
 
   v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
   if v_quantity > v_source_item.quantity then raise exception 'Not enough quantity to gift.'; end if;
+
+  if public.normalize_item_type(v_source_item.item_type) = 'pet' then
+    perform public.place_pet_item_for_character(
+      v_target_character.id,
+      v_source_item.item_name,
+      v_source_item.display_name,
+      v_source_item.item_description,
+      v_source_item.rarity,
+      v_quantity,
+      v_source_item.is_accessory,
+      v_source_item.modifiers,
+      v_source_item.enchantment,
+      v_source_item.rune_name,
+      v_source_item.material,
+      v_source_item.enhancement_count,
+      v_source_item.is_two_handed
+    );
+
+    if v_quantity >= v_source_item.quantity then
+      delete from public.inventory_items where id = v_source_item.id;
+    else
+      update public.inventory_items
+      set quantity = quantity - v_quantity
+      where id = v_source_item.id;
+    end if;
+
+    if v_sender.owner_user_id is distinct from v_target_character.owner_user_id then
+      insert into public.campaign_notifications (
+        recipient_user_id,
+        title,
+        body,
+        notice_kind,
+        source_type,
+        location_name
+      )
+      values (
+        v_target_character.owner_user_id,
+        v_sender.name || ' gave an animal to ' || v_target_character.name,
+        coalesce(v_source_item.display_name, v_source_item.item_name) || ' was placed into ' || v_target_character.name || '''s active pet slot or stable.',
+        'notice',
+        'gift',
+        v_target_character.location_name
+      );
+    end if;
+
+    return public.get_character_inventory(p_session_token, v_sender.id);
+  end if;
 
   select * into v_target_item
   from public.inventory_items i
@@ -10309,8 +10747,12 @@ begin
 
     if v_source_item.id is null then raise exception 'The offered item is no longer available.'; end if;
     if v_source_item.character_id <> v_trade.sender_character_id then raise exception 'The offered item is no longer held by the offering character.'; end if;
-    if v_source_item.loadout_slot is not null then raise exception 'The offered item is currently equipped.'; end if;
+    if v_source_item.loadout_slot is not null and public.normalize_item_type(v_source_item.item_type) <> 'pet' then raise exception 'The offered item is currently equipped.'; end if;
     if v_source_item.quantity < v_trade.offered_quantity then raise exception 'The offered item quantity is no longer available.'; end if;
+
+    if public.normalize_item_type(v_source_item.item_type) = 'pet' then
+      perform public.transfer_trade_inventory_item(v_source_item.id, v_trade.sender_character_id, v_trade.target_character_id, v_trade.offered_quantity);
+    else
 
     select * into v_target_item
     from public.inventory_items i
@@ -10399,6 +10841,7 @@ begin
       set quantity = quantity - v_trade.offered_quantity
       where id = v_source_item.id;
     end if;
+    end if;
   end if;
 
   if v_next_status = 'accepted' and v_trade.requested_item_id is not null and jsonb_array_length(coalesce(v_trade.requested_items, '[]'::jsonb)) = 0 then
@@ -10409,8 +10852,12 @@ begin
 
     if v_requested_item.id is null then raise exception 'The requested item is no longer available.'; end if;
     if v_requested_item.character_id <> v_trade.target_character_id then raise exception 'The requested item is no longer held by the target character.'; end if;
-    if v_requested_item.loadout_slot is not null then raise exception 'The requested item is currently equipped.'; end if;
+    if v_requested_item.loadout_slot is not null and public.normalize_item_type(v_requested_item.item_type) <> 'pet' then raise exception 'The requested item is currently equipped.'; end if;
     if v_requested_item.quantity < v_trade.requested_quantity then raise exception 'The requested item quantity is no longer available.'; end if;
+
+    if public.normalize_item_type(v_requested_item.item_type) = 'pet' then
+      perform public.transfer_trade_inventory_item(v_requested_item.id, v_trade.target_character_id, v_trade.sender_character_id, v_trade.requested_quantity);
+    else
 
     select * into v_sender_target_item
     from public.inventory_items i
@@ -10498,6 +10945,7 @@ begin
       update public.inventory_items
       set quantity = quantity - v_trade.requested_quantity
       where id = v_requested_item.id;
+    end if;
     end if;
   end if;
 
@@ -11448,6 +11896,32 @@ begin
       'unitKey', v_currency_unit.unit_key,
       'unitName', v_currency_unit.name,
       'amount', v_quantity
+    );
+  end if;
+
+  if v_item_type = 'pet' then
+    return coalesce(
+      public.place_pet_item_for_character(
+        v_character.id,
+        v_item_name,
+        null,
+        coalesce(v_loot.notes, ''),
+        v_rarity,
+        v_quantity,
+        false,
+        v_modifiers,
+        null,
+        null,
+        v_material,
+        0,
+        v_is_two_handed
+      ),
+      jsonb_build_object(
+        'petPlaced', 'stable',
+        'characterId', v_character.id,
+        'name', v_item_name,
+        'quantity', 1
+      )
     );
   end if;
 
