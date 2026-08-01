@@ -1595,6 +1595,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
   const [catalystKey, setCatalystKey] = useState('');
   const [result, setResult] = useState<BrewResult | null>(null);
   const [brewConfirmOpen, setBrewConfirmOpen] = useState(false);
+  const [brewResultOpen, setBrewResultOpen] = useState(false);
 
   const productGroups = groupProducts(vendor.products);
 
@@ -1633,6 +1634,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     setCatalystKey('');
     setResult(null);
     setBrewConfirmOpen(false);
+    setBrewResultOpen(false);
   }, [shopper?.id, strength, propertyKey]);
 
   const selectedDefinition = brewery.definitions.find((definition) => definition.propertyKey === propertyKey) ?? brewery.definitions[0] ?? null;
@@ -1718,7 +1720,9 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? 'Brew failed.');
-      setResult(normalizeBrewResult(body.result));
+      const normalizedResult = normalizeBrewResult(body.result);
+      setResult(normalizedResult);
+      setBrewResultOpen(Boolean(normalizedResult));
       setBrewery(normalizeBreweryState(body.brewery));
       onCitiesChanged(normalizeCitiesPayload(body.cities));
       setPropertySelections({});
@@ -1852,6 +1856,38 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
               <Button variant="secondary" onClick={() => setBrewConfirmOpen(false)}>Back</Button>
               <Button variant="primary" disabled={!canBrew} onClick={runBrew}>Confirm Brew</Button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {brewResultOpen && result && (
+        <Modal title={result.success ? 'Brew Successful' : 'Brew Failed'} onClose={() => setBrewResultOpen(false)}>
+          <div className="grid gap-4">
+            <div className={`rounded-2xl border p-4 ${result.success ? 'border-[var(--teal)]/45 bg-[var(--teal)]/10' : 'border-[var(--red)]/45 bg-[var(--red)]/10'}`}>
+              <p className="text-lg font-black">{result.success ? 'The potion held together.' : 'The brew collapsed.'}</p>
+              <p className="mt-2 text-sm font-bold text-[var(--muted)]">
+                d20 {result.d20} + Alchemy {result.alchemyBonus} + Catalyst {result.catalystBonus} = {result.total}
+              </p>
+            </div>
+            {result.item && (
+              <CraftPreviewItem
+                featured
+                item={{
+                  key: result.item.id,
+                  name: result.item.name,
+                  type: result.item.type,
+                  rarity: result.item.rarity,
+                  quantity: result.item.quantity,
+                  note: result.quality ? `Quality: ${result.quality}` : potionEffectText(result.item) || 'Added to inventory.'
+                }}
+              />
+            )}
+            {!result.item && (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">
+                Ingredients were consumed and no potion was created.
+              </div>
+            )}
+            <Button variant="primary" onClick={() => setBrewResultOpen(false)}>Done</Button>
           </div>
         </Modal>
       )}

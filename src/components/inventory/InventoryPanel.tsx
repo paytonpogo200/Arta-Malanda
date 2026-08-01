@@ -54,9 +54,7 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
 
 function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
   if (!a.stackable || !b.stackable || a.type === 'pet' || b.type === 'pet' || a.isStorage || b.isStorage) return false;
-  return a.name === b.name
-    && (a.displayName ?? '') === (b.displayName ?? '')
-    && (a.itemDescription ?? '') === (b.itemDescription ?? '')
+  return normalizedItemName(a.name) === normalizedItemName(b.name)
     && a.type === b.type
     && a.rarity === b.rarity
     && (a.enchantment ?? '') === (b.enchantment ?? '')

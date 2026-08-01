@@ -2495,10 +2495,8 @@ returns boolean
 language sql
 stable
 as $$
-  select a.item_name = b.item_name
-    and coalesce(a.display_name, '') = coalesce(b.display_name, '')
-    and coalesce(a.item_description, '') = coalesce(b.item_description, '')
-    and a.item_type = b.item_type
+  select lower(public.normalize_item_name(a.item_name)) = lower(public.normalize_item_name(b.item_name))
+    and public.normalize_item_type(a.item_type) = public.normalize_item_type(b.item_type)
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
     and coalesce(a.rune_name, '') = coalesce(b.rune_name, '')
@@ -2683,11 +2681,10 @@ begin
   limit 1;
 
   if v_target.id is not null then
-    if v_target.item_name = v_item_name
+    if lower(public.normalize_item_name(v_target.item_name)) = lower(public.normalize_item_name(v_item_name))
       and coalesce(v_target.display_name, '') = ''
-      and v_target.item_type = v_item_type
+      and public.normalize_item_type(v_target.item_type) = public.normalize_item_type(v_item_type)
       and v_target.rarity = v_rarity
-      and coalesce(v_target.item_description, '') = coalesce(v_item_description, '')
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
@@ -2749,6 +2746,7 @@ declare
   v_original_parent_item_id uuid;
   v_original_slot_index int;
   v_fallback_slot_index int;
+  v_temporary_slot_index int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -2932,8 +2930,14 @@ begin
       return public.inventory_item_record_to_json(v_target);
     end if;
 
+    select coalesce(min(i.slot_index), 0) - 1 into v_temporary_slot_index
+    from public.inventory_items i
+    where i.character_id = v_item.character_id
+      and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+      and i.loadout_slot is null;
+
     update public.inventory_items
-    set parent_item_id = v_parent_item_id, slot_index = -1000000
+    set parent_item_id = v_parent_item_id, slot_index = v_temporary_slot_index
     where id = v_target.id;
 
       if v_item.loadout_slot is null then
@@ -3237,7 +3241,7 @@ create table if not exists public.house_inventory_items (
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   quantity numeric(12,1) not null default 1 check (quantity > 0),
-  slot_index int not null default 0 check (slot_index >= 0),
+  slot_index int not null default 0 check (slot_index >= -1000000),
   is_accessory boolean not null default false,
   is_storage boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
@@ -3266,7 +3270,7 @@ alter table public.house_inventory_items
   drop constraint if exists house_inventory_items_slot_index_check;
 
 alter table public.house_inventory_items
-  add constraint house_inventory_items_slot_index_check check (slot_index >= -1);
+  add constraint house_inventory_items_slot_index_check check (slot_index >= -1000000);
 
 alter table public.house_inventory_items
   add column if not exists display_name text,
@@ -3594,10 +3598,8 @@ returns boolean
 language sql
 stable
 as $$
-  select a.item_name = b.item_name
-    and coalesce(a.display_name, '') = coalesce(b.display_name, '')
-    and coalesce(a.item_description, '') = coalesce(b.item_description, '')
-    and a.item_type = b.item_type
+  select lower(public.normalize_item_name(a.item_name)) = lower(public.normalize_item_name(b.item_name))
+    and public.normalize_item_type(a.item_type) = public.normalize_item_type(b.item_type)
     and a.rarity = b.rarity
     and coalesce(a.enchantment, '') = coalesce(b.enchantment, '')
     and coalesce(a.rune_name, '') = coalesce(b.rune_name, '')
@@ -3915,11 +3917,10 @@ begin
   limit 1;
 
   if v_target.id is not null then
-    if v_target.item_name = v_item_name
+    if lower(public.normalize_item_name(v_target.item_name)) = lower(public.normalize_item_name(v_item_name))
       and coalesce(v_target.display_name, '') = ''
-      and v_target.item_type = v_item_type
+      and public.normalize_item_type(v_target.item_type) = public.normalize_item_type(v_item_type)
       and v_target.rarity = v_rarity
-      and coalesce(v_target.item_description, '') = v_item_description
       and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
       and coalesce(v_target.rune_name, '') = ''
       and coalesce(v_target.material, '') = coalesce(v_material, '')
@@ -4013,6 +4014,7 @@ declare
   v_slot_index int;
   v_original_parent_item_id uuid;
   v_original_slot_index int;
+  v_temporary_slot_index int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -4129,8 +4131,14 @@ begin
         return public.house_item_record_to_json(v_target);
       end if;
 
+      select coalesce(min(i.slot_index), 0) - 1 into v_temporary_slot_index
+      from public.house_inventory_items i
+      where i.owner_user_id = v_item.owner_user_id
+        and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid);
+
       update public.house_inventory_items
-      set slot_index = -1
+      set parent_item_id = v_parent_item_id,
+          slot_index = v_temporary_slot_index
       where id = v_target.id;
 
       update public.house_inventory_items
@@ -4242,10 +4250,8 @@ begin
   select * into v_target
   from public.house_inventory_items h
   where h.owner_user_id = v_character.owner_user_id
-    and h.item_name = v_item.item_name
-    and coalesce(h.display_name, '') = coalesce(v_item.display_name, '')
-    and coalesce(h.item_description, '') = coalesce(v_item.item_description, '')
-    and h.item_type = v_item.item_type
+    and lower(public.normalize_item_name(h.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+    and public.normalize_item_type(h.item_type) = public.normalize_item_type(v_item.item_type)
     and h.rarity = v_item.rarity
     and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
     and coalesce(h.rune_name, '') = coalesce(v_item.rune_name, '')
@@ -4388,10 +4394,8 @@ begin
   limit 1;
 
   if v_target.id is not null then
-    if v_target.item_name = v_item.item_name
-      and coalesce(v_target.display_name, '') = coalesce(v_item.display_name, '')
-      and coalesce(v_target.item_description, '') = coalesce(v_item.item_description, '')
-      and v_target.item_type = v_item.item_type
+    if lower(public.normalize_item_name(v_target.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+      and public.normalize_item_type(v_target.item_type) = public.normalize_item_type(v_item.item_type)
       and v_target.rarity = v_item.rarity
       and coalesce(v_target.enchantment, '') = coalesce(v_item.enchantment, '')
       and coalesce(v_target.rune_name, '') = coalesce(v_item.rune_name, '')
@@ -4518,10 +4522,8 @@ begin
   where i.character_id = v_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_house_item.item_name
-    and coalesce(i.display_name, '') = coalesce(v_house_item.display_name, '')
-    and coalesce(i.item_description, '') = coalesce(v_house_item.item_description, '')
-    and i.item_type = v_house_item.item_type
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_house_item.item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_house_item.item_type)
     and i.rarity = v_house_item.rarity
     and coalesce(i.enchantment, '') = coalesce(v_house_item.enchantment, '')
     and coalesce(i.rune_name, '') = coalesce(v_house_item.rune_name, '')
@@ -6500,8 +6502,8 @@ begin
   where i.character_id = v_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_item_name
-    and i.item_type = v_product.item_type
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_product.item_type)
     and i.rarity = v_product.rarity
     and coalesce(i.enchantment, '') = ''
     and coalesce(i.material, '') = coalesce(v_material, '')
@@ -9850,10 +9852,8 @@ begin
   where i.character_id = v_target_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_source_item.item_name
-    and coalesce(i.display_name, '') = coalesce(v_source_item.display_name, '')
-    and coalesce(i.item_description, '') = coalesce(v_source_item.item_description, '')
-    and i.item_type = v_source_item.item_type
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_source_item.item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_source_item.item_type)
     and i.rarity = v_source_item.rarity
     and coalesce(i.enchantment, '') = coalesce(v_source_item.enchantment, '')
     and coalesce(i.rune_name, '') = coalesce(v_source_item.rune_name, '')
@@ -10024,10 +10024,8 @@ begin
     where i.character_id = v_target_character.id
       and i.parent_item_id is null
       and i.loadout_slot is null
-      and i.item_name = v_source_item.item_name
-      and coalesce(i.display_name, '') = coalesce(v_source_item.display_name, '')
-      and coalesce(i.item_description, '') = coalesce(v_source_item.item_description, '')
-      and i.item_type = v_source_item.item_type
+      and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_source_item.item_name))
+      and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_source_item.item_type)
       and i.rarity = v_source_item.rarity
       and coalesce(i.enchantment, '') = coalesce(v_source_item.enchantment, '')
       and coalesce(i.rune_name, '') = coalesce(v_source_item.rune_name, '')
@@ -10123,13 +10121,11 @@ begin
 
     select * into v_sender_target_item
     from public.inventory_items i
-    where i.character_id = v_sender_character.id
-      and i.parent_item_id is null
-      and i.loadout_slot is null
-      and i.item_name = v_requested_item.item_name
-      and coalesce(i.display_name, '') = coalesce(v_requested_item.display_name, '')
-      and coalesce(i.item_description, '') = coalesce(v_requested_item.item_description, '')
-      and i.item_type = v_requested_item.item_type
+      where i.character_id = v_sender_character.id
+        and i.parent_item_id is null
+        and i.loadout_slot is null
+        and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_requested_item.item_name))
+        and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_requested_item.item_type)
       and i.rarity = v_requested_item.rarity
       and coalesce(i.enchantment, '') = coalesce(v_requested_item.enchantment, '')
       and coalesce(i.rune_name, '') = coalesce(v_requested_item.rune_name, '')
@@ -11214,8 +11210,8 @@ begin
   where i.character_id = v_character.id
     and i.parent_item_id is null
     and i.loadout_slot is null
-    and i.item_name = v_item_name
-    and i.item_type = v_item_type
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_item_type)
     and i.rarity = v_rarity
     and i.is_storage = false
     and coalesce(i.enchantment, '') = ''
