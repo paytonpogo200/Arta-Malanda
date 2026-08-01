@@ -4730,10 +4730,13 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_house public.player_houses%rowtype;
+  v_target_house public.player_houses%rowtype;
   v_house_item public.house_inventory_items%rowtype;
+  v_active_pet public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
   v_slot_index int;
+  v_active_pet_stable_slot int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -4758,13 +4761,97 @@ begin
   end if;
 
   if public.normalize_item_type(v_house_item.item_type) = 'pet' then
-    if exists (
-      select 1
-      from public.inventory_items i
-      where i.character_id = v_character.id
-        and i.loadout_slot = 'active-pet'
-    ) then
-      raise exception 'Active pet slot is occupied.';
+    select * into v_active_pet
+    from public.inventory_items i
+    where i.character_id = v_character.id
+      and i.loadout_slot = 'active-pet'
+    limit 1;
+
+    if v_active_pet.id is not null then
+      if v_character.owner_user_id is null then
+        raise exception 'Active pet slot is occupied and that character has no player stable.';
+      end if;
+
+      v_target_house := public.ensure_player_house(v_character.owner_user_id);
+      v_active_pet_stable_slot := case
+        when v_house.owner_user_id = v_character.owner_user_id
+          and v_house_item.parent_item_id is null
+          and v_house_item.slot_index >= public.house_stable_slot_offset()
+          and v_house_item.slot_index < public.house_stable_slot_offset() + v_target_house.stable_slots
+          then v_house_item.slot_index
+        else public.find_first_free_house_stable_slot(v_character.owner_user_id, v_target_house)
+      end;
+
+      if v_active_pet_stable_slot is null then
+        raise exception 'Active pet slot is occupied and no stable slot is open.';
+      end if;
+
+      if v_house.owner_user_id <> v_character.owner_user_id
+        and exists (
+          select 1
+          from public.house_inventory_items h
+          where h.owner_user_id = v_character.owner_user_id
+            and h.parent_item_id is null
+            and h.slot_index = v_active_pet_stable_slot
+        )
+      then
+        raise exception 'Active pet slot is occupied and no stable slot is open.';
+      end if;
+
+      if v_house.owner_user_id = v_character.owner_user_id
+        and v_active_pet_stable_slot = v_house_item.slot_index
+      then
+        delete from public.house_inventory_items where id = v_house_item.id;
+      end if;
+
+      insert into public.house_inventory_items (
+        owner_user_id,
+        parent_item_id,
+        slot_index,
+        item_name,
+        display_name,
+        item_description,
+        item_type,
+        rarity,
+        quantity,
+        is_accessory,
+        is_storage,
+        storage_capacity,
+        modifiers,
+        enchantment,
+        rune_name,
+        material,
+        enhancement_count,
+        is_two_handed,
+        potion_strength,
+        potion_property,
+        potion_quality
+      )
+      values (
+        v_character.owner_user_id,
+        null,
+        v_active_pet_stable_slot,
+        v_active_pet.item_name,
+        v_active_pet.display_name,
+        v_active_pet.item_description,
+        'pet',
+        v_active_pet.rarity,
+        1,
+        v_active_pet.is_accessory,
+        false,
+        0,
+        v_active_pet.modifiers,
+        v_active_pet.enchantment,
+        v_active_pet.rune_name,
+        v_active_pet.material,
+        v_active_pet.enhancement_count,
+        v_active_pet.is_two_handed,
+        null,
+        null,
+        null
+      );
+
+      delete from public.inventory_items where id = v_active_pet.id;
     end if;
 
     insert into public.inventory_items (

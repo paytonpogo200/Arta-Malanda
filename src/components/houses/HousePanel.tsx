@@ -14,11 +14,12 @@ import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/fea
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
-import type { CampaignProperty, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
+import type { CampaignProperty, Character, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
 
 type HousePanelProps = {
   ownerUserId: string | null;
   caretakerCharacterId: string;
+  characters?: Character[];
   canManage: boolean;
   canAdd: boolean;
   onCharacterInventoryChanged?: () => void;
@@ -48,7 +49,7 @@ const EMPTY_PROPERTY: PropertyDraft = {
 
 const STABLE_SLOT_OFFSET = 45;
 
-export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
+export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [], canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
   const [inventorySlots, setInventorySlots] = useState(45);
@@ -67,6 +68,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const [spells, setSpells] = useState<Spell[]>([]);
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
+  const [takeTargetCharacterId, setTakeTargetCharacterId] = useState(caretakerCharacterId);
   useDragAutoScroll();
 
   const stableItems = useMemo(() => items.filter((item) => (
@@ -80,6 +82,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const stableItemBySlot = useMemo(() => new Map(stableItems.map((item) => [item.slotIndex, item])), [stableItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const takeTargetCharacters = useMemo(() => {
+    const assigned = characters
+      .filter((entry) => entry.ownerUserId === ownerUserId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (assigned.some((entry) => entry.id === caretakerCharacterId)) return assigned;
+    const caretaker = characters.find((entry) => entry.id === caretakerCharacterId);
+    return caretaker ? [caretaker, ...assigned] : assigned;
+  }, [caretakerCharacterId, characters, ownerUserId]);
 
   const loadHouse = useCallback(async (showLoading = true) => {
     if (!ownerUserId) return;
@@ -107,6 +117,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
   useEffect(() => {
     void loadHouse();
   }, [loadHouse]);
+
+  useEffect(() => {
+    setTakeTargetCharacterId((current) => {
+      if (takeTargetCharacters.some((entry) => entry.id === current)) return current;
+      if (takeTargetCharacters.some((entry) => entry.id === caretakerCharacterId)) return caretakerCharacterId;
+      return takeTargetCharacters[0]?.id ?? caretakerCharacterId;
+    });
+  }, [caretakerCharacterId, takeTargetCharacters]);
 
   useLiveRefresh(['house', 'inventory', 'wagon'], () => loadHouse(false), { enabled: Boolean(ownerUserId) });
 
@@ -175,8 +193,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
       setItemModal(null);
       setPropertyModal(null);
       await loadHouse(false);
+      return true;
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'House action failed.');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -306,12 +326,17 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
 
   async function takeItem(item: InventoryItem) {
     if (!canManage) return;
-    await requestHouseChange(`/api/houses/items/${item.id}/take`, {
+    const characterId = takeTargetCharacterId || caretakerCharacterId;
+    if (!characterId) {
+      setError('Choose a character to receive this item.');
+      return;
+    }
+    const moved = await requestHouseChange(`/api/houses/items/${item.id}/take`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ characterId: caretakerCharacterId })
+      body: JSON.stringify({ characterId })
     });
-    onCharacterInventoryChanged?.();
+    if (moved) onCharacterInventoryChanged?.();
   }
 
   async function saveProperty(event: FormEvent) {
@@ -514,7 +539,19 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, canManage, canAd
               </div>
               {canManage && (
                 <div className="grid gap-2">
-                  <Button variant="teal" onClick={() => takeItem(itemModal.item!)} disabled={saving}>Take to inventory</Button>
+                  <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/10 p-3">
+                    {takeTargetCharacters.length > 1 && (
+                      <label>
+                        <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Take to character</span>
+                        <SelectField value={takeTargetCharacterId} onChange={(event) => setTakeTargetCharacterId(event.target.value)}>
+                          {takeTargetCharacters.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                        </SelectField>
+                      </label>
+                    )}
+                    <Button variant="teal" onClick={() => takeItem(itemModal.item!)} disabled={saving || !takeTargetCharacterId}>
+                      {itemModal.item.type === 'pet' ? 'Move to active pet' : 'Take to inventory'}
+                    </Button>
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <NumberInput min={quantityStepForItem(itemModal.item)} step={quantityStepForItem(itemModal.item)} max={itemModal.item.quantity} value={dropQuantity} onValueChange={setDropQuantity} />
                     <Button variant="danger" onClick={() => dropItem(itemModal.item!)} disabled={saving}>Drop</Button>

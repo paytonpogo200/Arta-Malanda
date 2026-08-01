@@ -284,6 +284,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           <HousePanel
             ownerUserId={character.ownerUserId}
             caretakerCharacterId={character.id}
+            characters={characters}
             canManage={isDm || owned}
             canAdd={isDm}
             onCharacterInventoryChanged={() => setInventoryRefreshSignal((value) => value + 1)}
