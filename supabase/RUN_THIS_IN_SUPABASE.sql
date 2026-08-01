@@ -5801,6 +5801,8 @@ where city_key = 'calostrynn'
   and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-city-market', 'calostrynn-library', 'calostrynn-spells', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
+-- Market seed rows keep product metadata current, but existing live stock and DM visibility
+-- are intentionally preserved so purchases and shop edits do not get reset by rerunning SQL.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
 delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
 with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
@@ -5813,8 +5815,8 @@ join (values
   ('blacksmith-iron-scale', 'Iron Scale', 'Iron: neutral weapon material; +1 Vitality when used for shields; -1 Agility when used for armor.', 'material', 'Common', 400, 40, 'Material Scales', 1, 'iron-scale', true, 20),
   ('blacksmith-steel-scale', 'Steel Scale', 'Steel: +1 Strength when used for weapons; +1 Vitality when used for shields or armor.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 1, 'steel-scale', true, 30),
   ('blacksmith-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 1, 'mythril-scale', true, 40),
-  ('blacksmith-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Intelligence for weapons; +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 10, 'Material Scales', 1, 'vaylium-scale', true, 50),
-  ('blacksmith-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 2, 'Material Scales', 1, 'dragonscale-scale', true, 60),
+  ('blacksmith-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Intelligence for weapons; +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 0, 'Material Scales', 1, 'vaylium-scale', false, 50),
+  ('blacksmith-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 0, 'Material Scales', 1, 'dragonscale-scale', false, 60),
   ('blacksmith-ember-rune', 'Ember Rune', 'Can be used for Ember enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'ember-rune', false, 70),
   ('blacksmith-frost-rune', 'Frost Rune', 'Can be used for Frost enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'frost-rune', false, 80),
   ('blacksmith-lightning-rune', 'Lightning Rune', 'Can be used for Lightning enchantments.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'lightning-rune', false, 90),
@@ -5830,11 +5832,9 @@ set vendor_id = excluded.vendor_id,
     item_type = excluded.item_type,
     rarity = excluded.rarity,
     price_coin = excluded.price_coin,
-    stock_quantity = excluded.stock_quantity,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
-    is_available = excluded.is_available,
     display_order = excluded.display_order,
     updated_at = now();
 
@@ -5847,8 +5847,8 @@ join (values
   ('armory-iron-scale', 'Iron Scale', 'Iron: -1 Agility when used for armor.', 'material', 'Common', 400, 40, 'Material Scales', 1, 'iron-scale', true, 20),
   ('armory-steel-scale', 'Steel Scale', 'Steel: +1 Vitality when used for shields or armor.', 'material', 'Uncommon', 1000, 30, 'Material Scales', 1, 'steel-scale', true, 30),
   ('armory-mythril-scale', 'Mythril Scale', 'Mythril: eligible for enhancement or enchantment when crafted into weapon, shield, or armor.', 'material', 'Rare', 6500, 12, 'Material Scales', 1, 'mythril-scale', true, 40),
-  ('armory-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 10, 'Material Scales', 1, 'vaylium-scale', true, 50),
-  ('armory-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 2, 'Material Scales', 1, 'dragonscale-scale', true, 60)
+  ('armory-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 0, 'Material Scales', 1, 'vaylium-scale', false, 50),
+  ('armory-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 0, 'Material Scales', 1, 'dragonscale-scale', false, 60)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-armory'
 on conflict (product_key) do update
 set vendor_id = excluded.vendor_id,
@@ -5857,13 +5857,34 @@ set vendor_id = excluded.vendor_id,
     item_type = excluded.item_type,
     rarity = excluded.rarity,
     price_coin = excluded.price_coin,
-    stock_quantity = excluded.stock_quantity,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
-    is_available = excluded.is_available,
     display_order = excluded.display_order,
     updated_at = now();
+
+create table if not exists public.app_data_repairs (
+  repair_key text primary key,
+  applied_at timestamptz not null default now()
+);
+
+with repair as (
+  insert into public.app_data_repairs (repair_key)
+  values ('forge-scale-live-stock-preservation-2026-08-01')
+  on conflict (repair_key) do nothing
+  returning repair_key
+)
+update public.market_products
+set stock_quantity = 0,
+    is_available = false,
+    updated_at = now()
+where exists (select 1 from repair)
+  and product_key in ('blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale')
+  and is_available
+  and (
+    (product_key in ('blacksmith-vaylium-scale', 'armory-vaylium-scale') and stock_quantity = 10)
+    or (product_key in ('blacksmith-dragonscale-scale', 'armory-dragonscale-scale') and stock_quantity = 2)
+  );
 
 -- Replace Brewery placeholder wares with source-backed finished potions and brewing supplies.
 with brewery_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-brewery')
@@ -5953,11 +5974,9 @@ set vendor_id = excluded.vendor_id,
     item_type = excluded.item_type,
     rarity = excluded.rarity,
     price_coin = excluded.price_coin,
-    stock_quantity = excluded.stock_quantity,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
-    is_available = excluded.is_available,
     display_order = excluded.display_order,
     updated_at = now();
 
@@ -6043,11 +6062,9 @@ set vendor_id = excluded.vendor_id,
     item_type = excluded.item_type,
     rarity = excluded.rarity,
     price_coin = excluded.price_coin,
-    stock_quantity = excluded.stock_quantity,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
-    is_available = excluded.is_available,
     display_order = excluded.display_order,
     updated_at = now();
 
@@ -8548,11 +8565,9 @@ set vendor_id = excluded.vendor_id,
     item_type = excluded.item_type,
     rarity = excluded.rarity,
     price_coin = excluded.price_coin,
-    stock_quantity = excluded.stock_quantity,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
-    is_available = excluded.is_available,
     display_order = excluded.display_order,
     updated_at = now();
 
