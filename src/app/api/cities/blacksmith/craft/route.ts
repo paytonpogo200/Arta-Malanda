@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
     if (!token) return NextResponse.json({ error: 'Log in before using the blacksmith.' }, { status: 401 });
 
     const body = await request.json().catch(() => ({}));
+    const requestedRuneQuantity = Number(body.runeQuantity);
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
@@ -20,7 +21,8 @@ export async function POST(request: NextRequest) {
       p_material_product_id: body.materialProductId ? String(body.materialProductId) : null,
       p_target_item_id: body.targetItemId ? String(body.targetItemId) : null,
       p_rune_product_id: body.runeProductId ? String(body.runeProductId) : null,
-      p_modifier_key: body.modifierKey ? String(body.modifierKey) : null
+      p_modifier_key: body.modifierKey ? String(body.modifierKey) : null,
+      p_rune_quantity: Number.isFinite(requestedRuneQuantity) ? Math.max(1, Math.floor(requestedRuneQuantity)) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

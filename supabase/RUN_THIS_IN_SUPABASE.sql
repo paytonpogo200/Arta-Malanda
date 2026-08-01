@@ -7139,38 +7139,70 @@ begin
 end;
 $$;
 
-create or replace function public.enchantment_spell_for_rune(p_rune_name text)
+drop function if exists public.enchantment_spell_for_rune(text);
+drop function if exists public.enchantment_spell_for_rune(text, int, int);
+
+create or replace function public.enchantment_spell_for_rune(
+  p_rune_name text,
+  p_rune_count int default 5,
+  p_minimum_runes int default 5
+)
 returns text
 language plpgsql
-stable
+volatile
 set search_path = public
 as $$
 declare
-  v_key text := lower(trim(replace(coalesce(p_rune_name, ''), ' Rune', '')));
+  v_key text := lower(trim(regexp_replace(coalesce(p_rune_name, ''), '\s+rune$', '', 'i')));
+  v_spell_type text;
   v_options text[];
   v_roll int;
   v_weight int;
   v_total int;
   v_index int;
+  v_count int;
+  v_extra_runes int;
 begin
-  v_options := case v_key
-    when 'ember' then array['Emberbolt', 'Scorch', 'Flame Ring', 'Solar Flare', 'Radiance', 'Fireball', 'Sear']
-    when 'frost' then array['Frostbite', 'Ice Shard', 'Hypothermia', 'Ice Wall', 'Ice Cube', 'Christmas Tree', 'Absolute Zero']
-    when 'lightning' then array['Sparkshot', 'Static Charge', 'Arc Shot', 'Defibrillate', 'Electric Explosion', 'Thunder Crash', 'Lightning Chain']
-    when 'earth' then array['Stone Fist', 'Quicksand', 'Earthen Spikes', 'Earthquake']
-    when 'wind' then array['Wind Cutter', 'Mighty Gust', 'Wind Be With Me', 'Gale Burst']
+  v_key := replace(v_key, '-', ' ');
+  v_spell_type := case v_key
+    when 'ember' then 'Ember'
+    when 'frost' then 'Frost'
+    when 'lightning' then 'Lightning'
+    when 'earth' then 'Earth'
+    when 'wind' then 'Wind'
+    when 'energy' then 'Energy'
+    when 'defensive support' then 'Defensive Support'
+    when 'offensive support' then 'Offensive Support'
+    when 'enhancement' then 'Enhancement'
+    when 'utility' then 'Utility'
     else null
   end;
 
-  if v_options is null or array_length(v_options, 1) is null then
+  if v_spell_type is null then
     raise exception 'That rune cannot be used for enchantment yet.';
   end if;
 
-  v_total := (array_length(v_options, 1) * (array_length(v_options, 1) + 1)) / 2;
+  select array_agg(name order by display_order, name)
+  into v_options
+  from public.spell_catalog
+  where spell_type = v_spell_type
+    and is_available;
+
+  v_count := coalesce(array_length(v_options, 1), 0);
+  if v_count = 0 then
+    raise exception 'No % spells are available for enchantment.', v_spell_type;
+  end if;
+
+  v_extra_runes := greatest(0, coalesce(p_rune_count, p_minimum_runes, 1) - greatest(1, coalesce(p_minimum_runes, 1)));
+  v_total := 0;
+  for v_index in 1..v_count loop
+    v_total := v_total + least(v_count, v_count - v_index + 1 + v_extra_runes);
+  end loop;
+
   v_roll := floor(random() * v_total)::int + 1;
 
-  for v_index in 1..array_length(v_options, 1) loop
-    v_weight := array_length(v_options, 1) - v_index + 1;
+  for v_index in 1..v_count loop
+    v_weight := least(v_count, v_count - v_index + 1 + v_extra_runes);
     if v_roll <= v_weight then
       return v_options[v_index];
     end if;
@@ -7181,6 +7213,8 @@ begin
 end;
 $$;
 
+drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text);
+
 create or replace function public.run_blacksmith_action(
   p_session_token text,
   p_character_id uuid,
@@ -7189,7 +7223,8 @@ create or replace function public.run_blacksmith_action(
   p_material_product_id uuid default null,
   p_target_item_id uuid default null,
   p_rune_product_id uuid default null,
-  p_modifier_key text default null
+  p_modifier_key text default null,
+  p_rune_quantity int default null
 )
 returns jsonb
 language plpgsql
@@ -7217,6 +7252,7 @@ declare
   v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
   v_catalyst text;
   v_required_runes int;
+  v_rune_quantity int;
   v_spell_name text;
   v_city public.cities%rowtype;
 begin
@@ -7372,15 +7408,16 @@ begin
     if v_target.enchantment is not null then raise exception 'That weapon is already enchanted.'; end if;
     if v_target.enhancement_count > 0 then raise exception 'An enhanced weapon cannot be enchanted.'; end if;
     v_required_runes := case when lower(v_character.class_key) = 'talismanist' or lower(v_character.class_name) = 'talismanist' then 3 else 5 end;
-    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < v_required_runes then raise exception 'Not enough rune stock.'; end if;
+    v_rune_quantity := greatest(v_required_runes, coalesce(p_rune_quantity, v_required_runes));
+    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < v_rune_quantity then raise exception 'Not enough rune stock.'; end if;
 
-    v_spell_name := public.enchantment_spell_for_rune(v_rune_product.item_name);
-    v_cost := 1000 + (v_rune_product.price_coin * v_required_runes);
+    v_spell_name := public.enchantment_spell_for_rune(v_rune_product.item_name, v_rune_quantity, v_required_runes);
+    v_cost := 1000 + (v_rune_product.price_coin * v_rune_quantity);
     v_wallet := public.wallet_total_coin(v_character.id);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
     perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
     if v_rune_product.stock_quantity is not null then
-      update public.market_products set stock_quantity = greatest(0, stock_quantity - v_required_runes) where id = v_rune_product.id;
+      update public.market_products set stock_quantity = greatest(0, stock_quantity - v_rune_quantity) where id = v_rune_product.id;
     end if;
 
     update public.inventory_items
@@ -8161,7 +8198,7 @@ grant execute on function public.purchase_market_product(text, uuid, uuid, numer
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
-grant execute on function public.enchantment_spell_for_rune(text) to anon, authenticated;
+grant execute on function public.enchantment_spell_for_rune(text, int, int) to anon, authenticated;
 grant execute on function public.assert_character_can_use_vendor(public.characters, text) to anon, authenticated;
 grant execute on function public.crafting_house_is_accessible(uuid, text) to anon, authenticated;
 grant execute on function public.house_item_quantity_by_name(uuid, text, text) to anon, authenticated;
@@ -8169,7 +8206,7 @@ grant execute on function public.accessible_item_quantity_by_name(uuid, text, te
 grant execute on function public.consume_crafting_item_by_name(uuid, text, numeric, text) to anon, authenticated;
 grant execute on function public.update_player_house(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.consume_forge_materials(uuid, uuid, numeric, int, text, text) to anon, authenticated;
-grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int) to anon, authenticated;
 grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.crafting_selection_item(uuid, text, uuid, text) to anon, authenticated;
 grant execute on function public.consume_crafting_selection(uuid, text, uuid, numeric, text) to anon, authenticated;

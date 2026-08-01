@@ -550,6 +550,21 @@ function eligibleEnchantmentTargets(items: InventoryItem[]) {
   });
 }
 
+function enchantmentMinimumRunes(shopper: Character | null) {
+  return isTalismanistClass(shopper) ? 3 : 5;
+}
+
+function normalizedRuneQuantity(mode: 'enhance' | 'enchant', shopper: Character | null, quantity: number) {
+  if (mode !== 'enchant') return 1;
+  return Math.max(enchantmentMinimumRunes(shopper), Math.floor(quantity || enchantmentMinimumRunes(shopper)));
+}
+
+function cappedRuneQuantity(mode: 'enhance' | 'enchant', shopper: Character | null, quantity: number, rune: MarketProduct | null) {
+  const normalized = normalizedRuneQuantity(mode, shopper, quantity);
+  if (mode !== 'enchant') return normalized;
+  return Math.max(enchantmentMinimumRunes(shopper), Math.min(normalized, rune?.stockQuantity ?? normalized));
+}
+
 export function CitiesPanel({ profile }: { profile: Profile }) {
   const [payload, setPayload] = useState<CitiesPayload>(EMPTY_PAYLOAD);
   const [selectedCityKey, setSelectedCityKey] = useState('');
@@ -568,6 +583,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [craftWallet, setCraftWallet] = useState<WalletBalance[]>([]);
   const [craftMaterialProductId, setCraftMaterialProductId] = useState('');
   const [craftRuneProductId, setCraftRuneProductId] = useState('');
+  const [craftRuneQuantity, setCraftRuneQuantity] = useState(5);
   const [craftTargetItemId, setCraftTargetItemId] = useState('');
   const [craftModifier, setCraftModifier] = useState('strength');
   const [craftRefreshSignal, setCraftRefreshSignal] = useState(0);
@@ -598,8 +614,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       return plan.canCover && walletCoin >= totalCost;
     }
 
-    const requiredRunes = craftModal.mode === 'enchant' && isTalismanistClass(selectedShopper) ? 3 : craftModal.mode === 'enchant' ? 5 : 1;
     const rune = forgeRunes.find((product) => product.id === craftRuneProductId);
+    const requiredRunes = cappedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity, rune ?? null);
     if (!rune || !hasUsableStock(rune, requiredRunes)) return false;
     const targets = craftModal.mode === 'enhance'
       ? craftModal.service === 'armory' ? eligibleArmoryEnhancementTargets(craftInventory) : eligibleBlacksmithEnhancementTargets(craftInventory)
@@ -608,7 +624,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
     const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
     return walletCoin >= laborCost + rune.priceCoin * requiredRunes;
-  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftMaterials, craftModal, craftModifier, craftRuneProductId, craftTargetItemId, craftWallet, forgeRunes, selectedShopper, selectedVendor]);
+  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftMaterials, craftModal, craftModifier, craftRuneProductId, craftRuneQuantity, craftTargetItemId, craftWallet, forgeRunes, selectedShopper, selectedVendor]);
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === selectedCity?.key)
@@ -803,7 +819,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             characterId: selectedShopper.id,
             targetItemId: craftTargetItemId || null,
             runeProductId: craftRuneProductId || null,
-            modifierKey: craftModifier
+            modifierKey: craftModifier,
+            runeQuantity: craftModal.mode === 'enchant'
+              ? cappedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity, forgeRunes.find((product) => product.id === craftRuneProductId) ?? null)
+              : null
           };
       const endpoint = craftModal.mode !== 'enchant' && craftModal.service === 'armory'
         ? '/api/cities/armory/craft'
@@ -817,6 +836,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       setCraftConfirmOpen(false);
       setCraftMaterialProductId('');
       setCraftRuneProductId('');
+      setCraftRuneQuantity(enchantmentMinimumRunes(selectedShopper));
       setCraftTargetItemId('');
       setCraftModifier('strength');
     } catch (craftError) {
@@ -858,11 +878,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   function openCraftModal(next: CraftModalState) {
     const materials = next.service === 'armory' ? armoryMaterials : blacksmithMaterials;
+    const minimumRunes = next.mode === 'enchant' ? enchantmentMinimumRunes(selectedShopper) : 1;
     setCraftModal(next);
     setCraftMaterialProductId(next.mode === 'craft'
       ? (next.recipe.materialName ? materialProductByName(materials, next.recipe.materialName)?.id : materials[0]?.id) ?? ''
       : '');
-    setCraftRuneProductId(forgeRunes.find((product) => hasUsableStock(product))?.id ?? '');
+    setCraftRuneProductId(forgeRunes.find((product) => hasUsableStock(product, minimumRunes))?.id ?? '');
+    setCraftRuneQuantity(minimumRunes);
     setCraftTargetItemId('');
     setCraftModifier('strength');
     setCraftConfirmOpen(false);
@@ -904,8 +926,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
     const target = craftInventory.find((item) => item.id === craftTargetItemId) ?? null;
     const rune = forgeRunes.find((product) => product.id === craftRuneProductId) ?? null;
-    const requiredRunes = craftModal.mode === 'enchant' && isTalismanistClass(selectedShopper) ? 3 : craftModal.mode === 'enchant' ? 5 : 1;
     const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
+    const requiredRunes = cappedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity, rune);
     return {
       title: craftModal.mode === 'enhance' ? `Enhance ${target?.displayName || target?.name || 'item'}` : `Enchant ${target?.displayName || target?.name || 'item'}`,
       inputs: [
@@ -1184,6 +1206,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 setTargetItemId={setCraftTargetItemId}
                 runeProductId={craftRuneProductId}
                 setRuneProductId={setCraftRuneProductId}
+                runeQuantity={craftRuneQuantity}
+                setRuneQuantity={setCraftRuneQuantity}
                 modifier={craftModifier}
                 setModifier={setCraftModifier}
               />
@@ -2096,7 +2120,7 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
   );
 }
 
-function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, targetItemId, setTargetItemId, runeProductId, setRuneProductId, modifier, setModifier }: {
+function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, targetItemId, setTargetItemId, runeProductId, setRuneProductId, runeQuantity, setRuneQuantity, modifier, setModifier }: {
   service: ForgeService;
   mode: 'enhance' | 'enchant';
   shopper: Character | null;
@@ -2107,17 +2131,22 @@ function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, 
   setTargetItemId: (value: string) => void;
   runeProductId: string;
   setRuneProductId: (value: string) => void;
+  runeQuantity: number;
+  setRuneQuantity: (value: number) => void;
   modifier: string;
   setModifier: (value: string) => void;
 }) {
-  const requiredRunes = mode === 'enchant' && isTalismanistClass(shopper) ? 3 : mode === 'enchant' ? 5 : 1;
-  const usableRunes = runes.filter((product) => hasUsableStock(product, requiredRunes));
+  const minimumRunes = mode === 'enchant' ? enchantmentMinimumRunes(shopper) : 1;
+  const requiredRunes = normalizedRuneQuantity(mode, shopper, runeQuantity);
+  const usableRunes = runes.filter((product) => hasUsableStock(product, minimumRunes));
   const targets = mode === 'enhance'
     ? service === 'armory' ? eligibleArmoryEnhancementTargets(inventory) : eligibleBlacksmithEnhancementTargets(inventory)
     : eligibleEnchantmentTargets(inventory);
   const rune = runes.find((product) => product.id === runeProductId) ?? null;
+  const maxRunes = rune?.stockQuantity ?? 99;
+  const cappedRunes = mode === 'enchant' ? Math.min(requiredRunes, maxRunes) : 1;
   const laborCost = mode === 'enhance' && service === 'armory' && isArmorCladClass(shopper) ? 0 : 1000;
-  const totalCost = laborCost + (rune?.priceCoin ?? 0) * requiredRunes;
+  const totalCost = laborCost + (rune?.priceCoin ?? 0) * cappedRunes;
   return (
     <div className="grid gap-3">
       <label>
@@ -2134,6 +2163,19 @@ function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, 
           {usableRunes.map((product) => <option key={product.id} value={product.id}>{product.name} · {formatCoinValue(product.priceCoin)} · stock {product.stockQuantity ?? '∞'}</option>)}
         </SelectField>
       </label>
+      {mode === 'enchant' && (
+        <label>
+          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Runes committed</span>
+          <NumberInput
+            min={minimumRunes}
+            max={maxRunes}
+            step={1}
+            value={cappedRunes}
+            emptyFallback={minimumRunes}
+            onValueChange={(value) => setRuneQuantity(Math.max(minimumRunes, Math.min(maxRunes, Math.floor(value))))}
+          />
+        </label>
+      )}
       {mode === 'enhance' && (
         <label>
           <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Enhancement</span>
@@ -2145,7 +2187,7 @@ function MythrilServiceForm({ service, mode, shopper, inventory, runes, wallet, 
       <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm text-[var(--muted)]">
         {mode === 'enhance'
           ? `Costs ${formatCoinValue(laborCost)}, 1 rune, and 20 matching ingredients. Max 3 enhancements per item.`
-          : `Costs 10 Callor and ${requiredRunes} matching runes. Only unenhanced Mythril weapons can be enchanted.`}
+          : `Costs 10 Callor and ${cappedRunes} matching runes. Only unenhanced Mythril weapons can be enchanted.`}
       </div>
       {rune && <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCoinValue(totalCost)}</p></SoftCard>}
       {walletTotalCoin(wallet) < totalCost && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Not enough currency.</div>}
