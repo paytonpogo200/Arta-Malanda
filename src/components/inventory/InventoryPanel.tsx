@@ -581,7 +581,11 @@ export function InventoryPanel({
         });
       }
     }
-    await patchItemState(itemId, { parentItemId, slotIndex: slot, loadoutSlot: null }, optimisticItems);
+    await patchItemState(
+      itemId,
+      movingItem?.loadoutSlot ? { parentItemId, slotIndex: slot, loadoutSlot: null } : { parentItemId, slotIndex: slot },
+      optimisticItems
+    );
     window.setTimeout(() => setTarget(null), 120);
   }
 

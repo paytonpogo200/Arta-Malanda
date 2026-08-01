@@ -2848,7 +2848,7 @@ begin
     returning * into v_item;
   end if;
 
-  if v_patch ? 'loadoutSlot' then
+  if v_patch ? 'loadoutSlot' and not (v_patch ? 'slotIndex' or v_patch ? 'parentItemId') then
     v_loadout_slot := nullif(v_patch->>'loadoutSlot', '');
 
     if v_loadout_slot is null then
