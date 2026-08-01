@@ -4503,7 +4503,7 @@ begin
   v_house := public.assert_house_access(v_profile, v_house_item.owner_user_id, false);
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
 
-  if v_character.owner_user_id is distinct from v_house.owner_user_id then
+  if v_profile.role <> 'dm' and v_character.owner_user_id is distinct from v_house.owner_user_id then
     raise exception 'That character cannot pull from this house.';
   end if;
 
@@ -7572,6 +7572,7 @@ as $$
     and i.character_id = p_character_id
     and i.loadout_slot is null
     and i.is_storage = false
+    and public.normalize_item_type(i.item_type) <> 'potion'
     and (
       i.parent_item_id is null
       or exists (
@@ -7597,6 +7598,7 @@ as $$
     and ch.id = p_character_id
     and h.id = p_item_id
     and h.is_storage = false
+    and public.normalize_item_type(h.item_type) <> 'potion'
 $$;
 
 create or replace function public.consume_crafting_selection(
@@ -7626,7 +7628,8 @@ begin
     where id = p_item_id
       and character_id = p_character_id
       and loadout_slot is null
-      and is_storage = false;
+      and is_storage = false
+      and public.normalize_item_type(item_type) <> 'potion';
 
     if v_inventory_item.id is null then raise exception 'Selected inventory ingredient was not found.'; end if;
     if v_inventory_item.quantity < v_needed then raise exception 'Not enough %.', v_inventory_item.item_name; end if;
@@ -7649,7 +7652,8 @@ begin
     join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
     where c.id = p_character_id
       and h.id = p_item_id
-      and h.is_storage = false;
+      and h.is_storage = false
+      and public.normalize_item_type(h.item_type) <> 'potion';
 
     if v_house_item.id is null then raise exception 'Selected house ingredient was not found.'; end if;
     if v_house_item.quantity < v_needed then raise exception 'Not enough % in the house.', v_house_item.item_name; end if;
@@ -7691,6 +7695,10 @@ as $$
       and i.loadout_slot is null
       and i.is_storage = false
       and (
+        public.normalize_item_type(i.item_type) <> 'potion'
+        or lower(public.normalize_item_name(i.item_name)) = 'arcane nector'
+      )
+      and (
         i.parent_item_id is null
         or exists (
           select 1
@@ -7716,6 +7724,10 @@ as $$
     where ch.id = p_character_id
       and public.crafting_house_is_accessible(p_character_id, p_station_city_name)
       and h.is_storage = false
+      and (
+        public.normalize_item_type(h.item_type) <> 'potion'
+        or lower(public.normalize_item_name(h.item_name)) = 'arcane nector'
+      )
   ),
   useful as (
     select *

@@ -52,6 +52,25 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
 }
 
+function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
+  if (!a.stackable || !b.stackable || a.type === 'pet' || b.type === 'pet' || a.isStorage || b.isStorage) return false;
+  return a.name === b.name
+    && (a.displayName ?? '') === (b.displayName ?? '')
+    && (a.itemDescription ?? '') === (b.itemDescription ?? '')
+    && a.type === b.type
+    && a.rarity === b.rarity
+    && (a.enchantment ?? '') === (b.enchantment ?? '')
+    && (a.runeName ?? '') === (b.runeName ?? '')
+    && (a.material ?? '') === (b.material ?? '')
+    && (a.potionStrength ?? '') === (b.potionStrength ?? '')
+    && (a.potionProperty ?? '') === (b.potionProperty ?? '')
+    && (a.potionQuality ?? '') === (b.potionQuality ?? '')
+    && a.enhancementCount === b.enhancementCount
+    && a.isTwoHanded === b.isTwoHanded
+    && a.isAccessory === b.isAccessory
+    && JSON.stringify(a.modifiers) === JSON.stringify(b.modifiers);
+}
+
 function inferStorageCapacity(itemName: string) {
   const normalized = itemName.toLowerCase();
   if (normalized.includes('bag of holding')) return 100;
@@ -539,24 +558,30 @@ export function InventoryPanel({
     const targetItem = items.find((item) => item.id !== itemId && sameContainer(item, parentItemId) && item.slotIndex === slot);
     let optimisticItems = items;
     if (movingItem) {
-      const targetCapacity = parentItemId
-        ? items.find((item) => item.id === parentItemId)?.storageCapacity ?? 0
-        : character.inventorySlots;
-      const targetFallbackSlot = targetItem && movingItem.loadoutSlot
-        ? firstOpenSlot(items, parentItemId, targetCapacity)
-        : null;
-      optimisticItems = items.map((item) => {
-        if (item.id === movingItem.id) return { ...item, parentItemId, slotIndex: slot, loadoutSlot: null };
-        if (targetItem && item.id === targetItem.id) {
-          return {
-            ...item,
-            parentItemId: movingItem.loadoutSlot ? parentItemId : movingItem.parentItemId,
-            slotIndex: movingItem.loadoutSlot ? targetFallbackSlot ?? item.slotIndex : movingItem.slotIndex,
-            loadoutSlot: null
-          };
-        }
-        return item;
-      });
+      if (targetItem && inventoryItemsCanStack(targetItem, movingItem)) {
+        optimisticItems = items
+          .filter((item) => item.id !== movingItem.id)
+          .map((item) => item.id === targetItem.id ? { ...item, quantity: item.quantity + movingItem.quantity } : item);
+      } else {
+        const targetCapacity = parentItemId
+          ? items.find((item) => item.id === parentItemId)?.storageCapacity ?? 0
+          : character.inventorySlots;
+        const targetFallbackSlot = targetItem && movingItem.loadoutSlot
+          ? firstOpenSlot(items, parentItemId, targetCapacity)
+          : null;
+        optimisticItems = items.map((item) => {
+          if (item.id === movingItem.id) return { ...item, parentItemId, slotIndex: slot, loadoutSlot: null };
+          if (targetItem && item.id === targetItem.id) {
+            return {
+              ...item,
+              parentItemId: movingItem.loadoutSlot ? parentItemId : movingItem.parentItemId,
+              slotIndex: movingItem.loadoutSlot ? targetFallbackSlot ?? item.slotIndex : movingItem.slotIndex,
+              loadoutSlot: null
+            };
+          }
+          return item;
+        });
+      }
     }
     await patchItemState(itemId, { parentItemId, slotIndex: slot, loadoutSlot: null }, optimisticItems);
     window.setTimeout(() => setTarget(null), 120);

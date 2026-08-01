@@ -444,7 +444,6 @@ export function SpellsPanel({
               <h3 className="mt-1 text-2xl font-black">{inspectedSpell.name}</h3>
               <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{inspectedSpell.school} - {spellManaText(inspectedSpell)} - {inspectedSpell.rarity}</p>
             </div>
-            {inspectedSpell.summary && <p className="text-sm font-bold leading-6 text-[var(--paper)]">{inspectedSpell.summary}</p>}
             <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
               {inspectedSpell.details || inspectedSpell.summary || 'No spell description entered yet.'}
             </div>

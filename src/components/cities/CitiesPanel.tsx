@@ -496,6 +496,19 @@ function selectedTotal(selections: Record<string, number>) {
   return Object.values(selections).reduce((total, quantity) => total + Math.max(0, quantity || 0), 0);
 }
 
+function selectedBreweryItems(items: BreweryAvailableItem[], selections: Record<string, number>) {
+  return items
+    .map((item) => ({ item, quantity: Math.min(item.quantity, Math.max(0, selections[breweryItemKey(item)] || 0)) }))
+    .filter((entry) => entry.quantity > 0);
+}
+
+function breweryPotionRarity(strength: string): ItemRarity {
+  if (strength === 'Greatest') return 'Legendary';
+  if (strength === 'Greater') return 'Rare';
+  if (strength === 'Lesser') return 'Uncommon';
+  return 'Common';
+}
+
 function selectionsToPayload(selections: Record<string, number>) {
   return Object.entries(selections)
     .map(([key, quantity]) => {
@@ -1581,6 +1594,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
   const [stabilizerSelections, setStabilizerSelections] = useState<Record<string, number>>({});
   const [catalystKey, setCatalystKey] = useState('');
   const [result, setResult] = useState<BrewResult | null>(null);
+  const [brewConfirmOpen, setBrewConfirmOpen] = useState(false);
 
   const productGroups = groupProducts(vendor.products);
 
@@ -1618,13 +1632,18 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     setStabilizerSelections({});
     setCatalystKey('');
     setResult(null);
+    setBrewConfirmOpen(false);
   }, [shopper?.id, strength, propertyKey]);
 
   const selectedDefinition = brewery.definitions.find((definition) => definition.propertyKey === propertyKey) ?? brewery.definitions[0] ?? null;
   const requirements = breweryRequirements(strength);
-  const propertyItems = brewery.availableItems.filter((item) => selectedDefinition && item.properties.includes(selectedDefinition.propertyKey));
-  const stabilizerItems = brewery.availableItems.filter((item) => item.properties.includes('Stabilizer'));
-  const catalystItems = brewery.availableItems.filter((item) => item.properties.includes('Catalyst'));
+  const ingredientEligibleItems = brewery.availableItems.filter((item) => item.type !== 'potion');
+  const propertyItems = ingredientEligibleItems.filter((item) => selectedDefinition && item.properties.includes(selectedDefinition.propertyKey));
+  const stabilizerItems = ingredientEligibleItems.filter((item) => item.properties.includes('Stabilizer'));
+  const catalystItems = ingredientEligibleItems.filter((item) => item.properties.includes('Catalyst'));
+  const selectedPropertyItems = selectedBreweryItems(propertyItems, propertySelections);
+  const selectedStabilizerItems = selectedBreweryItems(stabilizerItems, stabilizerSelections);
+  const selectedCatalystItem = catalystKey ? catalystItems.find((item) => breweryItemKey(item) === catalystKey) ?? null : null;
   const arcaneNectorCount = brewery.availableItems
     .filter((item) => item.name.toLowerCase() === 'arcane nector')
     .reduce((total, item) => total + item.quantity, 0);
@@ -1636,6 +1655,48 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     && propertyTotal >= requirements.property
     && stabilizerTotal >= requirements.stabilizer
     && !brewSaving;
+  const brewPreviewInputs = [
+    ...selectedPropertyItems.map(({ item, quantity }) => ({
+      key: `property:${breweryItemKey(item)}`,
+      name: item.name,
+      type: item.type,
+      rarity: item.rarity,
+      quantity,
+      note: `${sourceLabel(item.source)} - ${selectedDefinition?.potionName ?? 'Potion'} property`
+    })),
+    ...selectedStabilizerItems.map(({ item, quantity }) => ({
+      key: `stabilizer:${breweryItemKey(item)}`,
+      name: item.name,
+      type: item.type,
+      rarity: item.rarity,
+      quantity,
+      note: `${sourceLabel(item.source)} - stabilizer`
+    })),
+    {
+      key: 'arcane-nector',
+      name: 'Arcane Nector',
+      type: 'potion' as ItemType,
+      rarity: 'Common' as ItemRarity,
+      quantity: 1,
+      note: 'Required brewing base'
+    },
+    ...(selectedCatalystItem ? [{
+      key: `catalyst:${breweryItemKey(selectedCatalystItem)}`,
+      name: selectedCatalystItem.name,
+      type: selectedCatalystItem.type,
+      rarity: selectedCatalystItem.rarity,
+      quantity: 1,
+      note: `${sourceLabel(selectedCatalystItem.source)} - catalyst +${selectedCatalystItem.catalystBonus}`
+    }] : [])
+  ];
+  const brewPreviewOutput = selectedDefinition ? {
+    key: 'brewed-potion',
+    name: `${strength} ${selectedDefinition.potionName} Potion`,
+    type: 'potion' as ItemType,
+    rarity: breweryPotionRarity(strength),
+    quantity: 1,
+    note: selectedDefinition.description || selectedDefinition.automatedEffect || 'Quality is rolled when brewing completes.'
+  } : null;
 
   async function runBrew() {
     if (!shopper || !selectedDefinition) return;
@@ -1663,6 +1724,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
       setPropertySelections({});
       setStabilizerSelections({});
       setCatalystKey('');
+      setBrewConfirmOpen(false);
     } catch (brewError) {
       setError(brewError instanceof Error ? brewError.message : 'Brew failed.');
     } finally {
@@ -1757,12 +1819,42 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
               </div>
             )}
 
-            <Button variant="primary" disabled={!canBrew} onClick={runBrew}>
-              <Sparkles className="mr-2 inline" size={15} /> Brew potion
+            <Button variant="primary" disabled={!canBrew} onClick={() => setBrewConfirmOpen(true)}>
+              <Sparkles className="mr-2 inline" size={15} /> Brew
             </Button>
           </div>
         )}
       </Card>
+
+      {brewConfirmOpen && brewPreviewOutput && (
+        <Modal title="Confirm Brew" onClose={() => setBrewConfirmOpen(false)}>
+          <div className="grid gap-4">
+            <div className="rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
+              <p className="font-black">{strength} {selectedDefinition?.potionName} Potion</p>
+              <p className="mt-1 text-xs font-bold text-[var(--muted)]">
+                Uses {propertyTotal}/{requirements.property} matching ingredients and {stabilizerTotal}/{requirements.stabilizer} stabilizers.
+              </p>
+            </div>
+            <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+              <div className="grid gap-2">
+                <p className="eyebrow">Consuming</p>
+                {brewPreviewInputs.map((item) => <CraftPreviewItem key={item.key} item={item} />)}
+              </div>
+              <div className="grid place-items-center text-[var(--brass)]">
+                <ArrowRightCraft />
+              </div>
+              <div className="grid gap-2">
+                <p className="eyebrow">Brewing</p>
+                <CraftPreviewItem item={brewPreviewOutput} featured />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => setBrewConfirmOpen(false)}>Back</Button>
+              <Button variant="primary" disabled={!canBrew} onClick={runBrew}>Confirm Brew</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
