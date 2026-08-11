@@ -1523,7 +1523,7 @@ export function InventoryPanel({
                     {modal.item.isAccessory && (
                       <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Accessory</p>
                     )}
-                    {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">Material: {modal.item.material}</p>}
+                    {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">{modal.item.material}</p>}
                     {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
                     {modal.item.runeName && <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#56e2c2]">Rune: {modal.item.runeName}</p>}
                     {modal.item.enchantment && (
