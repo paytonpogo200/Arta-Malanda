@@ -39,16 +39,22 @@ export function potionStrengthFromName(name: string) {
 
 export function potionPropertyFromName(name: string) {
   const clean = normalizedName(name)
+    .replace(/\s+\([^)]*\)\s*$/, '')
     .replace(/^(lesser|greater|greatest)\s+/, '')
     .replace(/\s+potion$/, '');
   return PROPERTY_ALIASES[clean] ?? '';
+}
+
+export function potionQualityFromName(name: string) {
+  const match = name.match(/\(([^)]*)\)\s*$/);
+  return match?.[1]?.trim() ?? '';
 }
 
 export function potionEffectText(item: PotionLike) {
   if (item.type !== 'potion') return '';
   const strength = 'potionStrength' in item ? item.potionStrength || potionStrengthFromName(item.name) : potionStrengthFromName(item.name);
   const property = 'potionProperty' in item ? item.potionProperty || potionPropertyFromName(item.name) : potionPropertyFromName(item.name);
-  const quality = 'potionQuality' in item ? item.potionQuality : '';
+  const quality = 'potionQuality' in item ? item.potionQuality || potionQualityFromName(item.name) : potionQualityFromName(item.name);
   if (!strength || !property) return '';
 
   const ranked: Record<string, Record<string, string>> = {

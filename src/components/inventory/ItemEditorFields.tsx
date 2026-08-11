@@ -198,6 +198,12 @@ export function ItemEditorFields({
   return (
     <>
       <TextField placeholder="Item name" value={draft.name} onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} />
+      <TextAreaField
+        rows={3}
+        value={draft.itemDescription}
+        onChange={(event) => onDraftChange({ ...draft, itemDescription: event.target.value })}
+        placeholder="Inspection description"
+      />
       <div className="grid gap-2 sm:grid-cols-3">
         <SelectField value={draft.type} onChange={(event) => onDraftChange({ ...draft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
         <SelectField value={draft.rarity} onChange={(event) => onDraftChange({ ...draft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
@@ -214,12 +220,6 @@ export function ItemEditorFields({
         <details className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">
           <summary className="cursor-pointer list-none p-3 font-black text-[var(--brass)]">Legendary weapon details</summary>
           <div className="grid gap-3 border-t border-[var(--line)] p-3">
-            <TextAreaField
-              rows={4}
-              value={draft.itemDescription}
-              onChange={(event) => onDraftChange({ ...draft, itemDescription: event.target.value })}
-              placeholder="Inspection description for this legendary weapon"
-            />
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {EDITABLE_MODIFIER_FIELDS.map((field) => (
                 <label key={field.key}>

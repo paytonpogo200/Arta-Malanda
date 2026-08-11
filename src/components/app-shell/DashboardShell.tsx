@@ -1,14 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
-import { BookOpen, Compass, Landmark, LogOut, PawPrint, ScrollText, Settings2, Shield, Swords } from 'lucide-react';
+import { BookOpen, Compass, Landmark, LogOut, Map, PawPrint, ScrollText, Settings2, Shield, Swords } from 'lucide-react';
 import { NotificationHub } from '@/components/app-shell/NotificationHub';
 import type { DashboardStatePayload } from '@/features/dashboard/state';
 import { normalizeDashboardState } from '@/features/dashboard/state';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { Profile } from '@/lib/types';
 
-export type DashboardTabId = 'battle' | 'characters' | 'cities' | 'bestiary' | 'exploration' | 'scroll' | 'assets';
+export type DashboardTabId = 'battle' | 'characters' | 'cities' | 'bestiary' | 'world-map' | 'exploration' | 'scroll' | 'assets';
 
 type DashboardTab = {
   id: DashboardTabId;
@@ -29,6 +29,7 @@ const PLAYER_TABS: DashboardTab[] = [
   { id: 'characters', label: 'Characters', icon: BookOpen },
   { id: 'cities', label: 'Discovered Cities', icon: Landmark },
   { id: 'bestiary', label: 'Bestiary', icon: PawPrint },
+  { id: 'world-map', label: 'World Map', icon: Map },
   { id: 'scroll', label: 'Personal Scroll', icon: ScrollText }
 ];
 
@@ -37,6 +38,7 @@ const DM_TABS: DashboardTab[] = [
   { id: 'characters', label: 'Characters', icon: BookOpen },
   { id: 'cities', label: 'Discovered Cities', icon: Landmark },
   { id: 'bestiary', label: 'Bestiary', icon: PawPrint },
+  { id: 'world-map', label: 'World Map', icon: Map },
   { id: 'exploration', label: 'Exploration', icon: Compass, dmOnly: true },
   { id: 'scroll', label: 'Personal Scroll', icon: ScrollText },
   { id: 'assets', label: 'Update Assets', icon: Settings2, dmOnly: true }
@@ -141,7 +143,7 @@ export function DashboardShell({ profile, activeTab, onTabChange, children }: Da
 
       {navVisible && (
         <nav className="campaign-nav fixed bottom-0 left-0 right-0 z-50 border-t px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pt-3">
-          <div className={isDm ? 'thin-scrollbar mx-auto flex max-w-6xl gap-1 overflow-x-auto sm:grid sm:grid-cols-7' : 'mx-auto grid max-w-4xl grid-cols-5 gap-1'}>
+          <div className={isDm ? 'thin-scrollbar mx-auto flex max-w-6xl gap-1 overflow-x-auto sm:grid sm:grid-cols-8' : 'mx-auto grid max-w-4xl grid-cols-6 gap-1'}>
             {tabs.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}

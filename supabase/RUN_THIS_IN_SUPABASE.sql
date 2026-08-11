@@ -2087,6 +2087,23 @@ as $$
   end
 $$;
 
+create or replace function public.potion_rarity_for(
+  p_strength text,
+  p_property_key text default null
+)
+returns public.item_rarity
+language sql
+immutable
+as $$
+  select case
+    when lower(trim(coalesce(p_property_key, ''))) = 'luck'
+      and lower(trim(coalesce(p_strength, ''))) in ('lesser', 'greater') then 'Legendary'::public.item_rarity
+    when lower(trim(coalesce(p_property_key, ''))) = 'luck'
+      and lower(trim(coalesce(p_strength, ''))) = 'greatest' then 'Mythical'::public.item_rarity
+    else public.potion_rarity_for_strength(p_strength)
+  end
+$$;
+
 create or replace function public.format_potion_item_name(
   p_strength text,
   p_property_key text,
@@ -2157,7 +2174,7 @@ begin
       perform public.upsert_item_catalog_entry(
         public.format_potion_item_name(v_strength.strength_name, v_definition.property_key, null),
         'potion',
-        public.potion_rarity_for_strength(v_strength.strength_name)::text,
+        public.potion_rarity_for(v_strength.strength_name, v_definition.property_key)::text,
         'Potion',
         array[v_definition.property_key]::text[],
         1,
@@ -2639,7 +2656,7 @@ begin
 
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
-      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+      v_rarity := public.potion_rarity_for(v_potion_strength, v_potion_property);
     end if;
   end if;
 
@@ -2839,7 +2856,7 @@ begin
     then
       update public.inventory_items
       set item_name = public.format_potion_item_name(v_item.potion_strength, v_item.potion_property, v_item.potion_quality),
-          rarity = public.potion_rarity_for_strength(v_item.potion_strength)
+          rarity = public.potion_rarity_for(v_item.potion_strength, v_item.potion_property)
       where id = v_item.id
       returning * into v_item;
     end if;
@@ -3927,6 +3944,104 @@ begin
 end;
 $$;
 
+create or replace function public.place_pet_item_in_stable_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_slot int;
+  v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then
+    raise exception 'Receiving character was not found.';
+  end if;
+
+  if v_character.owner_user_id is null then
+    raise exception 'That character is not assigned to a player stable.';
+  end if;
+
+  if v_quantity <> 1 then
+    raise exception 'Pets must be moved one at a time.';
+  end if;
+
+  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_slot := public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house);
+  if v_slot is null then
+    raise exception 'No open stable slot.';
+  end if;
+
+  insert into public.house_inventory_items (
+    owner_user_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    display_name,
+    item_description,
+    item_type,
+    rarity,
+    quantity,
+    is_accessory,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    v_character.owner_user_id,
+    null,
+    v_slot,
+    public.normalize_item_name(p_item_name),
+    nullif(left(trim(coalesce(p_display_name, '')), 80), ''),
+    left(trim(coalesce(p_item_description, '')), 1500),
+    'pet',
+    p_rarity,
+    1,
+    coalesce(p_is_accessory, false),
+    false,
+    0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    nullif(trim(coalesce(p_enchantment, '')), ''),
+    nullif(trim(coalesce(p_rune_name, '')), ''),
+    trim(coalesce(p_material, '')),
+    least(3, greatest(0, coalesce(p_enhancement_count, 0))),
+    coalesce(p_is_two_handed, false),
+    null,
+    null,
+    null
+  )
+  returning * into v_house_item;
+
+  return public.house_item_record_to_json(v_house_item);
+end;
+$$;
+
 do $$
 declare
   v_pet record;
@@ -4141,7 +4256,7 @@ begin
     end;
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
-      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+      v_rarity := public.potion_rarity_for(v_potion_strength, v_potion_property);
     end if;
   end if;
 
@@ -5520,6 +5635,7 @@ grant execute on function public.move_inventory_item_to_house(text, uuid) to ano
 grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
 grant execute on function public.move_house_item_to_inventory(text, uuid, uuid) to anon, authenticated;
 grant execute on function public.place_pet_item_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
+grant execute on function public.place_pet_item_in_stable_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.get_location_wagon_storage(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_wagon(text, uuid, uuid, uuid, int) to anon, authenticated;
 grant execute on function public.move_wagon_item_to_inventory(text, uuid, uuid, uuid, int) to anon, authenticated;
@@ -6339,9 +6455,9 @@ join (values
   ('brewery-lesser-mana-potion', 'Lesser Mana Potion', 'Restores 15 mana when consumed.', 'Uncommon', 200, 3, 'Finished Potions', 'lesser-mana-potion', true, 250),
   ('brewery-greater-mana-potion', 'Greater Mana Potion', 'Restores 40 mana when consumed.', 'Rare', 600, 2, 'Finished Potions', 'greater-mana-potion', true, 260),
   ('brewery-greatest-mana-potion', 'Greatest Mana Potion', 'Fully restores mana when consumed.', 'Legendary', 2200, 1, 'Finished Potions', 'greatest-mana-potion', true, 270),
-  ('brewery-lesser-luck-potion', 'Lesser Luck Potion (Fine)', 'Fine lesser luck potion. Resolve the effect at the table.', 'Uncommon', 10000, 1, 'Finished Potions', 'lesser-luck-potion', true, 280),
-  ('brewery-greater-luck-potion', 'Greater Luck Potion (Fine)', 'Fine greater luck potion. Resolve the effect at the table.', 'Rare', 70000, 0, 'Finished Potions', 'greater-luck-potion', false, 290),
-  ('brewery-greatest-luck-potion', 'Greatest Luck Potion (Fine)', 'Fine greatest luck potion. Resolve the effect at the table.', 'Legendary', 300000, 0, 'Finished Potions', 'greatest-luck-potion', false, 300),
+  ('brewery-lesser-luck-potion', 'Lesser Luck Potion (Fine)', 'Fine lesser luck potion. Resolve the effect at the table.', 'Legendary', 10000, 1, 'Finished Potions', 'lesser-luck-potion', true, 280),
+  ('brewery-greater-luck-potion', 'Greater Luck Potion (Fine)', 'Fine greater luck potion. Resolve the effect at the table.', 'Legendary', 70000, 0, 'Finished Potions', 'greater-luck-potion', false, 290),
+  ('brewery-greatest-luck-potion', 'Greatest Luck Potion (Fine)', 'Fine greatest luck potion. Resolve the effect at the table.', 'Mythical', 300000, 0, 'Finished Potions', 'greatest-luck-potion', false, 300),
   ('brewery-lesser-antidote-potion', 'Lesser Antidote Potion (Fine)', 'Fine lesser antidote potion. Resolve the effect at the table.', 'Uncommon', 60, 6, 'Finished Potions', 'lesser-antidote-potion', true, 310),
   ('brewery-greater-antidote-potion', 'Greater Antidote Potion (Fine)', 'Fine greater antidote potion. Resolve the effect at the table.', 'Rare', 150, 3, 'Finished Potions', 'greater-antidote-potion', true, 320),
   ('brewery-greatest-antidote-potion', 'Greatest Antidote Potion (Fine)', 'Fine greatest antidote potion. Resolve the effect at the table.', 'Legendary', 400, 1, 'Finished Potions', 'greatest-antidote-potion', true, 330),
@@ -6368,7 +6484,16 @@ join (values
   ('brewery-greatest-clotting-potion', 'Greatest Clotting Potion (Fine)', 'Fine greatest clotting potion. Resolve the effect at the table.', 'Legendary', 600, 1, 'Finished Potions', 'greatest-clotting-potion', true, 540)
 ) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, is_available, display_order)
 on v.vendor_key = 'calostrynn-brewery'
-on conflict (product_key) do nothing;
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    display_order = excluded.display_order;
 
 with library_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-library')
 delete from public.market_products p
@@ -6745,7 +6870,7 @@ begin
     end;
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
-      v_product.rarity := public.potion_rarity_for_strength(v_potion_strength);
+      v_product.rarity := public.potion_rarity_for(v_potion_strength, v_potion_property);
     end if;
   end if;
 
@@ -6889,7 +7014,7 @@ begin
 
   if public.normalize_item_type(v_product.item_type) = 'pet' then
     perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
-    perform public.place_pet_item_for_character(
+    perform public.place_pet_item_in_stable_for_character(
       v_character.id,
       v_item_name,
       null,
@@ -6924,6 +7049,7 @@ begin
       parent_item_id,
       slot_index,
       item_name,
+      item_description,
       item_type,
       rarity,
       quantity,
@@ -6943,6 +7069,7 @@ begin
       null,
       public.next_storage_container_slot(v_character.id),
       v_item_name,
+      left(trim(coalesce(v_product.description, '')), 1500),
       v_product.item_type,
       v_product.rarity,
       1,
@@ -7000,6 +7127,7 @@ begin
       parent_item_id,
       slot_index,
       item_name,
+      item_description,
       item_type,
       rarity,
       quantity,
@@ -7019,6 +7147,7 @@ begin
       null,
       v_slot,
       v_item_name,
+      left(trim(coalesce(v_product.description, '')), 1500),
       v_product.item_type,
       v_product.rarity,
       v_inventory_quantity,
@@ -8451,7 +8580,7 @@ begin
     end if;
 
     v_item_name := public.format_potion_item_name(v_strength, v_definition.property_key, v_quality);
-    v_rarity := public.potion_rarity_for_strength(v_strength);
+    v_rarity := public.potion_rarity_for(v_strength, v_definition.property_key);
 
     select * into v_existing
     from public.inventory_items
@@ -9536,7 +9665,7 @@ set item_name = public.normalize_item_name(item_name),
     rarity = case
       when lower(public.normalize_item_name(item_name)) = 'arcane nector' then 'Uncommon'::public.item_rarity
       when lower(public.normalize_item_name(item_name)) = 'empty flask' then 'Common'::public.item_rarity
-      when public.potion_strength_from_name(item_name) is not null then public.potion_rarity_for_strength(public.potion_strength_from_name(item_name))
+      when public.potion_strength_from_name(item_name) is not null then public.potion_rarity_for(public.potion_strength_from_name(item_name), public.potion_property_from_name(item_name))
       else rarity
     end
 where public.normalize_item_name(item_name) <> item_name
@@ -11930,7 +12059,7 @@ begin
     end;
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
-      v_rarity := public.potion_rarity_for_strength(v_potion_strength);
+      v_rarity := public.potion_rarity_for(v_potion_strength, v_potion_property);
     elsif lower(v_item_name) = 'arcane nector' then
       v_rarity := 'Uncommon'::public.item_rarity;
     elsif lower(v_item_name) = 'empty flask' then
@@ -12137,6 +12266,105 @@ begin
 end;
 $$;
 
+create table if not exists public.world_map_uploads (
+  id uuid primary key default gen_random_uuid(),
+  uploaded_by uuid references public.profiles(id) on delete set null,
+  file_name text not null default 'world-map',
+  mime_type text not null default 'image/png',
+  image_data_url text not null,
+  created_at timestamptz not null default now(),
+  constraint world_map_uploads_image_only check (mime_type like 'image/%'),
+  constraint world_map_uploads_data_url_image check (image_data_url like 'data:image/%')
+);
+
+alter table public.world_map_uploads enable row level security;
+revoke all on public.world_map_uploads from anon, authenticated;
+
+create or replace function public.world_map_record_to_json(p_map public.world_map_uploads)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_map.id,
+    'fileName', p_map.file_name,
+    'mimeType', p_map.mime_type,
+    'imageDataUrl', p_map.image_data_url,
+    'createdAt', p_map.created_at
+  )
+$$;
+
+create or replace function public.get_world_map(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_map public.world_map_uploads%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_map
+  from public.world_map_uploads
+  order by created_at desc, id desc
+  limit 1;
+
+  if v_map.id is null then
+    return jsonb_build_object('map', null);
+  end if;
+
+  return jsonb_build_object('map', public.world_map_record_to_json(v_map));
+end;
+$$;
+
+create or replace function public.upload_world_map(
+  p_session_token text,
+  p_image_data_url text,
+  p_mime_type text,
+  p_file_name text default 'world-map'
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_map public.world_map_uploads%rowtype;
+  v_mime_type text := lower(trim(coalesce(p_mime_type, '')));
+  v_file_name text := left(coalesce(nullif(trim(p_file_name), ''), 'world-map'), 160);
+  v_image_data_url text := trim(coalesce(p_image_data_url, ''));
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can update the world map.';
+  end if;
+  if v_mime_type not in ('image/png', 'image/jpeg', 'image/webp', 'image/gif') then
+    raise exception 'Upload a PNG, JPEG, WEBP, or GIF image.';
+  end if;
+  if v_image_data_url not like 'data:image/%;base64,%' then
+    raise exception 'World map image data was invalid.';
+  end if;
+  if length(v_image_data_url) > 12000000 then
+    raise exception 'World map image is too large.';
+  end if;
+
+  insert into public.world_map_uploads (uploaded_by, file_name, mime_type, image_data_url)
+  values (v_profile.id, v_file_name, v_mime_type, v_image_data_url)
+  returning * into v_map;
+
+  return jsonb_build_object('map', public.world_map_record_to_json(v_map));
+end;
+$$;
+
 -- Consolidated final grants
 grant execute on function public.get_character_ledger(text) to anon, authenticated;
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, text) to anon, authenticated;
@@ -12157,6 +12385,9 @@ grant execute on function public.catalog_storage_capacity(text) to anon, authent
 grant execute on function public.cleanup_existing_unstackable_item_stacks() to anon, authenticated;
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
+grant execute on function public.world_map_record_to_json(public.world_map_uploads) to anon, authenticated;
+grant execute on function public.get_world_map(text) to anon, authenticated;
+grant execute on function public.upload_world_map(text, text, text, text) to anon, authenticated;
 
 
 -- ============================================================
@@ -12196,6 +12427,7 @@ values
   ('spells'),
   ('cities'),
   ('bestiary'),
+  ('world-map'),
   ('assets'),
   ('exploration'),
   ('caves'),
@@ -12318,6 +12550,11 @@ drop trigger if exists app_live_bestiary_categories on public.bestiary_categorie
 create trigger app_live_bestiary_categories
 after insert or update or delete on public.bestiary_categories
 for each row execute function public.touch_app_live_update_trigger('bestiary,assets');
+
+drop trigger if exists app_live_world_map_uploads on public.world_map_uploads;
+create trigger app_live_world_map_uploads
+after insert or update or delete on public.world_map_uploads
+for each row execute function public.touch_app_live_update_trigger('world-map');
 
 drop trigger if exists app_live_cities on public.cities;
 create trigger app_live_cities

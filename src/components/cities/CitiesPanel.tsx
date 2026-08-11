@@ -284,10 +284,11 @@ function isMagicalResearchProduct(product: MarketProduct) {
 }
 
 function isSinglePurchaseProduct(product: MarketProduct) {
-  return isSpellProduct(product) || isMagicalResearchProduct(product);
+  return product.type === 'pet' || isSpellProduct(product) || isMagicalResearchProduct(product);
 }
 
 function purchaseActionLabel(product: MarketProduct) {
+  if (product.type === 'pet') return 'Send to stable';
   if (isSpellProduct(product)) return 'Learn';
   if (isMagicalResearchProduct(product)) return 'Research';
   return 'Buy';
@@ -502,7 +503,10 @@ function selectedBreweryItems(items: BreweryAvailableItem[], selections: Record<
     .filter((entry) => entry.quantity > 0);
 }
 
-function breweryPotionRarity(strength: string): ItemRarity {
+function breweryPotionRarity(strength: string, propertyKey?: string): ItemRarity {
+  const normalizedProperty = propertyKey?.trim().toLowerCase();
+  if (normalizedProperty === 'luck' && (strength === 'Lesser' || strength === 'Greater')) return 'Legendary';
+  if (normalizedProperty === 'luck' && strength === 'Greatest') return 'Mythical';
   if (strength === 'Greatest') return 'Legendary';
   if (strength === 'Greater') return 'Rare';
   if (strength === 'Lesser') return 'Uncommon';
@@ -1719,7 +1723,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     key: 'brewed-potion',
     name: `${strength} ${selectedDefinition.potionName} Potion`,
     type: 'potion' as ItemType,
-    rarity: breweryPotionRarity(strength),
+    rarity: breweryPotionRarity(strength, selectedDefinition?.propertyKey),
     quantity: 1,
     note: selectedDefinition.description || selectedDefinition.automatedEffect || 'Quality is rolled when brewing completes.'
   } : null;
