@@ -199,7 +199,8 @@ export function ItemEditorFields({
     <>
       <TextField placeholder="Item name" value={draft.name} onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} />
       <TextAreaField
-        rows={3}
+        rows={8}
+        className="min-h-48 resize-y leading-6"
         value={draft.itemDescription}
         onChange={(event) => onDraftChange({ ...draft, itemDescription: event.target.value })}
         placeholder="Inspection description"

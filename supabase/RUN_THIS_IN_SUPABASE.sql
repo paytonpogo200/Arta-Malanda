@@ -12280,6 +12280,27 @@ create table if not exists public.world_map_uploads (
 alter table public.world_map_uploads enable row level security;
 revoke all on public.world_map_uploads from anon, authenticated;
 
+create table if not exists public.world_map_pins (
+  id uuid primary key default gen_random_uuid(),
+  map_upload_id uuid not null references public.world_map_uploads(id) on delete cascade,
+  created_by uuid references public.profiles(id) on delete set null,
+  pin_type text not null,
+  x numeric(8,6) not null,
+  y numeric(8,6) not null,
+  description text not null,
+  created_at timestamptz not null default now(),
+  constraint world_map_pins_type_valid check (pin_type in ('sword', 'puzzle', 'skull', 'flag', 'plant', 'chest')),
+  constraint world_map_pins_x_unit check (x >= 0 and x <= 1),
+  constraint world_map_pins_y_unit check (y >= 0 and y <= 1),
+  constraint world_map_pins_description_present check (length(trim(description)) > 0)
+);
+
+create index if not exists world_map_pins_map_created_idx on public.world_map_pins(map_upload_id, created_at, id);
+create index if not exists world_map_pins_created_by_idx on public.world_map_pins(created_by);
+
+alter table public.world_map_pins enable row level security;
+revoke all on public.world_map_pins from anon, authenticated;
+
 create or replace function public.world_map_record_to_json(p_map public.world_map_uploads)
 returns jsonb
 language sql
@@ -12294,6 +12315,56 @@ as $$
   )
 $$;
 
+create or replace function public.world_map_pin_record_to_json(p_pin public.world_map_pins)
+returns jsonb
+language sql
+stable
+set search_path = public, extensions
+as $$
+  select jsonb_build_object(
+    'id', p_pin.id,
+    'mapId', p_pin.map_upload_id,
+    'type', p_pin.pin_type,
+    'x', p_pin.x,
+    'y', p_pin.y,
+    'description', p_pin.description,
+    'createdBy', p_pin.created_by,
+    'createdByName', coalesce((select display_name from public.profiles where id = p_pin.created_by), 'Unknown'),
+    'createdAt', p_pin.created_at
+  )
+$$;
+
+create or replace function public.current_world_map_payload()
+returns jsonb
+language plpgsql
+stable
+set search_path = public, extensions
+as $$
+declare
+  v_map public.world_map_uploads%rowtype;
+  v_pins jsonb := '[]'::jsonb;
+begin
+  select * into v_map
+  from public.world_map_uploads
+  order by created_at desc, id desc
+  limit 1;
+
+  if v_map.id is null then
+    return jsonb_build_object('map', null, 'pins', '[]'::jsonb);
+  end if;
+
+  select coalesce(jsonb_agg(public.world_map_pin_record_to_json(p) order by p.created_at, p.id), '[]'::jsonb)
+    into v_pins
+  from public.world_map_pins p
+  where p.map_upload_id = v_map.id;
+
+  return jsonb_build_object(
+    'map', public.world_map_record_to_json(v_map),
+    'pins', v_pins
+  );
+end;
+$$;
+
 create or replace function public.get_world_map(p_session_token text)
 returns jsonb
 language plpgsql
@@ -12302,23 +12373,13 @@ set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
-  v_map public.world_map_uploads%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
     raise exception 'Invalid or expired session.';
   end if;
 
-  select * into v_map
-  from public.world_map_uploads
-  order by created_at desc, id desc
-  limit 1;
-
-  if v_map.id is null then
-    return jsonb_build_object('map', null);
-  end if;
-
-  return jsonb_build_object('map', public.world_map_record_to_json(v_map));
+  return public.current_world_map_payload();
 end;
 $$;
 
@@ -12361,7 +12422,89 @@ begin
   values (v_profile.id, v_file_name, v_mime_type, v_image_data_url)
   returning * into v_map;
 
-  return jsonb_build_object('map', public.world_map_record_to_json(v_map));
+  return public.current_world_map_payload();
+end;
+$$;
+
+create or replace function public.add_world_map_pin(
+  p_session_token text,
+  p_pin_type text,
+  p_x numeric,
+  p_y numeric,
+  p_description text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_map public.world_map_uploads%rowtype;
+  v_pin_type text := lower(trim(coalesce(p_pin_type, '')));
+  v_description text := left(trim(coalesce(p_description, '')), 3000);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_map
+  from public.world_map_uploads
+  order by created_at desc, id desc
+  limit 1;
+
+  if v_map.id is null then
+    raise exception 'Upload a world map before placing pins.';
+  end if;
+  if v_pin_type not in ('sword', 'puzzle', 'skull', 'flag', 'plant', 'chest') then
+    raise exception 'Choose a valid pin type.';
+  end if;
+  if p_x is null or p_y is null or p_x < 0 or p_x > 1 or p_y < 0 or p_y > 1 then
+    raise exception 'Place the pin inside the map.';
+  end if;
+  if length(v_description) = 0 then
+    raise exception 'Describe the map pin before placing it.';
+  end if;
+
+  insert into public.world_map_pins (map_upload_id, created_by, pin_type, x, y, description)
+  values (v_map.id, v_profile.id, v_pin_type, p_x, p_y, v_description);
+
+  return public.current_world_map_payload();
+end;
+$$;
+
+create or replace function public.delete_world_map_pin(
+  p_session_token text,
+  p_pin_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_pin public.world_map_pins%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_pin
+  from public.world_map_pins
+  where id = p_pin_id;
+
+  if v_pin.id is null then
+    raise exception 'Map pin was not found.';
+  end if;
+  if v_profile.role <> 'dm'::public.user_role and v_pin.created_by is distinct from v_profile.id then
+    raise exception 'Only the Dungeon Master or the player who placed this pin can delete it.';
+  end if;
+
+  delete from public.world_map_pins where id = v_pin.id;
+  return public.current_world_map_payload();
 end;
 $$;
 
@@ -12386,8 +12529,11 @@ grant execute on function public.cleanup_existing_unstackable_item_stacks() to a
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.world_map_record_to_json(public.world_map_uploads) to anon, authenticated;
+grant execute on function public.world_map_pin_record_to_json(public.world_map_pins) to anon, authenticated;
 grant execute on function public.get_world_map(text) to anon, authenticated;
 grant execute on function public.upload_world_map(text, text, text, text) to anon, authenticated;
+grant execute on function public.add_world_map_pin(text, text, numeric, numeric, text) to anon, authenticated;
+grant execute on function public.delete_world_map_pin(text, uuid) to anon, authenticated;
 
 
 -- ============================================================
@@ -12554,6 +12700,11 @@ for each row execute function public.touch_app_live_update_trigger('bestiary,ass
 drop trigger if exists app_live_world_map_uploads on public.world_map_uploads;
 create trigger app_live_world_map_uploads
 after insert or update or delete on public.world_map_uploads
+for each row execute function public.touch_app_live_update_trigger('world-map');
+
+drop trigger if exists app_live_world_map_pins on public.world_map_pins;
+create trigger app_live_world_map_pins
+after insert or update or delete on public.world_map_pins
 for each row execute function public.touch_app_live_update_trigger('world-map');
 
 drop trigger if exists app_live_cities on public.cities;
