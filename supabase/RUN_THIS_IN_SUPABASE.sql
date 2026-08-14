@@ -1828,6 +1828,7 @@ begin
   perform public.upsert_item_catalog_entry('Light Wagon', 'storage', 'Rare', 'Market Storage', array['25 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 25, 'A light wagon with 25 storage slots.', true, 2050);
   perform public.upsert_item_catalog_entry('Heavy Wagon', 'storage', 'Epic', 'Market Storage', array['60 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 60, 'A heavy wagon with 60 storage slots.', true, 2060);
   perform public.upsert_item_catalog_entry('Torch', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A basic torch for travel and dungeon work.', true, 2070);
+  perform public.upsert_item_catalog_entry('Arrow', 'weapon', 'Common', 'Market Supplies', array['Ammunition']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A single arrow for bows and ranged combat.', true, 2075);
   perform public.upsert_item_catalog_entry('Rope', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A coil of sturdy rope.', true, 2080);
   perform public.upsert_item_catalog_entry('Blanket', 'fabric', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A simple travel blanket.', true, 2090);
   perform public.upsert_item_catalog_entry('Cooking Pots', 'tool', 'Common', 'Market Supplies', array['Camp cooking']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Cooking pots for camp meals.', true, 2100);
@@ -6537,6 +6538,7 @@ where p.vendor_id = v.id
     'city-market-light-wagon',
     'city-market-heavy-wagon',
     'city-market-torch',
+    'city-market-arrow',
     'city-market-rope',
     'city-market-blanket',
     'city-market-cooking-pots',
@@ -6574,6 +6576,7 @@ join (values
   ('city-market-light-wagon', 'Light Wagon', 'Rowan sells a light wagon with 25 storage slots.', 'storage', 'Rare', 2500, null, 'Rowan - Storage', 'light-wagon', 60),
   ('city-market-heavy-wagon', 'Heavy Wagon', 'Rowan sells a heavy wagon with 60 storage slots.', 'storage', 'Epic', 6000, null, 'Rowan - Storage', 'heavy-wagon', 70),
   ('city-market-torch', 'Torch', 'Cedrick sells a basic torch for travel and dungeon work.', 'tool', 'Common', 3, null, 'Cedrick - Supplies', 'torch', 100),
+  ('city-market-arrow', 'Arrow', 'Cedrick sells individual arrows for bows and ranged combat.', 'weapon', 'Common', 10, null, 'Cedrick - Supplies', 'arrow', 105),
   ('city-market-rope', 'Rope', 'Cedrick sells a coil of sturdy rope.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'rope', 110),
   ('city-market-blanket', 'Blanket', 'Cedrick sells a simple travel blanket.', 'fabric', 'Common', 8, null, 'Cedrick - Supplies', 'blanket', 120),
   ('city-market-cooking-pots', 'Cooking Pots', 'Cedrick sells cooking pots for camp meals.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'cooking-pots', 130),

@@ -86,7 +86,10 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
 
   const setPayload = useCallback((payloadValue: unknown) => {
     const payload = normalizeWorldMapPayload(payloadValue);
-    setMap(payload.map);
+    setMap((currentMap) => {
+      if (currentMap?.id !== payload.map?.id) setImageSize(null);
+      return payload.map;
+    });
     setPins(payload.pins);
   }, []);
 
@@ -314,15 +317,14 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
         </div>
       )}
 
-      <section ref={containerRef} className="relative min-h-[18rem] overflow-hidden rounded-2xl border border-[var(--line)] bg-[radial-gradient(circle_at_20%_10%,rgba(245,180,76,0.18),transparent_34%),linear-gradient(135deg,rgba(11,20,18,0.96),rgba(32,20,15,0.92))] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.35)] sm:p-4">
-        <div className="absolute inset-0 opacity-[0.18] [background-image:linear-gradient(rgba(245,180,76,0.32)_1px,transparent_1px),linear-gradient(90deg,rgba(245,180,76,0.32)_1px,transparent_1px)] [background-size:48px_48px]" />
+      <section ref={containerRef} className={`relative min-h-[18rem] overflow-hidden rounded-2xl ${map ? 'border border-transparent bg-transparent p-0 shadow-none' : 'border border-[var(--line)] bg-[radial-gradient(circle_at_20%_10%,rgba(245,180,76,0.18),transparent_34%),linear-gradient(135deg,rgba(11,20,18,0.96),rgba(32,20,15,0.92))] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.35)] sm:p-4'}`}>
         <div className="relative grid min-h-[18rem] place-items-center">
           {loading ? (
             <Loader2 className="animate-spin text-[var(--brass)]" size={32} />
           ) : map ? (
             <div
               ref={frameRef}
-              className={`relative mx-auto overflow-hidden rounded-xl border border-[var(--brass)]/35 bg-black/30 shadow-[0_20px_70px_rgba(0,0,0,0.4)] ${addMode ? 'cursor-crosshair' : zoom > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              className={`relative mx-auto overflow-hidden rounded-xl border border-[var(--brass)]/35 bg-transparent shadow-[0_20px_70px_rgba(0,0,0,0.4)] ${addMode ? 'cursor-crosshair' : zoom > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
               style={frameStyle}
               onClick={handleFrameClick}
               onPointerDown={handlePointerDown}
@@ -338,7 +340,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
                   src={map.imageDataUrl}
                   alt="World Map"
                   draggable={false}
-                  className="h-full w-full select-none object-contain"
+                  className="h-full w-full select-none object-fill"
                   onLoad={(event) => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
                 />
                 {pins.map((pin) => {
