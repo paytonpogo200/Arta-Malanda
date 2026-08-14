@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ArrowRightLeft, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -183,6 +183,8 @@ export function InventoryPanel({
   const [tradeQuantityDraft, setTradeQuantityDraft] = useState(1);
   const [offerCurrencyDraft, setOfferCurrencyDraft] = useState<Record<string, number>>({});
   const [requestCurrencyDraft, setRequestCurrencyDraft] = useState<Record<string, number>>({});
+  const [giftMoneyOpen, setGiftMoneyOpen] = useState(false);
+  const [giftCurrencyDraft, setGiftCurrencyDraft] = useState<Record<string, number>>({});
   const [targetPreview, setTargetPreview] = useState<{ items: InventoryItem[]; wallet: WalletBalance[] } | null>(null);
   const [targetPreviewLoading, setTargetPreviewLoading] = useState(false);
   const [targetPreviewError, setTargetPreviewError] = useState('');
@@ -843,6 +845,52 @@ export function InventoryPanel({
     }
   }
 
+  async function giftMoney() {
+    if (!canManage || !tradeTargetId) return;
+    const targetCharacter = tradeTargetCharacter;
+    if (!targetCharacter) return;
+    if (targetCharacter.ownerUserId !== character.ownerUserId && !targetCharacter.giftInventoryOpen) {
+      window.alert('This persons inventory is closed from gifting efforts and grows tired of your pranks');
+      return;
+    }
+
+    const currency = currencyPayload(wallet, giftCurrencyDraft);
+    if (!currency.length) {
+      setError('Choose at least one amount of money to gift.');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetCharacterId: targetCharacter.id,
+          currency
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Money gift could not be sent.');
+      const normalized = normalizeCharacterInventoryPayload(payload.inventory ?? {});
+      setItems(normalized.items);
+      onItemsChanged?.(normalized.items);
+      setWallet(normalized.wallet);
+      setWalletDraft(Object.fromEntries(normalized.wallet.map((entry) => [entry.unit.id, entry.amount])));
+      setGiftCurrencyDraft({});
+      setGiftMoneyOpen(false);
+      setNotice(`Money gifted to ${targetCharacter.name}.`);
+    } catch (giftError) {
+      const message = giftError instanceof Error ? giftError.message : 'Money gift could not be sent.';
+      setError(message);
+      if (message.includes('gifting efforts')) window.alert(message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function toggleGiftInventoryOpen() {
     if (!canManage) return;
     const nextOpen = !giftOpen;
@@ -1186,6 +1234,42 @@ export function InventoryPanel({
     );
   }
 
+  function renderGiftMoneyModal() {
+    if (!giftMoneyOpen) return null;
+    const selectedCurrency = currencyPayload(wallet, giftCurrencyDraft);
+    const targetCharacter = tradeTargetCharacter;
+
+    return (
+      <Modal title="Gift money" onClose={() => setGiftMoneyOpen(false)}>
+        <div className="grid gap-3">
+          <label className="grid gap-1">
+            <span className="text-[10px] font-black uppercase text-[var(--muted)]">Recipient</span>
+            {renderTargetSelect()}
+          </label>
+          {targetCharacter && targetCharacter.ownerUserId !== character.ownerUserId && !targetCharacter.giftInventoryOpen && (
+            <p className="rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-3 text-xs font-black text-[var(--red)]">
+              This character is closed to gifts.
+            </p>
+          )}
+          <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+            <p className="mb-2 text-xs font-black uppercase tracking-wider text-[var(--muted)]">Money to gift</p>
+            {renderCurrencyInputs(wallet, giftCurrencyDraft, setGiftCurrencyDraft)}
+          </div>
+          {selectedCurrency.length > 0 && (
+            <div className="rounded-2xl border border-[#56e2c2]/35 bg-[#56e2c2]/10 p-3">
+              <p className="mb-2 text-xs font-black uppercase tracking-wider text-[#56e2c2]">Gift summary</p>
+              {renderTradeCurrencySummary(selectedCurrency, wallet)}
+            </div>
+          )}
+          <Button variant="teal" onClick={giftMoney} disabled={!tradeTargetId || !selectedCurrency.length || saving}>
+            {saving ? <Loader2 className="mr-2 inline animate-spin" size={15} /> : <Coins className="mr-2 inline" size={15} />}
+            {targetCharacter?.ownerUserId === character.ownerUserId ? 'Move money now' : 'Gift money now'}
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+
   function renderTradeQuantityPicker() {
     if (!tradeQuantityPicker) return null;
     const { side, item } = tradeQuantityPicker;
@@ -1367,19 +1451,30 @@ export function InventoryPanel({
                   {giftOpen ? 'Open to gifts' : 'Closed to gifts'}
                 </Button>
                 {tradeTargets.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    className="px-3 py-2 text-xs"
-                    onClick={() => {
-                      setTradeBuilderOpen(true);
-                      setTradeStep('request');
-                      if (tradeTargetId) void loadTradePreview(tradeTargetId);
-                    }}
-                    disabled={saving}
-                  >
-                    <ArrowRightLeft className="mr-2 inline" size={14} />
-                    Propose trade
-                  </Button>
+                  <>
+                    <Button
+                      variant="secondary"
+                      className="px-3 py-2 text-xs"
+                      onClick={() => setGiftMoneyOpen(true)}
+                      disabled={saving || wallet.every((entry) => entry.amount <= 0)}
+                    >
+                      <Coins className="mr-2 inline" size={14} />
+                      Gift money
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="px-3 py-2 text-xs"
+                      onClick={() => {
+                        setTradeBuilderOpen(true);
+                        setTradeStep('request');
+                        if (tradeTargetId) void loadTradePreview(tradeTargetId);
+                      }}
+                      disabled={saving}
+                    >
+                      <ArrowRightLeft className="mr-2 inline" size={14} />
+                      Propose trade
+                    </Button>
+                  </>
                 )}
               </div>
             )}
@@ -1707,6 +1802,7 @@ export function InventoryPanel({
         </Modal>
       )}
       {renderTradeBuilder()}
+      {renderGiftMoneyModal()}
       {renderTradeQuantityPicker()}
       {renderItemActionModal()}
     </Card>

@@ -3243,6 +3243,111 @@ begin
 end;
 $$;
 
+create or replace function public.gift_character_currency(
+  p_session_token text,
+  p_sender_character_id uuid,
+  p_target_character_id uuid,
+  p_currency jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_sender public.characters%rowtype;
+  v_target public.characters%rowtype;
+  v_currency jsonb := case when jsonb_typeof(coalesce(p_currency, '[]'::jsonb)) = 'array' then coalesce(p_currency, '[]'::jsonb) else '[]'::jsonb end;
+  v_entry jsonb;
+  v_unit_id uuid;
+  v_unit_name text;
+  v_amount int;
+  v_current int;
+  v_labels text[] := array[]::text[];
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_sender := public.assert_inventory_access(v_profile, p_sender_character_id, false);
+
+  select * into v_target
+  from public.characters
+  where id = p_target_character_id;
+
+  if v_target.id is null then raise exception 'Target character was not found.'; end if;
+  if v_target.id = v_sender.id then raise exception 'Choose another character to gift money to.'; end if;
+  if v_target.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
+
+  if v_sender.owner_user_id is distinct from v_target.owner_user_id
+    and v_profile.role <> 'dm'::public.user_role
+    and not coalesce(v_target.gift_inventory_open, true)
+  then
+    raise exception 'This persons inventory is closed from gifting efforts and grows tired of your pranks';
+  end if;
+
+  for v_entry in select * from jsonb_array_elements(v_currency) loop
+    v_unit_name := null;
+    v_current := 0;
+    v_unit_id := nullif(coalesce(v_entry->>'unitId', v_entry->>'unit_id', v_entry->>'id'), '')::uuid;
+    v_amount := floor(greatest(0, coalesce(nullif(v_entry->>'amount', '')::numeric, 0)))::int;
+    if v_unit_id is null or v_amount <= 0 then continue; end if;
+
+    select name into v_unit_name
+    from public.currency_units
+    where id = v_unit_id;
+
+    if v_unit_name is null then raise exception 'A gifted currency unit was not found.'; end if;
+
+    select coalesce(amount, 0) into v_current
+    from public.character_wallet_balances
+    where character_id = v_sender.id
+      and currency_unit_id = v_unit_id
+    for update;
+
+    v_current := coalesce(v_current, 0);
+    if v_current < v_amount then raise exception 'Not enough money to gift.'; end if;
+
+    update public.character_wallet_balances
+    set amount = amount - v_amount
+    where character_id = v_sender.id
+      and currency_unit_id = v_unit_id;
+
+    insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
+    values (v_target.id, v_unit_id, v_amount)
+    on conflict (character_id, currency_unit_id) do update
+    set amount = public.character_wallet_balances.amount + excluded.amount;
+
+    v_labels := array_append(v_labels, v_amount::text || ' ' || v_unit_name);
+  end loop;
+
+  if array_length(v_labels, 1) is null then
+    raise exception 'Choose at least one amount of money to gift.';
+  end if;
+
+  if v_sender.owner_user_id is distinct from v_target.owner_user_id then
+    insert into public.campaign_notifications (
+      recipient_user_id,
+      title,
+      body,
+      notice_kind,
+      source_type,
+      location_name
+    )
+    values (
+      v_target.owner_user_id,
+      v_sender.name || ' gave money to ' || v_target.name,
+      array_to_string(v_labels, ', ') || ' was added to ' || v_target.name || '''s wallet.',
+      'notice',
+      'gift',
+      v_target.location_name
+    );
+  end if;
+
+  return public.get_character_inventory(p_session_token, v_sender.id);
+end;
+$$;
+
 grant execute on function public.loadout_slot_accepts_item(text, text, boolean) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
@@ -3260,6 +3365,7 @@ grant execute on function public.update_inventory_item_state(text, uuid, jsonb) 
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.gift_character_currency(text, uuid, uuid, jsonb) to anon, authenticated;
 
 
 -- ============================================================
