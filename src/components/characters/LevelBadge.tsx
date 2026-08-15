@@ -4,10 +4,12 @@ function normalizedLevel(level: number | null | undefined) {
   return Math.max(1, Math.floor(Number(level) || 1));
 }
 
-export function characterLevelFrameClass(level: number | null | undefined) {
+export type CharacterLevelFrameVariant = 'ledger' | 'sheet' | 'sheet-edit' | 'battle-card';
+
+export function characterLevelFrameClass(level: number | null | undefined, variant: CharacterLevelFrameVariant = 'sheet') {
   const value = normalizedLevel(level);
-  if (value >= 3) return 'character-level-frame character-level-frame-3';
-  if (value >= 2) return 'character-level-frame character-level-frame-2';
+  if (value >= 3) return `character-level-frame character-level-frame-${variant} character-level-frame-3`;
+  if (value >= 2) return `character-level-frame character-level-frame-${variant} character-level-frame-2`;
   return '';
 }
 

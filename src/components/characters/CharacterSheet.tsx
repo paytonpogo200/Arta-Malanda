@@ -176,7 +176,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   return (
     <div className="space-y-4">
-      <Card className={characterLevelFrameClass(character.level)}>
+      <Card className={characterLevelFrameClass(character.level, editing ? 'sheet-edit' : 'sheet')}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
             <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full border border-white/20" style={{ background: character.tokenColor }}>
