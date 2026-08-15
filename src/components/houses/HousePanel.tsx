@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Unlock } from 'lucide-react';
+import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Unlock, Users } from 'lucide-react';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
@@ -10,6 +10,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import type { CampaignProfile } from '@/features/characters/data';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
@@ -19,6 +20,8 @@ import type { CampaignProperty, Character, InventoryItem, LoadoutModifierKey, Pr
 type HousePanelProps = {
   ownerUserId: string | null;
   caretakerCharacterId: string;
+  viewerUserId: string;
+  profiles?: CampaignProfile[];
   characters?: Character[];
   canManage: boolean;
   canAdd: boolean;
@@ -49,9 +52,12 @@ const EMPTY_PROPERTY: PropertyDraft = {
 
 const STABLE_SLOT_OFFSET = 45;
 
-export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [], canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
+export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, profiles = [], characters = [], canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
+  const [houseAccess, setHouseAccess] = useState({ owner: false, dm: false, house: false, stable: false });
+  const [permissions, setPermissions] = useState<Record<string, { house: boolean; stable: boolean }>>({});
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [inventorySlots, setInventorySlots] = useState(45);
   const [stableSlots, setStableSlots] = useState(5);
   const [propertySlots, setPropertySlots] = useState(10);
@@ -82,14 +88,24 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const stableItemBySlot = useMemo(() => new Map(stableItems.map((item) => [item.slotIndex, item])), [stableItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const canManageHouse = canManage || houseAccess.house;
+  const canManageStable = canManage || houseAccess.stable;
+  const canManageAny = canManageHouse || canManageStable;
+  const canEditPermissions = canAdd || houseAccess.owner;
+  const permissionProfiles = useMemo(() => profiles
+    .filter((entry) => entry.id !== ownerUserId)
+    .sort((a, b) => (a.displayName || a.username || '').localeCompare(b.displayName || b.username || '')), [ownerUserId, profiles]);
   const takeTargetCharacters = useMemo(() => {
+    const allowedOwnerIds = canAdd
+      ? null
+      : new Set([ownerUserId, viewerUserId].filter((entry): entry is string => Boolean(entry)));
     const assigned = characters
-      .filter((entry) => entry.ownerUserId === ownerUserId)
+      .filter((entry) => !allowedOwnerIds || (entry.ownerUserId && allowedOwnerIds.has(entry.ownerUserId)))
       .sort((a, b) => a.name.localeCompare(b.name));
     if (assigned.some((entry) => entry.id === caretakerCharacterId)) return assigned;
     const caretaker = characters.find((entry) => entry.id === caretakerCharacterId);
     return caretaker ? [caretaker, ...assigned] : assigned;
-  }, [caretakerCharacterId, characters, ownerUserId]);
+  }, [canAdd, caretakerCharacterId, characters, ownerUserId, viewerUserId]);
 
   const loadHouse = useCallback(async (showLoading = true) => {
     if (!ownerUserId) return;
@@ -107,6 +123,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
       setStableSlots(normalized.house?.stableSlots ?? 5);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
       setHouseLocked(Boolean(normalized.house?.locked));
+      setHouseAccess(normalized.access);
+      setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'House could not be loaded.');
     } finally {
@@ -311,7 +329,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
 
   async function savePetDisplayName(event: FormEvent) {
     event.preventDefault();
-    if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManage) return;
+    if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManageAny) return;
     await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -320,12 +338,12 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
   }
 
   async function dropItem(item: InventoryItem) {
-    if (!canManage) return;
+    if (!canManageAny) return;
     await requestHouseChange(`/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function takeItem(item: InventoryItem) {
-    if (!canManage) return;
+    if (!canManageAny) return;
     const characterId = takeTargetCharacterId || caretakerCharacterId;
     if (!characterId) {
       setError('Choose a character to receive this item.');
@@ -337,6 +355,31 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
       body: JSON.stringify({ characterId })
     });
     if (moved) onCharacterInventoryChanged?.();
+  }
+
+  async function savePermissions() {
+    if (!ownerUserId || !canEditPermissions) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/houses/${ownerUserId}/permissions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          permissions: Object.entries(permissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access }))
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'House permissions could not be saved.');
+      const normalized = normalizeHousePayload(payload);
+      setHouseAccess(normalized.access);
+      setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
+      setPermissionsOpen(false);
+    } catch (permissionError) {
+      setError(permissionError instanceof Error ? permissionError.message : 'House permissions could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function saveProperty(event: FormEvent) {
@@ -356,7 +399,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
       return;
     }
 
-    if (!canManage) return;
+    if (!canManageAny) return;
     await requestHouseChange(`/api/houses/properties/${propertyModal.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -382,6 +425,11 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
             </Button>
           )}
+          {canEditPermissions && (
+            <Button variant="secondary" className="p-3" onClick={() => setPermissionsOpen(true)} aria-label="House permissions">
+              <Users size={16} />
+            </Button>
+          )}
           {canAdd && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
         </div>
       </div>
@@ -404,7 +452,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
                     key={slot}
                     slot={slot}
                     item={item}
-                    canEdit={canManage}
+                    canEdit={canManageHouse}
                     canAdd={canAdd}
                     target={targetSlot === `main:${slot}`}
                     onOpen={() => openItem(slot, null, item)}
@@ -430,7 +478,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
                       key={actualSlot}
                       slot={slot}
                       item={item}
-                      canEdit={canManage}
+                      canEdit={canManageStable}
                       canAdd={canAdd}
                       target={targetSlot === `main:${actualSlot}`}
                       onOpen={() => openItem(actualSlot, null, item)}
@@ -463,7 +511,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
                               key={slot}
                               slot={slot}
                               item={item}
-                              canEdit={canManage}
+                              canEdit={canManageHouse}
                               canAdd={canAdd}
                               target={targetSlot === `${storage.id}:${slot}`}
                               onOpen={() => openItem(slot, storage.id, item)}
@@ -516,7 +564,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
                 <p className="font-black text-[var(--paper)]">{itemModal.item.displayName || itemModal.item.name}</p>
                 <p className="mt-1 font-black uppercase tracking-wide text-[var(--brass)]">Animal: {itemModal.item.name}</p>
               </div>
-              {canManage && (
+              {canManageAny && (
                 <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
                   <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
@@ -537,7 +585,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
                 <p>{itemModal.item.type} · {itemModal.item.rarity} · Quantity {itemModal.item.quantity}</p>
                 {itemModal.item.isAccessory && <p className="mt-1 font-black uppercase tracking-wide text-[var(--brass)]">Accessory</p>}
               </div>
-              {canManage && (
+              {canManageAny && (
                 <div className="grid gap-2">
                   <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/10 p-3">
                     {takeTargetCharacters.length > 1 && (
@@ -571,6 +619,50 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, characters = [],
               <Button variant="primary" disabled={!itemDraft.name.trim() || saving}>Add item</Button>
             </form>
           )}
+        </Modal>
+      )}
+
+      {permissionsOpen && (
+        <Modal title="Permissions" onClose={() => setPermissionsOpen(false)}>
+          <div className="grid gap-3">
+            {permissionProfiles.map((entry) => {
+              const access = permissions[entry.id] ?? { house: false, stable: false };
+              return (
+                <div key={entry.id} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                  <div>
+                    <p className="font-black">{entry.displayName || entry.username || 'Player'}</p>
+                    {entry.username && <p className="text-xs text-[var(--muted)]">{entry.username}</p>}
+                  </div>
+                  <label className="flex items-center gap-2 text-sm font-black">
+                    <input
+                      type="checkbox"
+                      checked={access.house}
+                      onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), house: event.target.checked } }))}
+                    />
+                    House
+                  </label>
+                  <label className="flex items-center gap-2 text-sm font-black">
+                    <input
+                      type="checkbox"
+                      checked={access.stable}
+                      onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), stable: event.target.checked } }))}
+                    />
+                    Stable
+                  </label>
+                </div>
+              );
+            })}
+            {!permissionProfiles.length && (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No other players are available yet.</div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPermissionsOpen(false)}>Cancel</Button>
+              <Button variant="primary" disabled={saving} onClick={savePermissions}>
+                {saving && <Loader2 className="mr-2 inline animate-spin" size={15} />}
+                Save permissions
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
 

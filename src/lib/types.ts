@@ -218,6 +218,21 @@ export type House = {
   locked: boolean;
 };
 
+export type HouseAccess = {
+  owner: boolean;
+  dm: boolean;
+  house: boolean;
+  stable: boolean;
+};
+
+export type HousePermission = {
+  ownerUserId: string;
+  granteeUserId: string;
+  granteeName: string;
+  house: boolean;
+  stable: boolean;
+};
+
 export type CampaignProperty = {
   id: string;
   ownerUserId: string;

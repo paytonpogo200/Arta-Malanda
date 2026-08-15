@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { Heart, Loader2, MapPin, Save, Shield, Sparkles, UserRound, WandSparkles } from 'lucide-react';
+import { Heart, Loader2, MapPin, Save, Shield, Sparkles, Trash2, UserRound, WandSparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { HousePanel } from '@/components/houses/HousePanel';
@@ -22,6 +22,7 @@ type CharacterSheetProps = {
   classes: ClassTemplate[];
   characters: Character[];
   onSaved: (character: Character) => void;
+  onDeleted?: (characterId: string) => void;
 };
 
 const LOCATION_PRESETS = ['Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
@@ -37,7 +38,7 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved }: CharacterSheetProps) {
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved, onDeleted }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -119,6 +120,25 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
     }
   }
 
+  async function deleteCharacter() {
+    if (!isDm || saving) return;
+    const confirmed = window.confirm(`Delete ${character.name}? This removes the character sheet, inventory, spells, wallet, and battle token.`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}`, { method: 'DELETE' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'The character could not be deleted.');
+      onDeleted?.(character.id);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'The character could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function applyClassTemplate(classKey: string) {
     const template = classes.find((entry) => entry.key === classKey);
     if (!template) {
@@ -172,7 +192,13 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
                 </Button>
               </>
             ) : (
-              <Button variant="secondary" type="button" onClick={() => setEditing(true)}>Edit sheet</Button>
+              <>
+                <Button variant="secondary" type="button" onClick={() => setEditing(true)}>Edit sheet</Button>
+                <Button variant="danger" type="button" disabled={saving} onClick={deleteCharacter}>
+                  <Trash2 className="mr-2 inline" size={15} />
+                  Delete
+                </Button>
+              </>
             ))}
           </div>
         </div>
@@ -284,6 +310,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           <HousePanel
             ownerUserId={character.ownerUserId}
             caretakerCharacterId={character.id}
+            viewerUserId={profile.id}
+            profiles={profiles}
             characters={characters}
             canManage={isDm || owned}
             canAdd={isDm}

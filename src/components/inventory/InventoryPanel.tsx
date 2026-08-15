@@ -74,6 +74,8 @@ function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
 function inferStorageCapacity(itemName: string) {
   const normalized = itemName.toLowerCase();
   if (normalized.includes('bag of holding')) return 100;
+  if (normalized.includes('wagon home')) return 40;
+  if (normalized.includes('caged wagon')) return 3;
   if (normalized.includes('heavy wagon')) return 60;
   if (normalized.includes('light wagon')) return 25;
   if (normalized.includes('heavy duffle')) return 10;
@@ -109,6 +111,10 @@ function isPotionConsumable(item: InventoryItem) {
 
 function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
   return item.isStorage && item.name.toLowerCase().includes('wagon');
+}
+
+function isCagedWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+  return isWagonStorage(item) && item.name.toLowerCase().includes('caged wagon');
 }
 
 function quantityText(quantity: number) {
@@ -551,8 +557,13 @@ export function InventoryPanel({
 
     const movingItem = items.find((item) => item.id === itemId);
     if (movingItem && sameContainer(movingItem, parentItemId) && movingItem.slotIndex === slot && !movingItem.loadoutSlot) return;
-    if (movingItem?.type === 'pet') {
+    const targetStorage = parentItemId ? items.find((item) => item.id === parentItemId) : null;
+    if (movingItem?.type === 'pet' && !targetStorage) {
       setError('Animals can only occupy the active pet slot or a stable slot.');
+      return;
+    }
+    if (movingItem?.type === 'pet' && targetStorage && !isCagedWagonStorage(targetStorage)) {
+      setError('Animals can only occupy the active pet slot, a stable slot, or a Caged Wagon.');
       return;
     }
 
@@ -596,9 +607,10 @@ export function InventoryPanel({
   async function moveItemToWagon(itemId: string, wagonId: string, slot: number) {
     if (!canManage) return;
     const movingItem = items.find((item) => item.id === itemId);
+    const wagon = [...storageItems, ...nearbyWagons.map((entry) => entry.wagon)].find((entry) => entry.id === wagonId);
     if (!movingItem) return;
-    if (movingItem.type === 'pet') {
-      setError('Animals can only occupy the active pet slot or a stable slot.');
+    if (movingItem.type === 'pet' && (!wagon || !isCagedWagonStorage(wagon))) {
+      setError('Animals can only occupy the active pet slot, a stable slot, or a Caged Wagon.');
       return;
     }
     setTarget(`${wagonId}:${slot}`);
@@ -1618,7 +1630,6 @@ export function InventoryPanel({
                     {modal.item.isAccessory && (
                       <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--brass)]">Accessory</p>
                     )}
-                    {modal.item.material && <p className="mt-1 text-xs text-[var(--muted)]">{modal.item.material}</p>}
                     {modal.item.enhancementCount > 0 && <p className="mt-1 text-xs font-black text-[var(--brass)]">{modal.item.enhancementCount}/3 enhancements</p>}
                     {modal.item.runeName && <p className="mt-1 text-xs font-black uppercase tracking-wider text-[#56e2c2]">Rune: {modal.item.runeName}</p>}
                     {modal.item.enchantment && (

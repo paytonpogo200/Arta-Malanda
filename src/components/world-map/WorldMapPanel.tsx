@@ -63,7 +63,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   const [selectedPin, setSelectedPin] = useState<WorldMapPin | null>(null);
 
   const aspectRatio = imageSize && imageSize.height > 0 ? imageSize.width / imageSize.height : 16 / 9;
-  const maxFrameHeight = Math.max(300, viewportHeight - 220);
+  const maxFrameHeight = Math.max(320, viewportHeight - 190);
   const frameWidth = containerWidth > 0 && imageSize ? Math.min(containerWidth, maxFrameHeight * aspectRatio) : containerWidth;
   const frameHeight = frameWidth > 0 ? frameWidth / aspectRatio : Math.min(maxFrameHeight, 620);
   const frameStyle: CSSProperties = frameWidth > 0
@@ -202,6 +202,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
     if (addMode || zoom <= 1 || (event.target as HTMLElement).closest('[data-map-pin]')) return;
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDrag({
       pointerId: event.pointerId,
@@ -318,13 +319,13 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
       )}
 
       <section ref={containerRef} className={`relative min-h-[18rem] overflow-hidden rounded-2xl ${map ? 'border border-transparent bg-transparent p-0 shadow-none' : 'border border-[var(--line)] bg-[radial-gradient(circle_at_20%_10%,rgba(245,180,76,0.18),transparent_34%),linear-gradient(135deg,rgba(11,20,18,0.96),rgba(32,20,15,0.92))] p-2 shadow-[0_24px_80px_rgba(0,0,0,0.35)] sm:p-4'}`}>
-        <div className="relative grid min-h-[18rem] place-items-center">
+        <div className="relative grid min-h-[18rem] place-items-center overscroll-contain">
           {loading ? (
             <Loader2 className="animate-spin text-[var(--brass)]" size={32} />
           ) : map ? (
             <div
               ref={frameRef}
-              className={`relative mx-auto overflow-hidden rounded-xl border border-[var(--brass)]/35 bg-transparent shadow-[0_20px_70px_rgba(0,0,0,0.4)] ${addMode ? 'cursor-crosshair' : zoom > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              className={`relative mx-auto touch-none overflow-hidden rounded-xl border border-[var(--brass)]/35 bg-transparent shadow-[0_20px_70px_rgba(0,0,0,0.4)] ${addMode ? 'cursor-crosshair' : zoom > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
               style={frameStyle}
               onClick={handleFrameClick}
               onPointerDown={handlePointerDown}

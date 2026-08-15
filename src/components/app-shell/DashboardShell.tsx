@@ -44,7 +44,7 @@ const DM_TABS: DashboardTab[] = [
   { id: 'assets', label: 'Update Assets', icon: Settings2, dmOnly: true }
 ];
 
-function useDashboardState(isDm: boolean, onBattleLock: () => void) {
+function useDashboardState() {
   const [state, setState] = useState<DashboardStatePayload>({
     activeBattle: false,
     activeBattleId: null,
@@ -66,11 +66,10 @@ function useDashboardState(isDm: boolean, onBattleLock: () => void) {
         }
         return payload;
       });
-      if (payload.activeBattle && !isDm) onBattleLock();
     } catch {
       // The shell should not crash if the background refresh blips.
     }
-  }, [isDm, onBattleLock]);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -95,11 +94,9 @@ function useDashboardState(isDm: boolean, onBattleLock: () => void) {
 export function DashboardShell({ profile, activeTab, onTabChange, children }: DashboardShellProps) {
   const isDm = profile.role === 'dm';
   const tabs = isDm ? DM_TABS : PLAYER_TABS;
-  const battleLock = useCallback(() => onTabChange('battle'), [onTabChange]);
-  const { state, refresh } = useDashboardState(isDm, battleLock);
+  const { state, refresh } = useDashboardState();
 
-  const navVisible = !state.activeBattle || isDm;
-  const contentPadding = state.activeBattle && !isDm ? 'pb-8' : isDm ? 'pb-28 sm:pb-32' : 'pb-32';
+  const contentPadding = isDm ? 'pb-28 sm:pb-32' : 'pb-32';
 
   const headerLabel = useMemo(() => {
     if (state.activeBattle && !isDm) return 'Active Encounter';
@@ -141,24 +138,22 @@ export function DashboardShell({ profile, activeTab, onTabChange, children }: Da
         {children}
       </section>
 
-      {navVisible && (
-        <nav className="campaign-nav fixed bottom-0 left-0 right-0 z-50 border-t px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pt-3">
-          <div className={isDm ? 'thin-scrollbar mx-auto flex max-w-6xl gap-1 overflow-x-auto sm:grid sm:grid-cols-8' : 'mx-auto grid max-w-4xl grid-cols-6 gap-1'}>
-            {tabs.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onTabChange(id)}
-                className={`flex ${isDm ? 'min-w-[4.6rem] sm:min-w-0' : 'min-w-0'} flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[9px] font-black leading-tight transition active:scale-95 sm:flex-row sm:px-3 sm:py-3 sm:text-sm ${
-                  activeTab === id ? 'bg-[var(--paper)] text-[#141915]' : 'text-[var(--muted)]'
-                }`}
-              >
-                <Icon size={17} /> {label}
-              </button>
-            ))}
-          </div>
-        </nav>
-      )}
+      <nav className="campaign-nav fixed bottom-0 left-0 right-0 z-50 border-t px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pt-3">
+        <div className={isDm ? 'thin-scrollbar mx-auto flex max-w-6xl gap-1 overflow-x-auto sm:grid sm:grid-cols-8' : 'mx-auto grid max-w-4xl grid-cols-6 gap-1'}>
+          {tabs.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onTabChange(id)}
+              className={`flex ${isDm ? 'min-w-[4.6rem] sm:min-w-0' : 'min-w-0'} flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[9px] font-black leading-tight transition active:scale-95 sm:flex-row sm:px-3 sm:py-3 sm:text-sm ${
+                activeTab === id ? 'bg-[var(--paper)] text-[#141915]' : 'text-[var(--muted)]'
+              }`}
+            >
+              <Icon size={17} /> {label}
+            </button>
+          ))}
+        </div>
+      </nav>
     </main>
   );
 }

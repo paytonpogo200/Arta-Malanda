@@ -1441,6 +1441,43 @@ begin
 end;
 $$;
 
+create or replace function public.delete_campaign_character(
+  p_session_token text,
+  p_character_id uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+begin
+  select * into v_profile
+  from public.profile_from_campaign_session(p_session_token);
+
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can delete characters.';
+  end if;
+
+  select * into v_character
+  from public.characters
+  where id = p_character_id;
+
+  if v_character.id is null then
+    raise exception 'Character not found.';
+  end if;
+
+  delete from public.characters where id = p_character_id;
+  return p_character_id;
+end;
+$$;
+
 create or replace function public.set_character_gift_inventory_open(
   p_session_token text,
   p_character_id uuid,
@@ -1673,6 +1710,8 @@ stable
 as $$
   select case
     when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 100
+    when lower(coalesce(p_item_name, '')) like '%wagon home%' then 40
+    when lower(coalesce(p_item_name, '')) like '%caged wagon%' then 3
     when lower(coalesce(p_item_name, '')) like '%heavy wagon%' then 60
     when lower(coalesce(p_item_name, '')) like '%light wagon%' then 25
     when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 10
@@ -1827,6 +1866,8 @@ begin
   perform public.upsert_item_catalog_entry('Bag of Holding', 'storage', 'Mythical', 'Market Storage', array['100 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 100, 'A magical bag with 100 storage slots.', true, 2040);
   perform public.upsert_item_catalog_entry('Light Wagon', 'storage', 'Rare', 'Market Storage', array['25 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 25, 'A light wagon with 25 storage slots.', true, 2050);
   perform public.upsert_item_catalog_entry('Heavy Wagon', 'storage', 'Epic', 'Market Storage', array['60 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 60, 'A heavy wagon with 60 storage slots.', true, 2060);
+  perform public.upsert_item_catalog_entry('Caged Wagon', 'storage', 'Epic', 'Market Storage', array['Wagon stable', '3 animal slots']::text[], 1, false, '{}'::jsonb, '', false, 3, 'A caged wagon that can carry up to 3 animal companions.', true, 2062);
+  perform public.upsert_item_catalog_entry('Wagon Home', 'storage', 'Epic', 'Market Storage', array['Mobile home', '40 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 40, 'A wagon home with 40 storage slots.', true, 2064);
   perform public.upsert_item_catalog_entry('Torch', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A basic torch for travel and dungeon work.', true, 2070);
   perform public.upsert_item_catalog_entry('Arrow', 'weapon', 'Common', 'Market Supplies', array['Ammunition']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A single arrow for bows and ranged combat.', true, 2075);
   perform public.upsert_item_catalog_entry('Rope', 'tool', 'Common', 'Market Supplies', array['Travel supply']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A coil of sturdy rope.', true, 2080);
@@ -1858,9 +1899,11 @@ begin
     when 'bag-of-holding' then 100
     when 'light-wagon' then 25
     when 'heavy-wagon' then 60
+    when 'caged-wagon' then 3
+    when 'wagon-home' then 40
     else storage_capacity
   end
-  where item_key in ('waist-pouch', 'back-bag', 'light-duffle', 'heavy-duffle', 'bag-of-holding', 'light-wagon', 'heavy-wagon');
+  where item_key in ('waist-pouch', 'back-bag', 'light-duffle', 'heavy-duffle', 'bag-of-holding', 'light-wagon', 'heavy-wagon', 'caged-wagon', 'wagon-home');
 
   delete from public.item_catalog
   where item_key in ('basic-meal', 'tavern-meal', 'inn-room', 'fine-inn')
@@ -2772,6 +2815,7 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_item public.inventory_items%rowtype;
+  v_parent_item public.inventory_items%rowtype;
   v_target public.inventory_items%rowtype;
   v_character public.characters%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
@@ -2946,14 +2990,27 @@ begin
   end if;
 
   if v_patch ? 'slotIndex' or v_patch ? 'parentItemId' then
-    if v_item.item_type = 'pet' then
-      raise exception 'Pets can only occupy active pet slots or house stable slots.';
-    end if;
-
     v_original_parent_item_id := v_item.parent_item_id;
     v_original_slot_index := v_item.slot_index;
     v_parent_item_id := case when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid else v_item.parent_item_id end;
     v_slot_index := case when v_patch ? 'slotIndex' then (v_patch->>'slotIndex')::int else v_item.slot_index end;
+
+    if v_item.item_type = 'pet' then
+      if v_parent_item_id is null then
+        raise exception 'Pets can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
+      end if;
+
+      select * into v_parent_item
+      from public.inventory_items
+      where id = v_parent_item_id
+        and character_id = v_item.character_id
+        and is_storage = true;
+
+      if v_parent_item.id is null or lower(v_parent_item.item_name) not like '%caged wagon%' then
+        raise exception 'Pets can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
+      end if;
+    end if;
+
     v_capacity := public.assert_inventory_slot_capacity(v_character, v_parent_item_id, v_slot_index);
 
     select * into v_target
@@ -3385,6 +3442,18 @@ create table if not exists public.player_houses (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.house_access_permissions (
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  grantee_user_id uuid not null references public.profiles(id) on delete cascade,
+  can_access_house boolean not null default false,
+  can_access_stable boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (owner_user_id, grantee_user_id),
+  constraint house_access_permissions_not_self check (owner_user_id <> grantee_user_id),
+  constraint house_access_permissions_some_access check (can_access_house or can_access_stable)
+);
+
 create table if not exists public.house_inventory_items (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
@@ -3514,6 +3583,16 @@ set item_type = 'potion',
     potion_quality = null
 where lower(item_name) in ('empty flask', 'arcane nector');
 
+update public.inventory_items
+set item_description = left(trim(concat_ws(E'\n\n', nullif(trim(coalesce(item_description, '')), ''), trim(material))), 1500)
+where nullif(trim(coalesce(material, '')), '') is not null
+  and position(lower(trim(material)) in lower(coalesce(item_description, ''))) = 0;
+
+update public.house_inventory_items
+set item_description = left(trim(concat_ws(E'\n\n', nullif(trim(coalesce(item_description, '')), ''), trim(material))), 1500)
+where nullif(trim(coalesce(material, '')), '') is not null
+  and position(lower(trim(material)) in lower(coalesce(item_description, ''))) = 0;
+
 with ranked_house_items as (
   select i.id,
     row_number() over (partition by i.owner_user_id order by greatest(i.slot_index, 0), i.created_at, i.id) as item_rank
@@ -3603,11 +3682,13 @@ create index if not exists wagon_activity_log_wagon_created_idx
   on public.wagon_activity_log (wagon_item_id, created_at desc);
 
 alter table public.player_houses enable row level security;
+alter table public.house_access_permissions enable row level security;
 alter table public.house_inventory_items enable row level security;
 alter table public.campaign_properties enable row level security;
 alter table public.wagon_activity_log enable row level security;
 
 revoke all on public.player_houses from anon, authenticated;
+revoke all on public.house_access_permissions from anon, authenticated;
 revoke all on public.house_inventory_items from anon, authenticated;
 revoke all on public.campaign_properties from anon, authenticated;
 revoke all on public.wagon_activity_log from anon, authenticated;
@@ -3616,6 +3697,14 @@ drop trigger if exists player_houses_touch_updated_at on public.player_houses;
 create trigger player_houses_touch_updated_at
 before update on public.player_houses
 for each row execute function public.touch_updated_at();
+
+drop trigger if exists house_access_permissions_touch_updated_at on public.house_access_permissions;
+create trigger house_access_permissions_touch_updated_at
+before update on public.house_access_permissions
+for each row execute function public.touch_updated_at();
+
+create index if not exists house_access_permissions_grantee_idx
+  on public.house_access_permissions (grantee_user_id);
 
 drop trigger if exists house_inventory_items_touch_updated_at on public.house_inventory_items;
 create trigger house_inventory_items_touch_updated_at
@@ -3671,8 +3760,18 @@ begin
     raise exception 'Only the Dungeon Master can do that.';
   end if;
 
-  if not p_dm_only and p_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from p_profile.id then
-    raise exception 'You can only manage your own house.';
+  if not p_dm_only
+    and p_profile.role <> 'dm'::public.user_role
+    and p_owner_user_id is distinct from p_profile.id
+    and not exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = p_owner_user_id
+        and a.grantee_user_id = p_profile.id
+        and (a.can_access_house or a.can_access_stable)
+    )
+  then
+    raise exception 'You do not have access to this house.';
   end if;
 
   v_house := public.ensure_player_house(p_owner_user_id);
@@ -3745,6 +3844,55 @@ as $$
     'slotIndex', p_property.slot_index,
     'storageCapacity', p_property.storage_capacity
   )
+$$;
+
+create or replace function public.house_access_to_json(
+  p_profile public.profiles,
+  p_owner_user_id uuid
+)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'owner', p_owner_user_id is not distinct from p_profile.id,
+    'dm', p_profile.role = 'dm'::public.user_role,
+    'house', p_profile.role = 'dm'::public.user_role
+      or p_owner_user_id is not distinct from p_profile.id
+      or exists (
+        select 1
+        from public.house_access_permissions a
+        where a.owner_user_id = p_owner_user_id
+          and a.grantee_user_id = p_profile.id
+          and a.can_access_house
+      ),
+    'stable', p_profile.role = 'dm'::public.user_role
+      or p_owner_user_id is not distinct from p_profile.id
+      or exists (
+        select 1
+        from public.house_access_permissions a
+        where a.owner_user_id = p_owner_user_id
+          and a.grantee_user_id = p_profile.id
+          and a.can_access_stable
+      )
+  )
+$$;
+
+create or replace function public.house_permissions_to_json(p_owner_user_id uuid)
+returns jsonb
+language sql
+stable
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'ownerUserId', a.owner_user_id,
+    'granteeUserId', a.grantee_user_id,
+    'granteeName', coalesce(nullif(p.display_name, ''), p.username::text, 'Player'),
+    'house', a.can_access_house,
+    'stable', a.can_access_stable
+  ) order by coalesce(nullif(p.display_name, ''), p.username::text, 'Player')), '[]'::jsonb)
+  from public.house_access_permissions a
+  join public.profiles p on p.id = a.grantee_user_id
+  where a.owner_user_id = p_owner_user_id
 $$;
 
 create or replace function public.house_inventory_items_stackable(a public.house_inventory_items, b public.house_inventory_items)
@@ -4254,6 +4402,12 @@ begin
 
   return jsonb_build_object(
     'house', public.house_record_to_json(v_house),
+    'access', public.house_access_to_json(v_profile, p_owner_user_id),
+    'permissions', case
+      when v_profile.role = 'dm'::public.user_role or p_owner_user_id is not distinct from v_profile.id
+        then public.house_permissions_to_json(p_owner_user_id)
+      else '[]'::jsonb
+    end,
     'items', (
       select coalesce(jsonb_agg(public.house_item_record_to_json(i) order by i.slot_index, i.item_name), '[]'::jsonb)
       from public.house_inventory_items i
@@ -4484,6 +4638,24 @@ begin
 
   v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
 
+  if v_profile.role <> 'dm'::public.user_role
+    and v_item.owner_user_id is distinct from v_profile.id
+    and not exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = v_item.owner_user_id
+        and a.grantee_user_id = v_profile.id
+        and case
+          when public.normalize_item_type(v_item.item_type) = 'pet'
+            or (v_item.parent_item_id is null and v_item.slot_index >= public.house_stable_slot_offset())
+            then a.can_access_stable
+          else a.can_access_house
+        end
+    )
+  then
+    raise exception 'You do not have permission to use that house section.';
+  end if;
+
   if (v_patch ? 'name' or v_patch ? 'type' or v_patch ? 'rarity' or v_patch ? 'quantity' or v_patch ? 'isStorage' or v_patch ? 'isAccessory' or v_patch ? 'storageCapacity' or v_patch ? 'modifiers' or v_patch ? 'enchantment' or v_patch ? 'material' or v_patch ? 'enhancementCount' or v_patch ? 'isTwoHanded' or v_patch ? 'itemDescription' or v_patch ? 'potionStrength' or v_patch ? 'potionProperty' or v_patch ? 'potionQuality') and v_profile.role <> 'dm'::public.user_role then
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
@@ -4653,6 +4825,24 @@ begin
   if v_item.id is null then raise exception 'House item not found.'; end if;
 
   perform public.assert_house_access(v_profile, v_item.owner_user_id, false);
+
+  if v_profile.role <> 'dm'::public.user_role
+    and v_item.owner_user_id is distinct from v_profile.id
+    and not exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = v_item.owner_user_id
+        and a.grantee_user_id = v_profile.id
+        and case
+          when public.normalize_item_type(v_item.item_type) = 'pet'
+            or (v_item.parent_item_id is null and v_item.slot_index >= public.house_stable_slot_offset())
+            then a.can_access_stable
+          else a.can_access_house
+        end
+    )
+  then
+    raise exception 'You do not have permission to use that house section.';
+  end if;
 
   v_drop_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
 
@@ -4972,7 +5162,22 @@ begin
   v_house := public.assert_house_access(v_profile, v_house_item.owner_user_id, false);
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
 
-  if v_profile.role <> 'dm' and v_character.owner_user_id is distinct from v_house.owner_user_id then
+  if v_profile.role <> 'dm'::public.user_role
+    and not exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = v_house.owner_user_id
+        and a.grantee_user_id = v_profile.id
+        and case
+          when public.normalize_item_type(v_house_item.item_type) = 'pet' then a.can_access_stable
+          else a.can_access_house
+        end
+    )
+    and (
+      v_character.owner_user_id is distinct from v_house.owner_user_id
+      or v_house.owner_user_id is distinct from v_profile.id
+    )
+  then
     raise exception 'That character cannot pull from this house.';
   end if;
 
@@ -5332,13 +5537,15 @@ begin
   if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
     raise exception 'Empty this storage item before moving it into a wagon.';
   end if;
-  if public.normalize_item_type(v_item.item_type) = 'pet' then
-    raise exception 'Animals can only occupy active pet slots or house stable slots.';
-  end if;
-
   select * into v_wagon from public.inventory_items where id = p_wagon_id;
   if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
     raise exception 'Wagon storage not found.';
+  end if;
+
+  if public.normalize_item_type(v_item.item_type) = 'pet'
+    and lower(v_wagon.item_name) not like '%caged wagon%'
+  then
+    raise exception 'Animals can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
   end if;
 
   select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
@@ -5727,6 +5934,8 @@ grant execute on function public.assert_house_access(public.profiles, uuid, bool
 grant execute on function public.house_record_to_json(public.player_houses) to anon, authenticated;
 grant execute on function public.house_item_record_to_json(public.house_inventory_items) to anon, authenticated;
 grant execute on function public.property_record_to_json(public.campaign_properties) to anon, authenticated;
+grant execute on function public.house_access_to_json(public.profiles, uuid) to anon, authenticated;
+grant execute on function public.house_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_wagon(text, text) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
@@ -6643,6 +6852,8 @@ where p.vendor_id = v.id
     'city-market-bag-of-holding',
     'city-market-light-wagon',
     'city-market-heavy-wagon',
+    'city-market-caged-wagon',
+    'city-market-wagon-home',
     'city-market-torch',
     'city-market-arrow',
     'city-market-rope',
@@ -6681,6 +6892,8 @@ join (values
   ('city-market-bag-of-holding', 'Bag of Holding', 'Rowan sells a magical bag with 100 storage slots.', 'storage', 'Mythical', 2500000, null, 'Rowan - Storage', 'bag-of-holding', 50),
   ('city-market-light-wagon', 'Light Wagon', 'Rowan sells a light wagon with 25 storage slots.', 'storage', 'Rare', 2500, null, 'Rowan - Storage', 'light-wagon', 60),
   ('city-market-heavy-wagon', 'Heavy Wagon', 'Rowan sells a heavy wagon with 60 storage slots.', 'storage', 'Epic', 6000, null, 'Rowan - Storage', 'heavy-wagon', 70),
+  ('city-market-caged-wagon', 'Caged Wagon', 'Rowan sells a caged wagon that acts as a 3-animal stable.', 'storage', 'Epic', 8000, null, 'Rowan - Storage', 'caged-wagon', 80),
+  ('city-market-wagon-home', 'Wagon Home', 'Rowan sells a wagon home with 40 storage slots.', 'storage', 'Epic', 10000, null, 'Rowan - Storage', 'wagon-home', 90),
   ('city-market-torch', 'Torch', 'Cedrick sells a basic torch for travel and dungeon work.', 'tool', 'Common', 3, null, 'Cedrick - Supplies', 'torch', 100),
   ('city-market-arrow', 'Arrow', 'Cedrick sells individual arrows for bows and ranged combat.', 'weapon', 'Common', 10, null, 'Cedrick - Supplies', 'arrow', 105),
   ('city-market-rope', 'Rope', 'Cedrick sells a coil of sturdy rope.', 'tool', 'Common', 10, null, 'Cedrick - Supplies', 'rope', 110),
@@ -7751,6 +7964,59 @@ begin
   set is_locked = case when v_patch ? 'locked' then (v_patch->>'locked')::boolean else is_locked end
   where owner_user_id = p_owner_user_id
   returning * into v_house;
+
+  return public.get_player_house(p_session_token, p_owner_user_id);
+end;
+$$;
+
+create or replace function public.set_player_house_permissions(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_permissions jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_entry jsonb;
+  v_grantee_user_id uuid;
+  v_house boolean;
+  v_stable boolean;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  perform public.ensure_player_house(p_owner_user_id);
+
+  if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the house owner or Dungeon Master can change house permissions.';
+  end if;
+
+  delete from public.house_access_permissions
+  where owner_user_id = p_owner_user_id;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_permissions, '[]'::jsonb)) loop
+    v_grantee_user_id := nullif(coalesce(v_entry->>'granteeUserId', v_entry->>'grantee_user_id', ''), '')::uuid;
+    v_house := coalesce((v_entry->>'house')::boolean, false);
+    v_stable := coalesce((v_entry->>'stable')::boolean, false);
+
+    if v_grantee_user_id is null or v_grantee_user_id = p_owner_user_id or not (v_house or v_stable) then
+      continue;
+    end if;
+
+    if not exists (select 1 from public.profiles where id = v_grantee_user_id) then
+      raise exception 'A selected player account does not exist.';
+    end if;
+
+    insert into public.house_access_permissions (owner_user_id, grantee_user_id, can_access_house, can_access_stable)
+    values (p_owner_user_id, v_grantee_user_id, v_house, v_stable)
+    on conflict (owner_user_id, grantee_user_id) do update
+    set can_access_house = excluded.can_access_house,
+        can_access_stable = excluded.can_access_stable;
+  end loop;
 
   return public.get_player_house(p_session_token, p_owner_user_id);
 end;
@@ -8893,6 +9159,7 @@ grant execute on function public.house_item_quantity_by_name(uuid, text, text) t
 grant execute on function public.accessible_item_quantity_by_name(uuid, text, text) to anon, authenticated;
 grant execute on function public.consume_crafting_item_by_name(uuid, text, numeric, text) to anon, authenticated;
 grant execute on function public.update_player_house(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.set_player_house_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.consume_forge_materials(uuid, uuid, numeric, int, text, text) to anon, authenticated;
 grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int) to anon, authenticated;
 grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text) to anon, authenticated;
@@ -12622,6 +12889,7 @@ grant execute on function public.get_character_ledger(text) to anon, authenticat
 grant execute on function public.create_campaign_character(text, text, uuid, text, text, text) to anon, authenticated;
 grant execute on function public.ensure_character_starter_armor(uuid) to anon, authenticated;
 grant execute on function public.update_campaign_character(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.delete_campaign_character(text, uuid) to anon, authenticated;
 grant execute on function public.set_character_gift_inventory_open(text, uuid, boolean) to anon, authenticated;
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;
@@ -12834,6 +13102,11 @@ for each row execute function public.touch_app_live_update_trigger('cities,asset
 drop trigger if exists app_live_house_inventory_items on public.house_inventory_items;
 create trigger app_live_house_inventory_items
 after insert or update or delete on public.house_inventory_items
+for each row execute function public.touch_app_live_update_trigger('house,inventory,cities');
+
+drop trigger if exists app_live_house_access_permissions on public.house_access_permissions;
+create trigger app_live_house_access_permissions
+after insert or update or delete on public.house_access_permissions
 for each row execute function public.touch_app_live_update_trigger('house,inventory,cities');
 
 drop trigger if exists app_live_campaign_properties on public.campaign_properties;

@@ -162,7 +162,7 @@ export function ItemEditorFields({
 }) {
   const sortedSpells = useMemo(() => [...spells].sort((a, b) => a.name.localeCompare(b.name)), [spells]);
   const modifierList = modifierEntries(draft.modifiers);
-  const showLoadoutDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.material.trim()) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
+  const showForgeDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
   const enchantable = canManuallyEnchant(draft) || Boolean(draft.enchantment.trim());
   const enhanceable = canManuallyEnhance(draft);
   const legendaryWeapon = draft.type === 'weapon' && draft.rarity === 'Legendary';
@@ -199,8 +199,8 @@ export function ItemEditorFields({
     <>
       <TextField placeholder="Item name" value={draft.name} onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} />
       <TextAreaField
-        rows={8}
-        className="min-h-48 resize-y leading-6"
+        rows={10}
+        className="min-h-56 resize-y leading-6"
         value={draft.itemDescription}
         onChange={(event) => onDraftChange({ ...draft, itemDescription: event.target.value })}
         placeholder="Inspection description"
@@ -259,18 +259,16 @@ export function ItemEditorFields({
         </div>
       )}
 
-      {showLoadoutDetails && (
+      {draft.type === 'weapon' && (
+        <label className="flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 px-3 text-sm font-black">
+          <input type="checkbox" checked={draft.isTwoHanded} onChange={(event) => onDraftChange({ ...draft, isTwoHanded: event.target.checked })} />
+          Two-handed weapon
+        </label>
+      )}
+
+      {showForgeDetails && (
         <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-          <p className="eyebrow">Equipment details</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <TextField placeholder="Material, e.g. Mythril" value={draft.material} onChange={(event) => onDraftChange({ ...draft, material: event.target.value })} />
-            {draft.type === 'weapon' && (
-              <label className="flex min-h-12 items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 px-3 text-sm font-black">
-                <input type="checkbox" checked={draft.isTwoHanded} onChange={(event) => onDraftChange({ ...draft, isTwoHanded: event.target.checked })} />
-                Two-handed weapon
-              </label>
-            )}
-          </div>
+          <p className="eyebrow">Arcane forge</p>
           {enchantable && (
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Weapon enchantment</span>

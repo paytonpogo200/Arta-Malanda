@@ -144,6 +144,11 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
     setSelectedId(character.id);
   }
 
+  function removeCharacter(characterId: string) {
+    setCharacters((current) => current.filter((entry) => entry.id !== characterId));
+    setSelectedId('');
+  }
+
   async function assignCharacter(character: Character, ownerUserId: string) {
     if (!isDm || saving) return;
     setSaving(true);
@@ -192,6 +197,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
             classes={classes}
             characters={characters}
             onSaved={updateCharacter}
+            onDeleted={removeCharacter}
           />
         </>
       ) : (

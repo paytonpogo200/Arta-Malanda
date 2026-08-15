@@ -1,5 +1,5 @@
 import { normalizeInventoryItem } from '@/features/inventory/data';
-import type { CampaignProperty, House, InventoryItem, PropertyLocation, PropertyType } from '@/lib/types';
+import type { CampaignProperty, House, HouseAccess, HousePermission, InventoryItem, PropertyLocation, PropertyType } from '@/lib/types';
 
 export const PROPERTY_TYPES: PropertyType[] = ['animal', 'wagon', 'pet', 'mount', 'other'];
 export const PROPERTY_LOCATIONS: PropertyLocation[] = ['with_character', 'at_house'];
@@ -8,6 +8,8 @@ export type HousePayload = {
   house: House | null;
   items: InventoryItem[];
   properties: CampaignProperty[];
+  access: HouseAccess;
+  permissions: HousePermission[];
 };
 
 function numberFrom(value: unknown, fallback = 0) {
@@ -57,11 +59,34 @@ export function normalizeProperty(value: unknown): CampaignProperty {
   };
 }
 
+export function normalizeHouseAccess(value: unknown): HouseAccess {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    owner: Boolean(source.owner),
+    dm: Boolean(source.dm),
+    house: Boolean(source.house),
+    stable: Boolean(source.stable)
+  };
+}
+
+export function normalizeHousePermission(value: unknown): HousePermission {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    ownerUserId: String(source.ownerUserId ?? ''),
+    granteeUserId: String(source.granteeUserId ?? ''),
+    granteeName: String(source.granteeName ?? 'Player'),
+    house: Boolean(source.house),
+    stable: Boolean(source.stable)
+  };
+}
+
 export function normalizeHousePayload(value: unknown): HousePayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     house: normalizeHouse(source.house),
     items: Array.isArray(source.items) ? source.items.map(normalizeInventoryItem).filter((item) => item.id) : [],
-    properties: Array.isArray(source.properties) ? source.properties.map(normalizeProperty).filter((property) => property.id) : []
+    properties: Array.isArray(source.properties) ? source.properties.map(normalizeProperty).filter((property) => property.id) : [],
+    access: normalizeHouseAccess(source.access),
+    permissions: Array.isArray(source.permissions) ? source.permissions.map(normalizeHousePermission).filter((permission) => permission.granteeUserId) : []
   };
 }
