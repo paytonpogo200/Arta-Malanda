@@ -304,7 +304,7 @@ h3,
 }
 
 .character-level-frame-2::before {
-  --level-frame-opacity: .97;
+  --level-frame-opacity: 1;
 }
 
 .character-level-frame-3::after {
