@@ -47,8 +47,6 @@ type BreakdownSelection = {
   quantity: number;
 };
 
-type ConversionConfirmMode = 'breakdown' | 'forge' | 'dragon-scales';
-
 const EMPTY_STATE: ConversionState = {
   recipes: [],
   convertibleItems: [],
@@ -156,7 +154,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
   const [scaleSelections, setScaleSelections] = useState<Record<string, number>>({});
   const [dragonSelections, setDragonSelections] = useState<Record<string, number>>({});
   const [selectedRecipeKey, setSelectedRecipeKey] = useState('');
-  const [confirmConversion, setConfirmConversion] = useState<ConversionConfirmMode | null>(null);
+  const [dragonConfirmOpen, setDragonConfirmOpen] = useState(false);
   const [confirmBreakdown, setConfirmBreakdown] = useState<BreakdownSelection | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -226,7 +224,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
         setScaleSelections({});
         setDragonSelections({});
         setSelectedRecipeKey('');
-        setConfirmConversion(null);
+        setDragonConfirmOpen(false);
         setConfirmBreakdown(null);
         onConverted();
       }
@@ -246,27 +244,11 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
     });
   }
 
-  function runConfirmedConversion() {
-    if (confirmConversion === 'breakdown' && breakdownSelection) {
-      convertBreakdown(breakdownSelection, breakdownSelection.entry.hasExtras);
-      return;
-    }
-
-    if (confirmConversion === 'forge' && selectedForgeRecipe) {
-      void runAction({
-        action: 'scales-to-item',
-        recipeKey: selectedForgeRecipe.key,
-        selections: selectedScaleItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
-      });
-      return;
-    }
-
-    if (confirmConversion === 'dragon-scales' && selectedDragonTotal >= 25) {
-      void runAction({
-        action: 'dragon-scales',
-        selections: selectedDragonItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
-      });
-    }
+  function refineDragonScales() {
+    void runAction({
+      action: 'dragon-scales',
+      selections: selectedDragonItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
+    });
   }
 
   return (
@@ -313,7 +295,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
                 className="mt-3 w-full"
                 variant="primary"
                 disabled={saving || !breakdownSelection}
-                onClick={() => setConfirmConversion('breakdown')}
+                onClick={() => breakdownSelection && (breakdownSelection.entry.hasExtras ? setConfirmBreakdown(breakdownSelection) : convertBreakdown(breakdownSelection))}
               >
                 Convert to Scales
               </Button>
@@ -368,7 +350,11 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
                 className="mt-3 w-full"
                 variant="primary"
                 disabled={saving || !selectedForgeRecipe}
-                onClick={() => setConfirmConversion('forge')}
+                onClick={() => void runAction({
+                  action: 'scales-to-item',
+                  recipeKey: selectedForgeRecipe?.key,
+                  selections: selectedScaleItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
+                })}
               >
                 Forge Item
               </Button>
@@ -390,7 +376,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => setDragonPickerOpen(true)}>Choose Fragments</Button>
-                <Button variant="teal" disabled={saving || selectedDragonTotal < 25} onClick={() => setConfirmConversion('dragon-scales')}>
+                <Button variant="teal" disabled={saving || selectedDragonTotal < 25} onClick={() => setDragonConfirmOpen(true)}>
                   Forge Dragonscale Scale
                 </Button>
               </div>
@@ -448,79 +434,49 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
         </Modal>
       )}
 
-      {confirmConversion && (
+      {dragonConfirmOpen && (
         <Modal
-          title={confirmConversion === 'breakdown' ? 'Confirm Breakdown' : confirmConversion === 'forge' ? 'Confirm Forge' : 'Confirm Dragon Scale Refining'}
-          onClose={() => setConfirmConversion(null)}
+          title="Confirm Dragon Scale Refining"
+          onClose={() => setDragonConfirmOpen(false)}
         >
           <div className="grid gap-4">
-            {confirmConversion === 'breakdown' && breakdownSelection && (
-              <ConversionPreview
-                inputName={breakdownSelection.entry.item.displayName || breakdownSelection.entry.item.name}
-                inputType={breakdownSelection.entry.item.type}
-                inputRarity={breakdownSelection.entry.item.rarity}
-                inputQuantity={breakdownSelection.quantity}
-                outputName={breakdownSelection.entry.recipe.scaleItemName}
-                outputType="material"
-                outputRarity={breakdownSelection.entry.recipe.rarity}
-                outputQuantity={breakdownSelection.entry.recipe.scaleQuantity * breakdownSelection.quantity}
-                warning={breakdownSelection.entry.hasExtras ? 'This will destroy modifiers, enhancements, runes, and enchantments on the selected gear.' : ''}
-              />
-            )}
-
-            {confirmConversion === 'forge' && selectedForgeRecipe && (
-              <ConversionPreview
-                inputName={selectedForgeRecipe.scaleItemName}
-                inputType="material"
-                inputRarity={selectedForgeRecipe.rarity}
-                inputQuantity={selectedForgeRecipe.scaleQuantity}
-                outputName={selectedForgeRecipe.itemName}
-                outputType={selectedForgeRecipe.itemType}
-                outputRarity={selectedForgeRecipe.rarity}
-                outputQuantity={1}
-                warning={selectedScaleTotal > selectedForgeRecipe.scaleQuantity ? `${formatQuantity(selectedScaleTotal - selectedForgeRecipe.scaleQuantity)} unused scale${selectedScaleTotal - selectedForgeRecipe.scaleQuantity === 1 ? '' : 's'} stay in Jursh's inventory.` : ''}
-              />
-            )}
-
-            {confirmConversion === 'dragon-scales' && (
-              <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
-                <div className="grid gap-2">
-                  <p className="eyebrow">Using</p>
-                  {selectedDragonItems.map((entry) => (
-                    <PreviewItem
-                      key={sourceItemKey(entry)}
-                      name={entry.item.displayName || entry.item.name}
-                      type={entry.item.type}
-                      rarity={entry.item.rarity}
-                      quantity={entry.quantity}
-                    />
-                  ))}
-                </div>
-                <ConversionArrow />
-                <div className="grid gap-2">
-                  <p className="eyebrow">Creating</p>
+            <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+              <div className="grid gap-2">
+                <p className="eyebrow">Using</p>
+                {selectedDragonItems.map((entry) => (
                   <PreviewItem
-                    name="Dragonscale Scale"
-                    type="material"
-                    rarity="Legendary"
-                    quantity={selectedDragonOutput}
-                    featured
+                    key={sourceItemKey(entry)}
+                    name={entry.item.displayName || entry.item.name}
+                    type={entry.item.type}
+                    rarity={entry.item.rarity}
+                    quantity={entry.quantity}
                   />
-                  {selectedDragonReturned > 0 && (
-                    <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">
-                      {formatQuantity(selectedDragonConsumed)} fragments are consumed. {formatQuantity(selectedDragonReturned)} extra fragment{selectedDragonReturned === 1 ? '' : 's'} stay in Jursh&apos;s inventory.
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
-            )}
+              <ConversionArrow />
+              <div className="grid gap-2">
+                <p className="eyebrow">Creating</p>
+                <PreviewItem
+                  name="Dragonscale Scale"
+                  type="material"
+                  rarity="Legendary"
+                  quantity={selectedDragonOutput}
+                  featured
+                />
+                {selectedDragonReturned > 0 && (
+                  <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">
+                    {formatQuantity(selectedDragonConsumed)} fragments are consumed. {formatQuantity(selectedDragonReturned)} extra fragment{selectedDragonReturned === 1 ? '' : 's'} stay in Jursh&apos;s inventory.
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" disabled={saving} onClick={() => setConfirmConversion(null)}>Back</Button>
+              <Button variant="secondary" disabled={saving} onClick={() => setDragonConfirmOpen(false)}>Back</Button>
               <Button
                 variant="primary"
-                disabled={saving || (confirmConversion === 'breakdown' && !breakdownSelection) || (confirmConversion === 'forge' && !selectedForgeRecipe) || (confirmConversion === 'dragon-scales' && selectedDragonTotal < 25)}
-                onClick={runConfirmedConversion}
+                disabled={saving || selectedDragonTotal < 25}
+                onClick={refineDragonScales}
               >
                 Confirm Craft
               </Button>

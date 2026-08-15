@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeUpdateAssetsPayload, type UpdateAssetsPayload } from '@/features/assets/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
 import { SPELL_SCHOOLS, SPELL_TYPES } from '@/features/spells/data';
@@ -277,7 +277,7 @@ export function UpdateAssetsPanel() {
                   <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory</span><NumberInput value={Number(draft.inventorySlots ?? 0)} onValueChange={(value) => updateDraft('inventorySlots', value)} /></label>
                   <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Spells</span><NumberInput value={Number(draft.spellSlots ?? 0)} onValueChange={(value) => updateDraft('spellSlots', value)} /></label>
                 </div>
-                <TextField type="color" value={String(draft.tokenColor ?? '#9caf79')} onChange={(event) => updateDraft('tokenColor', event.target.value)} />
+                <ColorField aria-label="Class color" value={String(draft.tokenColor ?? '#9caf79')} onChange={(event) => updateDraft('tokenColor', event.target.value)} />
                 <div className="grid gap-2 sm:grid-cols-3">
                   {ATTRIBUTE_KEYS.map((key) => {
                     const attrs = (draft.attributes ?? {}) as Record<string, number>;

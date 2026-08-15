@@ -5,7 +5,7 @@ import { ArrowLeft, Loader2, Plus, RefreshCw, UserRound } from 'lucide-react';
 import { CharacterSheet } from '@/components/characters/CharacterSheet';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeLedgerPayload, type CampaignProfile } from '@/features/characters/data';
 import { armorDefenseBase } from '@/features/characters/stats';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
@@ -236,7 +236,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                 {profiles.map((entry) => <option key={entry.id} value={entry.id}>{ownerLabel(entry)}</option>)}
               </SelectField>
               <div className="grid gap-2 sm:grid-cols-[1fr_4.5rem]">
-                <TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
+                <ColorField aria-label="Token color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} />
                 <div className="grid min-h-12 place-items-center rounded-xl border border-white/20" style={{ backgroundColor: draft.tokenColor }}>
                   <UserRound size={20} />
                 </div>

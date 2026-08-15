@@ -1347,7 +1347,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 setModifier={setCraftModifier}
               />
             )}
-            <Button variant="primary" disabled={saving || !canConfirmForge} onClick={() => setCraftConfirmOpen(true)}>
+            <Button variant="primary" disabled={saving || !canConfirmForge} onClick={craftModal.mode === 'dragon-scales' ? () => setCraftConfirmOpen(true) : runForgeAction}>
               {craftModal.mode === 'craft' || craftModal.mode === 'dragon-scales' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
               Craft
             </Button>
