@@ -14,6 +14,13 @@ function number(value: unknown, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function optionalNumber(value: unknown, fallback: number) {
+  const cleaned = text(value);
+  if (!cleaned) return fallback;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function booleanValue(value: unknown) {
   if (typeof value === 'boolean') return value;
   return ['true', 'yes', '1'].includes(text(value).toLowerCase());
@@ -39,9 +46,43 @@ function splitList(value: unknown) {
   return text(value, 'Any').split(',').map((entry) => entry.trim()).filter(Boolean);
 }
 
+function headerMap(headers: unknown[]) {
+  const map = new Map<string, number>();
+  headers.forEach((header, index) => {
+    const key = text(header)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+    if (key) map.set(key, index);
+  });
+  return map;
+}
+
+function getColumn(row: unknown[], headers: Map<string, number>, aliases: string[], fallbackIndex: number) {
+  for (const alias of aliases) {
+    const index = headers.get(alias.toLowerCase().replace(/[^a-z0-9]+/g, ''));
+    if (index !== undefined) return row[index];
+  }
+  return row[fallbackIndex];
+}
+
 function rarity(value: unknown): ItemRarity {
   const normalized = text(value, 'Common');
   return RARITIES.includes(normalized as ItemRarity) ? normalized as ItemRarity : 'Common';
+}
+
+function inferredConversion(name: string) {
+  const normalized = name.toLowerCase();
+  const material = ['dragonscale', 'vaylium', 'mythril', 'steel'].find((entry) => normalized.startsWith(entry));
+  if (!material) return { scaleItem: '', scaleQuantity: 0 };
+  const scaleItem = `${material.charAt(0).toUpperCase()}${material.slice(1)} Scale`;
+  const scaleQuantity = normalized.includes('dagger')
+    ? 0.5
+    : normalized.includes('battleaxe') || normalized.includes('mace')
+      ? 2
+      : normalized.includes('armor')
+        ? 3
+        : 1;
+  return { scaleItem, scaleQuantity };
 }
 
 export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): ItemType {
@@ -145,9 +186,10 @@ export function parseLootWorkbook(buffer: Buffer) {
   const mythicalLuckFormula = text(generator?.F3?.f);
   const eligibilityFormula = text(helper?.J2?.f);
   const adjustedWeightFormula = text(helper?.K2?.f);
+  const lootHeaders = headerMap(lootRows[0] ?? []);
 
   const rows = lootRows.slice(1).map((row) => {
-    const name = text(row[0])
+    const name = text(getColumn(row, lootHeaders, ['Item', 'Name', 'Item Name'], 0))
       .replace(/\bMountian Rune\b/gi, 'Mountain Rune')
       .replace(/\bFine Clothe\b/gi, 'Fine Cloth')
       .replace(/\bCooking pots\b/gi, 'Cooking Pots')
@@ -161,24 +203,34 @@ export function parseLootWorkbook(buffer: Buffer) {
       .replace(/\bTavern meal\b/gi, 'Tavern Meal')
       .replace(/\bFine inn\b/gi, 'Fine Inn');
     if (!name) return null;
-    const type = categoryToItemType(row[1], name);
+    const typeValue = getColumn(row, lootHeaders, ['Type', 'Category', 'Item Type'], 1);
+    const type = categoryToItemType(typeValue, name);
     const pool = `${typeLabel(type)} Catalog`;
-    const minQuantity = Math.max(1, number(row[7], 1));
+    const minQuantity = Math.max(0.5, number(getColumn(row, lootHeaders, ['Min Qty', 'Min Quantity', 'Minimum Quantity'], 7), 1));
+    const inferred = inferredConversion(name);
+    const convertScaleItem = text(getColumn(row, lootHeaders, ['Convert Material', 'Convert Scale Item', 'Convert Scale', 'Scale Item'], 12), inferred.scaleItem);
+    const convertScaleNumber = optionalNumber(getColumn(row, lootHeaders, ['Convert Scale Number', 'Convert Scale Quantity', 'Scale Quantity'], 13), inferred.scaleQuantity);
+    const isConvertible = booleanValue(getColumn(row, lootHeaders, ['Convertible'], 11));
+    const canForgeDragonscaleScale = booleanValue(getColumn(row, lootHeaders, ['Can be crafted into Dragonscale Scales', 'Dragon Scale Fragment', 'Dragonscale Fragment'], 14));
     return {
       pool,
       poolKey: `catalog-${slug(type)}`,
       name,
       type,
-      biomes: splitList(row[2]),
-      minDifficulty: Math.max(1, number(row[3], 1)),
-      maxDifficulty: Math.max(1, number(row[4], 5)),
-      rarity: rarity(row[5]),
-      weight: Math.max(0, number(row[6], 1)),
+      biomes: splitList(getColumn(row, lootHeaders, ['Biomes', 'Biome'], 2)),
+      minDifficulty: Math.max(1, number(getColumn(row, lootHeaders, ['Min Difficulty', 'Minimum Difficulty'], 3), 1)),
+      maxDifficulty: Math.max(1, number(getColumn(row, lootHeaders, ['Max Difficulty', 'Maximum Difficulty'], 4), 5)),
+      rarity: rarity(getColumn(row, lootHeaders, ['Rarity'], 5)),
+      weight: Math.max(0, number(getColumn(row, lootHeaders, ['Loot Pool Weight', 'Weight', 'Base Weight'], 6), 1)),
       minQuantity,
-      maxQuantity: Math.max(minQuantity, number(row[8], minQuantity)),
-      towerBaseOnly: booleanValue(row[9]),
-      stackable: booleanValueDefault(row[10], true),
-      notes: ''
+      maxQuantity: Math.max(minQuantity, number(getColumn(row, lootHeaders, ['Max Qty', 'Max Quantity', 'Maximum Quantity'], 8), minQuantity)),
+      towerBaseOnly: booleanValue(getColumn(row, lootHeaders, ['Tower and Base Only', 'Tower Base Only'], 9)),
+      stackable: booleanValueDefault(getColumn(row, lootHeaders, ['Stackable', 'Is Stackable'], 10), true),
+      convertible: isConvertible,
+      convertScaleItem,
+      convertScaleNumber,
+      canForgeDragonscaleScale,
+      notes: text(getColumn(row, lootHeaders, ['Notes', 'Description'], 15))
     };
   }).filter(Boolean);
 

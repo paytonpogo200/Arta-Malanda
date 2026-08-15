@@ -861,17 +861,19 @@ declare
   v_category jsonb;
   v_entity jsonb;
   v_category_key text;
+  v_entity_key text;
+  v_entity_name text;
+  v_imported_category_keys text[] := array[]::text[];
+  v_imported_entity_keys text[] := array[]::text[];
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can import the bestiary.'; end if;
 
-  delete from public.bestiary_entities where true;
-  delete from public.bestiary_categories where true;
-
   for v_category in select value from jsonb_array_elements(coalesce(p_categories, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_category->>'key', ''), 'unsorted');
+    v_imported_category_keys := array_append(v_imported_category_keys, v_category_key);
 
     insert into public.bestiary_categories (category_key, name, display_order)
     values (
@@ -887,6 +889,10 @@ begin
   for v_entity in select value from jsonb_array_elements(coalesce(p_entities, '[]'::jsonb))
   loop
     v_category_key := coalesce(nullif(v_entity->>'category', ''), 'unsorted');
+    v_entity_name := coalesce(nullif(v_entity->>'name', ''), 'Unknown Entity');
+    v_entity_key := coalesce(nullif(v_entity->>'key', ''), lower(regexp_replace(v_category_key || '-' || v_entity_name, '[^a-z0-9]+', '-', 'g')));
+    v_imported_category_keys := array_append(v_imported_category_keys, v_category_key);
+    v_imported_entity_keys := array_append(v_imported_entity_keys, v_entity_key);
 
     insert into public.bestiary_categories (category_key, name, display_order)
     values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
@@ -905,8 +911,8 @@ begin
       display_order
     )
     values (
-      coalesce(nullif(v_entity->>'key', ''), gen_random_uuid()::text),
-      coalesce(nullif(v_entity->>'name', ''), 'Unknown Entity'),
+      v_entity_key,
+      v_entity_name,
       v_category_key,
       greatest(0, coalesce((v_entity->>'hp')::int, 0)),
       greatest(0, coalesce((v_entity->>'mana')::int, 0)),
@@ -922,11 +928,17 @@ begin
         hp = excluded.hp,
         mana = excluded.mana,
         wild_score = excluded.wild_score,
-        summary = excluded.summary,
-        details = excluded.details,
+        summary = coalesce(nullif(excluded.summary, ''), public.bestiary_entities.summary),
+        details = coalesce(nullif(excluded.details, ''), public.bestiary_entities.details),
         stats = excluded.stats,
         display_order = excluded.display_order;
   end loop;
+
+  delete from public.bestiary_entities
+  where entity_key <> all(coalesce(v_imported_entity_keys, array[]::text[]));
+
+  delete from public.bestiary_categories
+  where category_key <> all(coalesce(v_imported_category_keys, array[]::text[]));
 
   return public.get_bestiary(p_session_token);
 end;
@@ -13594,6 +13606,12 @@ declare
   v_min_quantity numeric;
   v_max_quantity numeric;
   v_stackable boolean;
+  v_convertible boolean;
+  v_convert_scale_item_name text;
+  v_convert_scale_quantity numeric;
+  v_conversion_material text;
+  v_dragon_scale_fragment boolean;
+  v_notes text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -13667,6 +13685,41 @@ begin
       when '1' then true
       else true
     end;
+    v_convertible := case lower(trim(coalesce(v_row->>'convertible', v_row->>'isConvertible', v_row->>'is_convertible', '')))
+      when 'true' then true
+      when 'yes' then true
+      when '1' then true
+      else false
+    end;
+    v_convert_scale_item_name := public.normalize_item_name(coalesce(nullif(v_row->>'convertScaleItem', ''), nullif(v_row->>'convert_scale_item', ''), nullif(v_row->>'convertMaterial', ''), nullif(v_row->>'convert_material', ''), ''));
+    v_convert_scale_quantity := coalesce(nullif(v_row->>'convertScaleNumber', '')::numeric, nullif(v_row->>'convert_scale_number', '')::numeric, nullif(v_row->>'convertScaleQuantity', '')::numeric, nullif(v_row->>'convert_scale_quantity', '')::numeric, 0);
+    if v_convertible and (v_convert_scale_item_name = '' or v_convert_scale_quantity <= 0) then
+      v_conversion_material := case
+        when lower(v_name) like 'dragonscale %' then 'Dragonscale'
+        when lower(v_name) like 'vaylium %' then 'Vaylium'
+        when lower(v_name) like 'mythril %' then 'Mythril'
+        when lower(v_name) like 'steel %' then 'Steel'
+        else ''
+      end;
+      if v_convert_scale_item_name = '' and v_conversion_material <> '' then
+        v_convert_scale_item_name := v_conversion_material || ' Scale';
+      end if;
+      if v_convert_scale_quantity <= 0 then
+        v_convert_scale_quantity := case
+          when lower(v_name) like '%dagger%' then 0.5
+          when lower(v_name) like '%battleaxe%' or lower(v_name) like '%mace%' then 2
+          when lower(v_name) like '%armor%' then 3
+          else 1
+        end;
+      end if;
+    end if;
+    v_dragon_scale_fragment := case lower(trim(coalesce(v_row->>'canForgeDragonscaleScale', v_row->>'can_forge_dragonscale_scale', v_row->>'dragonScaleFragment', v_row->>'dragon_scale_fragment', '')))
+      when 'true' then true
+      when 'yes' then true
+      when '1' then true
+      else false
+    end;
+    v_notes := coalesce(v_row->>'notes', '');
 
     insert into public.loot_pools (pool_key, name, description, display_order)
     values (v_pool_key, v_pool_name, 'Imported item catalog group.', 100)
@@ -13704,7 +13757,7 @@ begin
       v_stackable,
       v_min_quantity,
       v_max_quantity,
-      coalesce(v_row->>'notes', ''),
+      v_notes,
       true
     );
 
@@ -13720,10 +13773,28 @@ begin
       '',
       false,
       case when v_type_text = 'storage' then public.catalog_storage_capacity(v_name) else 0 end,
-      coalesce(v_row->>'notes', ''),
+      v_notes,
       true,
       100
     );
+
+    if v_convertible and v_convert_scale_item_name <> '' and v_convert_scale_quantity > 0 then
+      v_conversion_material := regexp_replace(v_convert_scale_item_name, '\s+Scale$', '', 'i');
+      perform public.upsert_material_conversion_recipe(
+        v_name,
+        v_name,
+        v_type_text,
+        v_rarity_text,
+        v_conversion_material,
+        v_convert_scale_item_name,
+        v_convert_scale_quantity,
+        100
+      );
+    end if;
+
+    if v_dragon_scale_fragment then
+      perform public.upsert_dragon_scale_fragment(v_name, v_type_text, v_rarity_text, 100);
+    end if;
   end loop;
 
   return public.get_exploration_state(p_session_token);

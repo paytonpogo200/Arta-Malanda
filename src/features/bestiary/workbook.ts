@@ -30,6 +30,11 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, '') || 'entry';
 }
 
+function entityKey(categoryKey: string, name: string) {
+  const nameKey = slugify(name);
+  return categoryKey === 'bosses' ? `boss-${nameKey}` : `${categoryKey}-${nameKey}`;
+}
+
 function numberFrom(value: unknown) {
   const parsed = Number(clean(value).replace(/[^\d.-]/g, ''));
   return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
@@ -129,7 +134,7 @@ export function parseBestiaryWorkbook(buffer: ArrayBuffer): ParsedBestiaryWorkbo
     });
 
     const special = stats['Special Effects'] ?? stats['Special Effect'] ?? '';
-    const key = `${currentCategoryKey}-${slugify(name)}`;
+    const key = entityKey(currentCategoryKey, name);
     entities.set(key, {
       key,
       name,
