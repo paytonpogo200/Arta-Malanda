@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { HousePanel } from '@/components/houses/HousePanel';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
+import { JurshConversionPanel } from '@/components/inventory/JurshConversionPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
@@ -38,6 +39,14 @@ function ownerLabel(profile: CampaignProfile | undefined) {
   return profile.displayName || profile.username || 'Player';
 }
 
+function isJurshBlacksmith(character: Character, profiles: CampaignProfile[]) {
+  const owner = profiles.find((entry) => entry.id === character.ownerUserId);
+  const ownerName = `${owner?.username ?? ''} ${owner?.displayName ?? ''}`.toLowerCase();
+  return character.name.trim().toLowerCase() === 'jursh'
+    && (character.classKey.trim().toLowerCase() === 'blacksmith' || character.className.trim().toLowerCase() === 'blacksmith')
+    && ownerName.includes('eoshigande');
+}
+
 export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved, onDeleted }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
@@ -50,6 +59,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
   const isDm = profile.role === 'dm';
   const owned = character.ownerUserId === profile.id;
   const classTemplate = useMemo(() => classes.find((entry) => entry.key === character.classKey), [character.classKey, classes]);
+  const showJurshConversions = isJurshBlacksmith(character, profiles) && (isDm || owned);
 
   useEffect(() => {
     if (characterIdRef.current !== character.id) {
@@ -309,6 +319,12 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
           />
+          {showJurshConversions && (
+            <JurshConversionPanel
+              characterId={character.id}
+              onConverted={() => setInventoryRefreshSignal((value) => value + 1)}
+            />
+          )}
           <HousePanel
             ownerUserId={character.ownerUserId}
             caretakerCharacterId={character.id}

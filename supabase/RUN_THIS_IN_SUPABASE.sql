@@ -7979,6 +7979,175 @@ as $$
   end
 $$;
 
+create table if not exists public.material_conversion_recipes (
+  recipe_key text primary key,
+  item_name text not null,
+  item_type text not null default 'misc',
+  rarity public.item_rarity not null default 'Common',
+  material text not null,
+  scale_item_name text not null,
+  scale_quantity numeric(12,1) not null check (scale_quantity > 0),
+  is_active boolean not null default true,
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.material_conversion_recipes enable row level security;
+revoke all on public.material_conversion_recipes from anon, authenticated;
+
+drop trigger if exists material_conversion_recipes_touch_updated_at on public.material_conversion_recipes;
+create trigger material_conversion_recipes_touch_updated_at
+before update on public.material_conversion_recipes
+for each row execute function public.touch_updated_at();
+
+create or replace function public.upsert_material_conversion_recipe(
+  p_recipe_key text,
+  p_item_name text,
+  p_item_type text,
+  p_rarity text,
+  p_material text,
+  p_scale_item_name text,
+  p_scale_quantity numeric,
+  p_display_order int default 0
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if length(trim(coalesce(p_recipe_key, ''))) = 0
+    or length(trim(coalesce(p_item_name, ''))) = 0
+    or length(trim(coalesce(p_material, ''))) = 0
+    or length(trim(coalesce(p_scale_item_name, ''))) = 0
+    or coalesce(p_scale_quantity, 0) <= 0 then
+    raise exception 'Material conversion recipe is incomplete.';
+  end if;
+
+  insert into public.material_conversion_recipes (
+    recipe_key,
+    item_name,
+    item_type,
+    rarity,
+    material,
+    scale_item_name,
+    scale_quantity,
+    is_active,
+    display_order
+  )
+  values (
+    public.catalog_key_for_name(p_recipe_key),
+    public.normalize_item_name(p_item_name),
+    public.normalize_item_type(p_item_type),
+    coalesce(nullif(p_rarity, ''), 'Common')::public.item_rarity,
+    trim(p_material),
+    public.normalize_item_name(p_scale_item_name),
+    public.assert_valid_item_quantity(p_scale_item_name, 'material', p_scale_quantity),
+    true,
+    coalesce(p_display_order, 0)
+  )
+  on conflict (recipe_key) do update
+  set item_name = excluded.item_name,
+      item_type = excluded.item_type,
+      rarity = excluded.rarity,
+      material = excluded.material,
+      scale_item_name = excluded.scale_item_name,
+      scale_quantity = excluded.scale_quantity,
+      is_active = true,
+      display_order = excluded.display_order,
+      updated_at = now();
+end;
+$$;
+
+create or replace function public.material_conversion_recipe_to_json(p_recipe public.material_conversion_recipes)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'key', p_recipe.recipe_key,
+    'itemName', p_recipe.item_name,
+    'itemType', p_recipe.item_type,
+    'rarity', p_recipe.rarity,
+    'material', p_recipe.material,
+    'scaleItemName', p_recipe.scale_item_name,
+    'scaleQuantity', p_recipe.scale_quantity,
+    'active', p_recipe.is_active,
+    'order', p_recipe.display_order
+  )
+$$;
+
+create or replace function public.material_conversion_recipe_matches_item(
+  p_recipe public.material_conversion_recipes,
+  p_item public.inventory_items
+)
+returns boolean
+language sql
+stable
+as $$
+  select p_recipe.is_active
+    and lower(public.normalize_item_name(p_recipe.item_name)) = lower(public.normalize_item_name(p_item.item_name))
+    and public.normalize_item_type(p_recipe.item_type) = public.normalize_item_type(p_item.item_type)
+    and lower(coalesce(nullif(p_item.material, ''), p_recipe.material, '')) = lower(p_recipe.material)
+$$;
+
+create or replace function public.material_conversion_two_handed(p_item_name text, p_item_type text)
+returns boolean
+language sql
+immutable
+as $$
+  select public.normalize_item_type(p_item_type) = 'weapon'
+    and lower(public.normalize_item_name(p_item_name)) ~ '(battleaxe|mace|claymore|crossbow)'
+$$;
+
+do $$
+begin
+  perform public.upsert_item_catalog_entry('Steel Scale', 'material', 'Uncommon', 'Material Scales', array['Forge scale']::text[], 0.5, true, '{}'::jsonb, 'Steel', false, 0, 'A half-step compatible steel material scale.', true, 3000);
+  perform public.upsert_item_catalog_entry('Mythril Scale', 'material', 'Rare', 'Material Scales', array['Forge scale']::text[], 0.5, true, '{}'::jsonb, 'Mythril', false, 0, 'A half-step compatible mythril material scale.', true, 3010);
+  perform public.upsert_item_catalog_entry('Vaylium Scale', 'material', 'Epic', 'Material Scales', array['Forge scale']::text[], 0.5, true, '{}'::jsonb, 'Vaylium', false, 0, 'A half-step compatible vaylium material scale.', true, 3020);
+  perform public.upsert_item_catalog_entry('Dragonscale Scale', 'material', 'Legendary', 'Material Scales', array['Forge scale']::text[], 0.5, true, '{}'::jsonb, 'Dragonscale', false, 0, 'A refined Dragonscale unit forged from dragon scale fragments.', true, 3030);
+  perform public.upsert_item_catalog_entry('Young Dragon Scales', 'material', 'Rare', 'Dragon Scales', array['Dragon scale fragment']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw dragon scale fragments. Twenty-five can be forged into one Dragonscale Scale.', true, 3040);
+  perform public.upsert_item_catalog_entry('Ember Dragon Scales', 'material', 'Rare', 'Dragon Scales', array['Dragon scale fragment', 'Ember']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw ember dragon scale fragments. Twenty-five mixed fragments can be forged into one Dragonscale Scale.', true, 3050);
+  perform public.upsert_item_catalog_entry('Frost Dragon Scales', 'material', 'Rare', 'Dragon Scales', array['Dragon scale fragment', 'Frost']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw frost dragon scale fragments. Twenty-five mixed fragments can be forged into one Dragonscale Scale.', true, 3060);
+  perform public.upsert_item_catalog_entry('Storm Dragon Scales', 'material', 'Rare', 'Dragon Scales', array['Dragon scale fragment', 'Storm']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw storm dragon scale fragments. Twenty-five mixed fragments can be forged into one Dragonscale Scale.', true, 3070);
+  perform public.upsert_item_catalog_entry('Mountain Dragon Scales', 'material', 'Rare', 'Dragon Scales', array['Dragon scale fragment', 'Mountain']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw mountain dragon scale fragments. Twenty-five mixed fragments can be forged into one Dragonscale Scale.', true, 3080);
+  perform public.upsert_item_catalog_entry('Elder Dragon Scales', 'material', 'Epic', 'Dragon Scales', array['Dragon scale fragment', 'Elder']::text[], 1, true, '{}'::jsonb, 'Dragon', false, 0, 'Raw elder dragon scale fragments. Twenty-five mixed fragments can be forged into one Dragonscale Scale.', true, 3090);
+
+  perform public.upsert_material_conversion_recipe('steel-shovel', 'Steel Shovel', 'tool', 'Uncommon', 'Steel', 'Steel Scale', 1, 10);
+  perform public.upsert_material_conversion_recipe('steel-pickaxe', 'Steel Pickaxe', 'tool', 'Uncommon', 'Steel', 'Steel Scale', 1, 20);
+  perform public.upsert_material_conversion_recipe('steel-sword', 'Steel Sword', 'weapon', 'Uncommon', 'Steel', 'Steel Scale', 1, 30);
+  perform public.upsert_material_conversion_recipe('steel-axe', 'Steel Axe', 'tool', 'Uncommon', 'Steel', 'Steel Scale', 1, 40);
+  perform public.upsert_material_conversion_recipe('steel-battleaxe', 'Steel Battleaxe', 'weapon', 'Uncommon', 'Steel', 'Steel Scale', 2, 50);
+  perform public.upsert_material_conversion_recipe('steel-mace', 'Steel Mace', 'weapon', 'Uncommon', 'Steel', 'Steel Scale', 2, 60);
+  perform public.upsert_material_conversion_recipe('steel-shield', 'Steel Shield', 'shield', 'Rare', 'Steel', 'Steel Scale', 1, 70);
+  perform public.upsert_material_conversion_recipe('mythril-pickaxe', 'Mythril Pickaxe', 'tool', 'Rare', 'Mythril', 'Mythril Scale', 1, 80);
+  perform public.upsert_material_conversion_recipe('mythril-sword', 'Mythril Sword', 'weapon', 'Rare', 'Mythril', 'Mythril Scale', 1, 90);
+  perform public.upsert_material_conversion_recipe('mythril-dagger', 'Mythril Dagger', 'weapon', 'Rare', 'Mythril', 'Mythril Scale', 0.5, 100);
+  perform public.upsert_material_conversion_recipe('mythril-axe', 'Mythril Axe', 'tool', 'Rare', 'Mythril', 'Mythril Scale', 1, 110);
+  perform public.upsert_material_conversion_recipe('mythril-battleaxe', 'Mythril Battleaxe', 'weapon', 'Rare', 'Mythril', 'Mythril Scale', 2, 120);
+  perform public.upsert_material_conversion_recipe('mythril-mace', 'Mythril Mace', 'weapon', 'Rare', 'Mythril', 'Mythril Scale', 2, 130);
+  perform public.upsert_material_conversion_recipe('vaylium-battleaxe', 'Vaylium Battleaxe', 'weapon', 'Epic', 'Vaylium', 'Vaylium Scale', 2, 140);
+  perform public.upsert_material_conversion_recipe('vaylium-mace', 'Vaylium Mace', 'weapon', 'Epic', 'Vaylium', 'Vaylium Scale', 2, 150);
+  perform public.upsert_material_conversion_recipe('vaylium-pickaxe', 'Vaylium Pickaxe', 'tool', 'Epic', 'Vaylium', 'Vaylium Scale', 1, 160);
+  perform public.upsert_material_conversion_recipe('vaylium-sword', 'Vaylium Sword', 'weapon', 'Epic', 'Vaylium', 'Vaylium Scale', 1, 170);
+  perform public.upsert_material_conversion_recipe('vaylium-dagger', 'Vaylium Dagger', 'weapon', 'Epic', 'Vaylium', 'Vaylium Scale', 0.5, 180);
+  perform public.upsert_material_conversion_recipe('vaylium-axe', 'Vaylium Axe', 'tool', 'Epic', 'Vaylium', 'Vaylium Scale', 1, 190);
+  perform public.upsert_material_conversion_recipe('dragonscale-sword', 'Dragonscale Sword', 'weapon', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 1, 200);
+  perform public.upsert_material_conversion_recipe('dragonscale-dagger', 'Dragonscale Dagger', 'weapon', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 0.5, 210);
+  perform public.upsert_material_conversion_recipe('dragonscale-pickaxe', 'Dragonscale Pickaxe', 'tool', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 1, 220);
+  perform public.upsert_material_conversion_recipe('dragonscale-axe', 'Dragonscale Axe', 'tool', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 1, 230);
+  perform public.upsert_material_conversion_recipe('dragonscale-shield', 'Dragonscale Shield', 'shield', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 1, 240);
+  perform public.upsert_material_conversion_recipe('dragonscale-battleaxe', 'Dragonscale Battleaxe', 'weapon', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 2, 250);
+  perform public.upsert_material_conversion_recipe('dragonscale-mace', 'Dragonscale Mace', 'weapon', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 2, 260);
+  perform public.upsert_material_conversion_recipe('steel-dagger', 'Steel Dagger', 'weapon', 'Uncommon', 'Steel', 'Steel Scale', 0.5, 270);
+  perform public.upsert_material_conversion_recipe('steel-armor', 'Steel Armor', 'armor', 'Rare', 'Steel', 'Steel Scale', 3, 280);
+  perform public.upsert_material_conversion_recipe('mythril-armor', 'Mythril Armor', 'armor', 'Rare', 'Mythril', 'Mythril Scale', 3, 290);
+  perform public.upsert_material_conversion_recipe('vaylium-armor', 'Vaylium Armor', 'armor', 'Epic', 'Vaylium', 'Vaylium Scale', 3, 300);
+  perform public.upsert_material_conversion_recipe('dragonscale-armor', 'Dragonscale Armor', 'armor', 'Legendary', 'Dragonscale', 'Dragonscale Scale', 3, 310);
+end;
+$$;
+
 drop function if exists public.blacksmith_material_modifiers(text, text);
 
 
@@ -8218,6 +8387,505 @@ begin
 end;
 $$;
 
+create or replace function public.grant_material_conversion_item(
+  p_character_id uuid,
+  p_item_name text,
+  p_item_type text,
+  p_rarity public.item_rarity,
+  p_quantity numeric,
+  p_material text default '',
+  p_modifiers jsonb default '{}'::jsonb,
+  p_is_two_handed boolean default false
+)
+returns public.inventory_items
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_slot int;
+  v_quantity numeric;
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then
+    raise exception 'Character not found.';
+  end if;
+
+  v_quantity := public.assert_valid_item_quantity(p_item_name, p_item_type, p_quantity);
+
+  select * into v_target
+  from public.inventory_items i
+  where i.character_id = p_character_id
+    and i.loadout_slot is null
+    and i.is_storage = false
+    and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(p_item_name))
+    and public.normalize_item_type(i.item_type) = public.normalize_item_type(p_item_type)
+    and i.rarity = p_rarity
+    and coalesce(i.display_name, '') = ''
+    and coalesce(i.enchantment, '') = ''
+    and coalesce(i.rune_name, '') = ''
+    and (
+      coalesce(i.material, '') = coalesce(p_material, '')
+      or public.normalize_item_type(p_item_type) = 'material'
+    )
+    and coalesce(i.potion_strength, '') = ''
+    and coalesce(i.potion_property, '') = ''
+    and coalesce(i.potion_quality, '') = ''
+    and i.enhancement_count = 0
+    and i.is_two_handed = coalesce(p_is_two_handed, false)
+    and i.is_accessory = false
+    and i.modifiers = case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end
+    and public.item_catalog_stackable(p_item_name, p_item_type)
+  order by i.parent_item_id nulls first, i.slot_index, i.created_at, i.id
+  limit 1;
+
+  if v_target.id is not null then
+    update public.inventory_items
+    set quantity = quantity + v_quantity,
+        material = case when public.normalize_item_type(p_item_type) = 'material' and length(trim(coalesce(p_material, ''))) > 0 then trim(p_material) else material end
+    where id = v_target.id
+    returning * into v_item;
+    return v_item;
+  end if;
+
+  v_slot := public.find_first_free_inventory_slot(p_character_id, null, v_character.inventory_slots);
+  if v_slot is null then
+    raise exception 'Inventory full.';
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    slot_index,
+    item_name,
+    item_type,
+    rarity,
+    quantity,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    material,
+    enhancement_count,
+    is_two_handed
+  )
+  values (
+    p_character_id,
+    null,
+    v_slot,
+    public.normalize_item_name(p_item_name),
+    public.normalize_item_type(p_item_type),
+    p_rarity,
+    v_quantity,
+    false,
+    0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    null,
+    coalesce(p_material, ''),
+    0,
+    coalesce(p_is_two_handed, false)
+  )
+  returning * into v_item;
+
+  return v_item;
+end;
+$$;
+
+create or replace function public.jursh_conversion_item_has_extras(
+  p_item public.inventory_items,
+  p_recipe public.material_conversion_recipes
+)
+returns boolean
+language sql
+stable
+as $$
+  select coalesce(p_item.enchantment, '') <> ''
+    or coalesce(p_item.rune_name, '') <> ''
+    or coalesce(p_item.enhancement_count, 0) > 0
+    or coalesce(p_item.modifiers, '{}'::jsonb) <> public.forge_material_modifiers(p_recipe.material, p_recipe.item_type)
+$$;
+
+create or replace function public.is_jursh_conversion_character(p_character public.characters)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select lower(trim(coalesce(p_character.name, ''))) = 'jursh'
+    and (
+      lower(trim(coalesce(p_character.class_key, ''))) = 'blacksmith'
+      or lower(trim(coalesce(p_character.class_name, ''))) = 'blacksmith'
+    )
+    and exists (
+      select 1
+      from public.profiles p
+      where p.id = p_character.owner_user_id
+        and (
+          lower(trim(coalesce(p.username, ''))) = 'eoshigande'
+          or lower(trim(coalesce(p.display_name, ''))) = 'eoshigande'
+        )
+    )
+$$;
+
+create or replace function public.assert_jursh_conversion_access(
+  p_profile public.profiles,
+  p_character_id uuid
+)
+returns public.characters
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_character public.characters%rowtype;
+begin
+  v_character := public.assert_inventory_access(p_profile, p_character_id, false);
+  if not public.is_jursh_conversion_character(v_character) then
+    raise exception 'Only Jursh, Eoshigande''s Blacksmith, can use this conversion menu.';
+  end if;
+  return v_character;
+end;
+$$;
+
+create or replace function public.dragon_scale_fragment_names()
+returns text[]
+language sql
+immutable
+as $$
+  select array[
+    'Young Dragon Scales',
+    'Ember Dragon Scales',
+    'Frost Dragon Scales',
+    'Storm Dragon Scales',
+    'Mountain Dragon Scales',
+    'Elder Dragon Scales'
+  ]::text[]
+$$;
+
+create or replace function public.consume_accessible_dragon_scale_fragments(
+  p_character_id uuid,
+  p_station_city_name text,
+  p_quantity numeric default 25
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := greatest(1, coalesce(p_quantity, 25));
+  v_name text;
+  v_available numeric;
+  v_take numeric;
+  v_consumed jsonb := '[]'::jsonb;
+begin
+  foreach v_name in array public.dragon_scale_fragment_names() loop
+    exit when v_needed <= 0;
+    v_available := public.accessible_item_quantity_by_name(p_character_id, v_name, p_station_city_name);
+    v_take := least(v_needed, v_available);
+    if v_take > 0 then
+      perform public.consume_crafting_item_by_name(p_character_id, v_name, v_take, p_station_city_name);
+      v_consumed := v_consumed || jsonb_build_array(jsonb_build_object('name', v_name, 'quantity', v_take));
+      v_needed := v_needed - v_take;
+    end if;
+  end loop;
+
+  if v_needed > 0 then
+    raise exception 'Need 25 total dragon scale fragments to forge 1 Dragonscale Scale.';
+  end if;
+
+  return v_consumed;
+end;
+$$;
+
+create or replace function public.get_jursh_conversion_state(
+  p_session_token text,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_jursh_conversion_access(v_profile, p_character_id);
+
+  return jsonb_build_object(
+    'characterId', v_character.id,
+    'recipes', (
+      select coalesce(jsonb_agg(public.material_conversion_recipe_to_json(r) order by r.display_order, r.item_name), '[]'::jsonb)
+      from public.material_conversion_recipes r
+      where r.is_active
+    ),
+    'convertibleItems', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'item', public.inventory_item_record_to_json(i),
+        'recipe', public.material_conversion_recipe_to_json(r),
+        'hasExtras', public.jursh_conversion_item_has_extras(i, r)
+      ) order by i.parent_item_id nulls first, i.slot_index, i.item_name), '[]'::jsonb)
+      from public.inventory_items i
+      join public.material_conversion_recipes r on public.material_conversion_recipe_matches_item(r, i)
+      where i.character_id = v_character.id
+        and i.loadout_slot is null
+        and i.is_storage = false
+    ),
+    'scaleTotals', (
+      select coalesce(jsonb_object_agg(scale_name, quantity order by scale_name), '{}'::jsonb)
+      from (
+        select r.scale_item_name as scale_name,
+          coalesce(sum(i.quantity), 0) as quantity
+        from (select distinct scale_item_name from public.material_conversion_recipes where is_active) r
+        left join public.inventory_items i
+          on i.character_id = v_character.id
+          and i.loadout_slot is null
+          and i.is_storage = false
+          and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(r.scale_item_name))
+        group by r.scale_item_name
+      ) totals
+    ),
+    'dragonScaleTotal', (
+      select coalesce(sum(i.quantity), 0)
+      from public.inventory_items i
+      where i.character_id = v_character.id
+        and i.loadout_slot is null
+        and i.is_storage = false
+        and lower(public.normalize_item_name(i.item_name)) = any (
+          select lower(public.normalize_item_name(name))
+          from unnest(public.dragon_scale_fragment_names()) as name
+        )
+    )
+  );
+end;
+$$;
+
+create or replace function public.convert_jursh_item_to_scales(
+  p_session_token text,
+  p_character_id uuid,
+  p_item_id uuid,
+  p_confirm_destroy_extras boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_recipe public.material_conversion_recipes%rowtype;
+  v_has_extras boolean;
+  v_output public.inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_jursh_conversion_access(v_profile, p_character_id);
+
+  select * into v_item
+  from public.inventory_items
+  where id = p_item_id
+    and character_id = v_character.id
+    and loadout_slot is null
+    and is_storage = false;
+
+  if v_item.id is null then
+    raise exception 'Choose a convertible item in Jursh''s inventory.';
+  end if;
+
+  select * into v_recipe
+  from public.material_conversion_recipes r
+  where public.material_conversion_recipe_matches_item(r, v_item)
+  order by r.display_order, r.item_name
+  limit 1;
+
+  if v_recipe.recipe_key is null then
+    raise exception 'That item is not convertible.';
+  end if;
+
+  v_has_extras := public.jursh_conversion_item_has_extras(v_item, v_recipe);
+  if v_has_extras and not coalesce(p_confirm_destroy_extras, false) then
+    return public.get_jursh_conversion_state(p_session_token, p_character_id)
+      || jsonb_build_object(
+        'needsConfirmation', true,
+        'confirmationMessage', 'This item has modifiers, enhancements, runes, or enchantments that will be destroyed. Proceed?'
+      );
+  end if;
+
+  if v_item.quantity > 1 then
+    update public.inventory_items
+    set quantity = quantity - 1
+    where id = v_item.id;
+  else
+    delete from public.inventory_items where id = v_item.id;
+  end if;
+
+  v_output := public.grant_material_conversion_item(
+    v_character.id,
+    v_recipe.scale_item_name,
+    'material',
+    v_recipe.rarity,
+    v_recipe.scale_quantity,
+    v_recipe.material,
+    '{}'::jsonb,
+    false
+  );
+
+  return public.get_jursh_conversion_state(p_session_token, p_character_id)
+    || jsonb_build_object('createdItem', public.inventory_item_record_to_json(v_output));
+end;
+$$;
+
+create or replace function public.consume_jursh_scale_by_name(
+  p_character_id uuid,
+  p_scale_item_name text,
+  p_quantity numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_needed numeric := public.assert_valid_item_quantity(p_scale_item_name, 'material', p_quantity);
+  v_item public.inventory_items%rowtype;
+  v_take numeric;
+begin
+  for v_item in
+    select *
+    from public.inventory_items
+    where character_id = p_character_id
+      and loadout_slot is null
+      and is_storage = false
+      and lower(public.normalize_item_name(item_name)) = lower(public.normalize_item_name(p_scale_item_name))
+    order by parent_item_id nulls first, slot_index, created_at, id
+  loop
+    exit when v_needed <= 0;
+    v_take := least(v_item.quantity, v_needed);
+    if v_take >= v_item.quantity then
+      delete from public.inventory_items where id = v_item.id;
+    else
+      update public.inventory_items set quantity = quantity - v_take where id = v_item.id;
+    end if;
+    v_needed := v_needed - v_take;
+  end loop;
+
+  if v_needed > 0 then
+    raise exception 'Not enough %.', p_scale_item_name;
+  end if;
+end;
+$$;
+
+create or replace function public.convert_jursh_scales_to_item(
+  p_session_token text,
+  p_character_id uuid,
+  p_recipe_key text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_recipe public.material_conversion_recipes%rowtype;
+  v_available numeric;
+  v_output public.inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_jursh_conversion_access(v_profile, p_character_id);
+
+  select * into v_recipe
+  from public.material_conversion_recipes
+  where recipe_key = public.catalog_key_for_name(p_recipe_key)
+    and is_active;
+
+  if v_recipe.recipe_key is null then
+    raise exception 'Unknown conversion recipe.';
+  end if;
+
+  select coalesce(sum(quantity), 0) into v_available
+  from public.inventory_items
+  where character_id = v_character.id
+    and loadout_slot is null
+    and is_storage = false
+    and lower(public.normalize_item_name(item_name)) = lower(public.normalize_item_name(v_recipe.scale_item_name));
+
+  if v_available < v_recipe.scale_quantity then
+    raise exception 'Not enough %.', v_recipe.scale_item_name;
+  end if;
+
+  perform public.consume_jursh_scale_by_name(v_character.id, v_recipe.scale_item_name, v_recipe.scale_quantity);
+
+  v_output := public.grant_material_conversion_item(
+    v_character.id,
+    v_recipe.item_name,
+    v_recipe.item_type,
+    v_recipe.rarity,
+    1,
+    v_recipe.material,
+    public.forge_material_modifiers(v_recipe.material, v_recipe.item_type),
+    public.material_conversion_two_handed(v_recipe.item_name, v_recipe.item_type)
+  );
+
+  return public.get_jursh_conversion_state(p_session_token, p_character_id)
+    || jsonb_build_object('createdItem', public.inventory_item_record_to_json(v_output));
+end;
+$$;
+
+create or replace function public.forge_dragonscale_scale_from_dragon_scales(
+  p_session_token text,
+  p_character_id uuid,
+  p_station_city_name text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_station_city_name text;
+  v_consumed jsonb;
+  v_output public.inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  v_station_city_name := coalesce(nullif(trim(p_station_city_name), ''), v_character.location_name);
+  v_consumed := public.consume_accessible_dragon_scale_fragments(v_character.id, v_station_city_name, 25);
+  v_output := public.grant_material_conversion_item(
+    v_character.id,
+    'Dragonscale Scale',
+    'material',
+    'Legendary',
+    1,
+    'Dragonscale',
+    '{}'::jsonb,
+    false
+  );
+
+  return jsonb_build_object(
+    'consumed', v_consumed,
+    'createdItem', public.inventory_item_record_to_json(v_output)
+  );
+end;
+$$;
+
 drop function if exists public.enchantment_spell_for_rune(text);
 drop function if exists public.enchantment_spell_for_rune(text, int, int);
 
@@ -8340,6 +9008,11 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
   v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-blacksmith');
+
+  if lower(coalesce(p_action, '')) = 'dragon-scales' then
+    perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name);
+    return public.get_discovered_cities(p_session_token);
+  end if;
 
   if lower(coalesce(p_action, '')) = 'craft' then
     case lower(coalesce(p_recipe_key, ''))
@@ -8551,6 +9224,11 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
   v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-armory');
+
+  if lower(coalesce(p_action, '')) = 'dragon-scales' then
+    perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name);
+    return public.get_discovered_cities(p_session_token);
+  end if;
 
   if lower(coalesce(p_action, '')) = 'craft' then
     case lower(coalesce(p_recipe_key, ''))
@@ -9277,6 +9955,21 @@ grant execute on function public.purchase_market_product(text, uuid, uuid, numer
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
+grant execute on function public.upsert_material_conversion_recipe(text, text, text, text, text, text, numeric, int) to anon, authenticated;
+grant execute on function public.material_conversion_recipe_to_json(public.material_conversion_recipes) to anon, authenticated;
+grant execute on function public.material_conversion_recipe_matches_item(public.material_conversion_recipes, public.inventory_items) to anon, authenticated;
+grant execute on function public.material_conversion_two_handed(text, text) to anon, authenticated;
+grant execute on function public.grant_material_conversion_item(uuid, text, text, public.item_rarity, numeric, text, jsonb, boolean) to anon, authenticated;
+grant execute on function public.jursh_conversion_item_has_extras(public.inventory_items, public.material_conversion_recipes) to anon, authenticated;
+grant execute on function public.is_jursh_conversion_character(public.characters) to anon, authenticated;
+grant execute on function public.assert_jursh_conversion_access(public.profiles, uuid) to anon, authenticated;
+grant execute on function public.dragon_scale_fragment_names() to anon, authenticated;
+grant execute on function public.consume_accessible_dragon_scale_fragments(uuid, text, numeric) to anon, authenticated;
+grant execute on function public.get_jursh_conversion_state(text, uuid) to anon, authenticated;
+grant execute on function public.convert_jursh_item_to_scales(text, uuid, uuid, boolean) to anon, authenticated;
+grant execute on function public.consume_jursh_scale_by_name(uuid, text, numeric) to anon, authenticated;
+grant execute on function public.convert_jursh_scales_to_item(text, uuid, text) to anon, authenticated;
+grant execute on function public.forge_dragonscale_scale_from_dragon_scales(text, uuid, text) to anon, authenticated;
 grant execute on function public.enchantment_spell_for_rune(text, int, int) to anon, authenticated;
 grant execute on function public.assert_character_can_use_vendor(public.characters, text) to anon, authenticated;
 grant execute on function public.crafting_house_is_accessible(uuid, text) to anon, authenticated;
@@ -9668,7 +10361,7 @@ select
   v.id,
   'spell-' || s.spell_key,
   s.name,
-  coalesce(nullif(s.details, ''), nullif(s.summary, ''), s.spell_type || ' spell - ' || s.mana_label),
+  trim(concat_ws(' - ', nullif(s.mana_label, ''), nullif(coalesce(nullif(s.details, ''), nullif(s.summary, '')), ''))),
   'quest',
   s.rarity,
   s.price_coin,
@@ -13374,6 +14067,11 @@ drop trigger if exists app_live_market_products on public.market_products;
 create trigger app_live_market_products
 after insert or update or delete on public.market_products
 for each row execute function public.touch_app_live_update_trigger('cities,assets');
+
+drop trigger if exists app_live_material_conversion_recipes on public.material_conversion_recipes;
+create trigger app_live_material_conversion_recipes
+after insert or update or delete on public.material_conversion_recipes
+for each row execute function public.touch_app_live_update_trigger('cities,inventory,assets');
 
 drop trigger if exists app_live_house_inventory_items on public.house_inventory_items;
 create trigger app_live_house_inventory_items

@@ -57,7 +57,8 @@ type ForgeService = 'blacksmith' | 'armory';
 type CraftModalState =
   | { mode: 'craft'; service: ForgeService; recipe: CraftRecipe }
   | { mode: 'enhance'; service: ForgeService }
-  | { mode: 'enchant'; service: 'blacksmith' };
+  | { mode: 'enchant'; service: 'blacksmith' }
+  | { mode: 'dragon-scales'; service: ForgeService };
 
 type BreweryDefinition = {
   propertyKey: string;
@@ -298,6 +299,14 @@ function productEffectText(product: MarketProduct) {
   if (product.type === 'potion') return potionEffectText(product);
   if (isSpellProduct(product)) return product.description;
   return '';
+}
+
+function spellManaBadgeText(product: MarketProduct) {
+  if (!isSpellProduct(product)) return '';
+  const match = product.description.match(/^(.{1,48}?)\s+-\s+/);
+  if (!match) return '';
+  const label = match[1].trim();
+  return /mana|free|varies|variable|all/i.test(label) || /^\d+$/.test(label) ? label : '';
 }
 
 function productCardClass(product: MarketProduct) {
@@ -617,6 +626,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
       return plan.canCover && walletCoin >= totalCost;
     }
+    if (craftModal.mode === 'dragon-scales') return true;
 
     const rune = forgeRunes.find((product) => product.id === craftRuneProductId);
     const requiredRunes = cappedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity, rune ?? null);
@@ -818,6 +828,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             recipeKey: craftModal.recipe.key,
             materialProductId: craftMaterialProductId || null
           }
+        : craftModal.mode === 'dragon-scales'
+          ? {
+              action: 'dragon-scales',
+              characterId: selectedShopper.id
+            }
         : {
             action: craftModal.mode,
             characterId: selectedShopper.id,
@@ -896,6 +911,26 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   function craftConfirmation() {
     if (!craftModal || !selectedShopper) return null;
+    if (craftModal.mode === 'dragon-scales') {
+      return {
+        title: 'Forge Dragonscale Scale',
+        inputs: [{
+          key: 'dragon-scale-fragments',
+          name: 'Mixed Dragon Scale Fragments',
+          type: 'material' as ItemType,
+          rarity: 'Rare' as ItemRarity,
+          quantity: 25,
+          note: 'Young, Ember, Frost, Storm, Mountain, and Elder Dragon Scales can be mixed.'
+        }],
+        output: {
+          name: 'Dragonscale Scale',
+          type: 'material' as ItemType,
+          rarity: 'Legendary' as ItemRarity,
+          quantity: 1,
+          note: 'A refined forging scale for Dragonscale gear.'
+        }
+      };
+    }
     if (craftModal.mode === 'craft') {
       const plan = buildMaterialPlan(craftModal.recipe, craftMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
       const laborCost = recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
@@ -1183,7 +1218,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {craftModal && selectedVendor && (
-        <Modal title={craftModal.mode === 'craft' ? craftModal.recipe.name : craftModal.mode === 'enhance' ? (craftModal.service === 'armory' ? 'Enhance Mythril Armor' : 'Enhance Mythril Gear') : 'Enchant Mythril Weapon'} onClose={() => setCraftModal(null)}>
+        <Modal title={craftModal.mode === 'craft' ? craftModal.recipe.name : craftModal.mode === 'dragon-scales' ? 'Forge Dragonscale Scale' : craftModal.mode === 'enhance' ? (craftModal.service === 'armory' ? 'Enhance Mythril Armor' : 'Enhance Mythril Gear') : 'Enchant Mythril Weapon'} onClose={() => setCraftModal(null)}>
           <div className="grid gap-4">
             {!selectedShopper && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose a character first.</div>}
             {craftModal.mode === 'craft' ? (
@@ -1198,6 +1233,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 materialProductId={craftMaterialProductId}
                 setMaterialProductId={setCraftMaterialProductId}
               />
+            ) : craftModal.mode === 'dragon-scales' ? (
+              <SoftCard>
+                <p className="font-black">Forge 25 mixed dragon scale fragments into 1 Dragonscale Scale.</p>
+                <p className="mt-1 text-sm font-bold text-[var(--muted)]">This checks the shopper&rsquo;s inventory first, then accessible house and mobile-home storage in this city.</p>
+              </SoftCard>
             ) : (
               <MythrilServiceForm
                 service={craftModal.service}
@@ -1217,7 +1257,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               />
             )}
             <Button variant="primary" disabled={saving || !canConfirmForge} onClick={() => setCraftConfirmOpen(true)}>
-              {craftModal.mode === 'craft' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
+              {craftModal.mode === 'craft' || craftModal.mode === 'dragon-scales' ? <Hammer className="mr-2 inline" size={15} /> : <WandSparkles className="mr-2 inline" size={15} />}
               Craft
             </Button>
           </div>
@@ -1523,6 +1563,13 @@ function BlacksmithPage(props: {
           <Button variant="primary" onClick={() => onCraft({ mode: 'enchant', service: 'blacksmith' })}><WandSparkles className="mr-2 inline" size={15} /> Enchant Mythril Weapon</Button>
         </div>
       </Card>
+
+      <Card>
+        <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Dragon Scale Refining</h3></div>
+        <Button variant="primary" onClick={() => onCraft({ mode: 'dragon-scales', service: 'blacksmith' })}>
+          <Hammer className="mr-2 inline" size={15} /> Forge Dragonscale Scale
+        </Button>
+      </Card>
     </div>
   );
 }
@@ -1595,6 +1642,13 @@ function ArmoryPage(props: {
       <Card>
         <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{ARMORY_SERVICE_SECTIONS[2]}</h3></div>
         <Button variant="teal" onClick={() => onCraft({ mode: 'enhance', service: 'armory' })}><Sparkles className="mr-2 inline" size={15} /> Enhance Mythril Armor</Button>
+      </Card>
+
+      <Card>
+        <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Dragon Scale Refining</h3></div>
+        <Button variant="primary" onClick={() => onCraft({ mode: 'dragon-scales', service: 'armory' })}>
+          <Hammer className="mr-2 inline" size={15} /> Forge Dragonscale Scale
+        </Button>
       </Card>
     </div>
   );
@@ -1982,6 +2036,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
       {products.map((product) => {
         const disabled = !hasUsableStock(product);
+        const manaBadge = spellManaBadgeText(product);
         return (
           <button
             key={product.id}
@@ -2009,6 +2064,11 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               )}
             </span>
             <p className="line-clamp-2 min-h-8 text-xs text-[var(--muted)]">{productEffectText(product) || product.description}</p>
+            {manaBadge && (
+              <span className="mt-2 inline-flex rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--brass)]">
+                Mana: {manaBadge}
+              </span>
+            )}
             {product.type === 'potion' && productEffectText(product) && (
               <span className="mt-2 block rounded-lg border border-[#56e2c2]/25 bg-[#56e2c2]/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[#56e2c2]">
                 {productEffectText(product)}
