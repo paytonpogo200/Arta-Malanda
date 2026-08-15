@@ -9885,6 +9885,7 @@ begin
       end,
       custom_summary = case
         when v_patch ? 'summary' then nullif(left(trim(coalesce(v_patch->>'summary', '')), 500), '')
+        when v_patch ? 'details' then nullif(left(trim(coalesce(v_patch->>'details', '')), 500), '')
         else custom_summary
       end,
       custom_details = case

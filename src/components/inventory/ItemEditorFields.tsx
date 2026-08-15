@@ -91,6 +91,10 @@ function itemSupportsLoadoutDetails(type: ItemType) {
   return type === 'weapon' || type === 'armor' || type === 'shield' || type === 'accessory' || type === 'pet';
 }
 
+function itemSupportsAccessoryModifiers(item: Pick<ItemDraft, 'type' | 'isAccessory'>) {
+  return item.type === 'accessory' || item.isAccessory;
+}
+
 export function potionQualityCanApply(item: Pick<ItemDraft, 'name' | 'type' | 'potionProperty'>) {
   if (item.type !== 'potion' || isEmptyFlask(item) || isArcaneNector(item)) return false;
   const property = item.potionProperty || '';
@@ -165,6 +169,7 @@ export function ItemEditorFields({
   const showForgeDetails = itemSupportsLoadoutDetails(draft.type) || Boolean(draft.enchantment.trim()) || draft.enhancementCount > 0 || modifierList.length > 0;
   const enchantable = canManuallyEnchant(draft) || Boolean(draft.enchantment.trim());
   const enhanceable = canManuallyEnhance(draft);
+  const accessoryModifiers = itemSupportsAccessoryModifiers(draft);
   const legendaryWeapon = draft.type === 'weapon' && draft.rarity === 'Legendary';
   const hasCurrentCustomSpell = Boolean(draft.enchantment.trim()) && !sortedSpells.some((spell) => spell.name === draft.enchantment);
 
@@ -221,6 +226,25 @@ export function ItemEditorFields({
         <details className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">
           <summary className="cursor-pointer list-none p-3 font-black text-[var(--brass)]">Legendary weapon details</summary>
           <div className="grid gap-3 border-t border-[var(--line)] p-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {EDITABLE_MODIFIER_FIELDS.map((field) => (
+                <label key={field.key}>
+                  <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{field.label}</span>
+                  <NumberInput value={Number(draft.modifiers[field.key] ?? 0)} onValueChange={(value) => updateDraftModifier(field.key, value)} />
+                </label>
+              ))}
+            </div>
+          </div>
+        </details>
+      )}
+
+      {accessoryModifiers && (
+        <details open className="rounded-2xl border border-[var(--brass)]/40 bg-[var(--brass)]/10">
+          <summary className="cursor-pointer list-none p-3 font-black text-[var(--brass)]">Accessory stat bonuses</summary>
+          <div className="grid gap-3 border-t border-[var(--line)] p-3">
+            <p className="text-xs font-bold leading-5 text-[var(--muted)]">
+              These bonuses apply while the item is equipped in an accessory slot.
+            </p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {EDITABLE_MODIFIER_FIELDS.map((field) => (
                 <label key={field.key}>

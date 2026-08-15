@@ -273,6 +273,7 @@ export function SpellsPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: spellDraft.name,
+          summary: spellDraft.details,
           details: spellDraft.details,
           manaCost: Math.max(0, Math.round(spellDraft.manaCost))
         })

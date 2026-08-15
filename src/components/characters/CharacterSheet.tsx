@@ -304,6 +304,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             canAdd={isDm}
             refreshSignal={inventoryRefreshSignal}
             tradeCharacters={characters}
+            profiles={profiles}
+            viewerUserId={profile.id}
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
           />

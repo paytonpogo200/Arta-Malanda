@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2 } from 'lucide-react';
+import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2, Users } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -12,6 +12,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
@@ -117,8 +118,22 @@ function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
     && !normalized.includes('caged wagon');
 }
 
+function isMobileHomeStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+  return item.isStorage && item.name.toLowerCase().includes('wagon home');
+}
+
 function isCagedWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
   return item.isStorage && item.name.toLowerCase().includes('caged wagon');
+}
+
+function isPermissionedMobileStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+  return isMobileHomeStorage(item) || isCagedWagonStorage(item);
+}
+
+function storageAccessLabel(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+  if (isMobileHomeStorage(item)) return 'Wagon Home';
+  if (isCagedWagonStorage(item)) return 'Caged Wagon';
+  return 'Shared Wagon';
 }
 
 function quantityText(quantity: number) {
@@ -142,6 +157,8 @@ export function InventoryPanel({
   canAdd,
   refreshSignal = 0,
   tradeCharacters,
+  profiles = [],
+  viewerUserId,
   showBattleStats = false,
   classTemplate,
   onItemsChanged,
@@ -152,6 +169,8 @@ export function InventoryPanel({
   canAdd: boolean;
   refreshSignal?: number;
   tradeCharacters?: Character[];
+  profiles?: CampaignProfile[];
+  viewerUserId?: string;
   showBattleStats?: boolean;
   classTemplate?: ClassTemplate;
   onItemsChanged?: (items: InventoryItem[]) => void;
@@ -199,6 +218,9 @@ export function InventoryPanel({
   const [targetPreviewLoading, setTargetPreviewLoading] = useState(false);
   const [targetPreviewError, setTargetPreviewError] = useState('');
   const [giftOpen, setGiftOpen] = useState(character.giftInventoryOpen);
+  const [storagePermissionsOpen, setStoragePermissionsOpen] = useState(false);
+  const [storagePermissions, setStoragePermissions] = useState<Record<string, { house: boolean; stable: boolean }>>({});
+  const [storagePermissionsLoading, setStoragePermissionsLoading] = useState(false);
   const inventoryLoadedRef = useRef(false);
   const loadedCharacterIdRef = useRef(character.id);
   useDragAutoScroll();
@@ -371,6 +393,10 @@ export function InventoryPanel({
     .filter((entry) => entry.id !== character.id && Boolean(entry.ownerUserId))
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
   const tradeTargetCharacter = useMemo(() => tradeTargets.find((entry) => entry.id === tradeTargetId) ?? null, [tradeTargetId, tradeTargets]);
+  const canEditSpecialStoragePermissions = Boolean(character.ownerUserId && (canAdd || character.ownerUserId === viewerUserId));
+  const permissionProfiles = useMemo(() => profiles
+    .filter((entry) => entry.id !== character.ownerUserId)
+    .sort((a, b) => (a.displayName || a.username || '').localeCompare(b.displayName || b.username || '')), [character.ownerUserId, profiles]);
   const targetPreviewItems = useMemo(() => (targetPreview?.items ?? [])
     .filter((item) => (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
     .sort((a, b) => (a.slotIndex - b.slotIndex) || a.name.localeCompare(b.name)), [targetPreview]);
@@ -743,6 +769,49 @@ export function InventoryPanel({
   async function sendToHouse(item: InventoryItem) {
     if (!canManage || !character.ownerUserId) return;
     await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
+  }
+
+  async function openSpecialStoragePermissions() {
+    if (!character.ownerUserId || !canEditSpecialStoragePermissions) return;
+    setStoragePermissionsOpen(true);
+    setStoragePermissionsLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/houses/${character.ownerUserId}`, { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Storage permissions could not be loaded.');
+      const normalized = normalizeHousePayload(payload);
+      setStoragePermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
+    } catch (permissionError) {
+      setError(permissionError instanceof Error ? permissionError.message : 'Storage permissions could not be loaded.');
+    } finally {
+      setStoragePermissionsLoading(false);
+    }
+  }
+
+  async function saveSpecialStoragePermissions() {
+    if (!character.ownerUserId || !canEditSpecialStoragePermissions) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/houses/${character.ownerUserId}/permissions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          permissions: Object.entries(storagePermissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access }))
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Storage permissions could not be saved.');
+      const normalized = normalizeHousePayload(payload);
+      setStoragePermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
+      setStoragePermissionsOpen(false);
+      await loadWagons();
+    } catch (permissionError) {
+      setError(permissionError instanceof Error ? permissionError.message : 'Storage permissions could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function tradeItemPayload(sourceItems: InventoryItem[], selections: Record<string, number>) {
@@ -1584,6 +1653,7 @@ export function InventoryPanel({
                       </span>
                       <span className="flex shrink-0 flex-wrap justify-end gap-1.5 text-xs text-[var(--muted)]">
                         <span className="rounded-full border border-[#56e2c2]/35 bg-[#56e2c2]/10 px-2 py-1 font-black uppercase text-[#56e2c2]">Owner {ownerName}</span>
+                        {isPermissionedMobileStorage(wagon) && <span className="rounded-full border border-[var(--brass)]/40 bg-[var(--brass)]/10 px-2 py-1 font-black uppercase text-[var(--brass)]">{storageAccessLabel(wagon)}</span>}
                         <span className="rounded-full border border-[var(--line)] bg-black/20 px-2 py-1 font-black uppercase">{locationName || character.locationName || 'Nearby'}</span>
                         <span className="px-1 py-1">{childItems.length}/{wagon.storageCapacity} slots</span>
                       </span>
@@ -1742,6 +1812,12 @@ export function InventoryPanel({
                       {modal.item.type === 'pet' ? 'Send to stable' : 'Send to house'}
                     </Button>
                   )}
+                  {modal.item.isStorage && isPermissionedMobileStorage(modal.item) && canEditSpecialStoragePermissions && (
+                    <Button variant="secondary" onClick={openSpecialStoragePermissions}>
+                      <Users className="mr-2 inline" size={15} />
+                      Permissions
+                    </Button>
+                  )}
                   {tradeTargets.length > 0 && (!modal.item.loadoutSlot || modal.item.type === 'pet') && !modal.item.isStorage && (
                     <Button variant="teal" onClick={() => setItemActionModal('gift')} disabled={saving}>
                       <Gift className="mr-2 inline" size={15} />
@@ -1831,6 +1907,57 @@ export function InventoryPanel({
               <Button variant="primary" className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)] sm:bottom-0" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}
+        </Modal>
+      )}
+      {storagePermissionsOpen && (
+        <Modal title="Storage permissions" onClose={() => setStoragePermissionsOpen(false)}>
+          <div className="grid gap-3">
+            {storagePermissionsLoading ? (
+              <div className="grid h-24 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">
+                <Loader2 className="animate-spin" />
+              </div>
+            ) : (
+              <>
+                {permissionProfiles.map((entry) => {
+                  const access = storagePermissions[entry.id] ?? { house: false, stable: false };
+                  return (
+                    <div key={entry.id} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                      <div>
+                        <p className="font-black">{entry.displayName || entry.username || 'Player'}</p>
+                        {entry.username && <p className="text-xs text-[var(--muted)]">{entry.username}</p>}
+                      </div>
+                      <label className="flex items-center gap-2 text-sm font-black">
+                        <input
+                          type="checkbox"
+                          checked={access.house}
+                          onChange={(event) => setStoragePermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), house: event.target.checked } }))}
+                        />
+                        Wagon Home
+                      </label>
+                      <label className="flex items-center gap-2 text-sm font-black">
+                        <input
+                          type="checkbox"
+                          checked={access.stable}
+                          onChange={(event) => setStoragePermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), stable: event.target.checked } }))}
+                        />
+                        Caged Wagon
+                      </label>
+                    </div>
+                  );
+                })}
+                {!permissionProfiles.length && (
+                  <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No other players are available yet.</div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button variant="ghost" onClick={() => setStoragePermissionsOpen(false)}>Cancel</Button>
+                  <Button variant="primary" disabled={saving} onClick={saveSpecialStoragePermissions}>
+                    {saving && <Loader2 className="mr-2 inline animate-spin" size={15} />}
+                    Save permissions
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
         </Modal>
       )}
       {renderTradeBuilder()}
