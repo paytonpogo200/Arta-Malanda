@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Hammer, RefreshCw, ShieldAlert } from 'lucide-react';
+import { ArrowRightLeft, Hammer, RefreshCw, ShieldAlert, Sparkles } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -46,6 +46,8 @@ type BreakdownSelection = {
   entry: ConvertibleEntry;
   quantity: number;
 };
+
+type ConversionConfirmMode = 'breakdown' | 'forge' | 'dragon-scales';
 
 const EMPTY_STATE: ConversionState = {
   recipes: [],
@@ -123,6 +125,18 @@ function formatQuantity(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function dragonScaleOutputQuantity(total: number) {
+  return Math.floor(total / 25);
+}
+
+function dragonScaleConsumedQuantity(total: number) {
+  return dragonScaleOutputQuantity(total) * 25;
+}
+
+function dragonScaleReturnedQuantity(total: number) {
+  return Math.max(0, total - dragonScaleConsumedQuantity(total));
+}
+
 function sourceItemKey(entry: SourceEntry) {
   return `${entry.source}:${entry.item.id}`;
 }
@@ -142,6 +156,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
   const [scaleSelections, setScaleSelections] = useState<Record<string, number>>({});
   const [dragonSelections, setDragonSelections] = useState<Record<string, number>>({});
   const [selectedRecipeKey, setSelectedRecipeKey] = useState('');
+  const [confirmConversion, setConfirmConversion] = useState<ConversionConfirmMode | null>(null);
   const [confirmBreakdown, setConfirmBreakdown] = useState<BreakdownSelection | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -174,6 +189,9 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
   const selectedDragonItems = useMemo(() => selectedEntries(state.dragonScaleItems, dragonSelections), [dragonSelections, state.dragonScaleItems]);
   const selectedScaleTotal = selectedScaleItems.reduce((total, entry) => total + entry.quantity, 0);
   const selectedDragonTotal = selectedDragonItems.reduce((total, entry) => total + entry.quantity, 0);
+  const selectedDragonOutput = dragonScaleOutputQuantity(selectedDragonTotal);
+  const selectedDragonConsumed = dragonScaleConsumedQuantity(selectedDragonTotal);
+  const selectedDragonReturned = dragonScaleReturnedQuantity(selectedDragonTotal);
   const selectedScaleNames = Array.from(new Set(selectedScaleItems.map((entry) => entry.item.name)));
   const selectedScaleName = selectedScaleNames.length === 1 ? selectedScaleNames[0] : '';
   const compatibleForgeRecipes = useMemo(() => selectedScaleName
@@ -208,6 +226,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
         setScaleSelections({});
         setDragonSelections({});
         setSelectedRecipeKey('');
+        setConfirmConversion(null);
         setConfirmBreakdown(null);
         onConverted();
       }
@@ -218,13 +237,36 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
     }
   }
 
-  function convertBreakdown(selection: BreakdownSelection) {
+  function convertBreakdown(selection: BreakdownSelection, confirmDestroyExtras = false) {
     void runAction({
       action: 'item-to-scales',
       itemId: selection.entry.item.id,
       quantity: selection.quantity,
-      confirmDestroyExtras: false
+      confirmDestroyExtras
     });
+  }
+
+  function runConfirmedConversion() {
+    if (confirmConversion === 'breakdown' && breakdownSelection) {
+      convertBreakdown(breakdownSelection, breakdownSelection.entry.hasExtras);
+      return;
+    }
+
+    if (confirmConversion === 'forge' && selectedForgeRecipe) {
+      void runAction({
+        action: 'scales-to-item',
+        recipeKey: selectedForgeRecipe.key,
+        selections: selectedScaleItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
+      });
+      return;
+    }
+
+    if (confirmConversion === 'dragon-scales' && selectedDragonTotal >= 25) {
+      void runAction({
+        action: 'dragon-scales',
+        selections: selectedDragonItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
+      });
+    }
   }
 
   return (
@@ -271,7 +313,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
                 className="mt-3 w-full"
                 variant="primary"
                 disabled={saving || !breakdownSelection}
-                onClick={() => breakdownSelection && (breakdownSelection.entry.hasExtras ? setConfirmBreakdown(breakdownSelection) : convertBreakdown(breakdownSelection))}
+                onClick={() => setConfirmConversion('breakdown')}
               >
                 Convert to Scales
               </Button>
@@ -326,11 +368,7 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
                 className="mt-3 w-full"
                 variant="primary"
                 disabled={saving || !selectedForgeRecipe}
-                onClick={() => void runAction({
-                  action: 'scales-to-item',
-                  recipeKey: selectedForgeRecipe?.key,
-                  selections: selectedScaleItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
-                })}
+                onClick={() => setConfirmConversion('forge')}
               >
                 Forge Item
               </Button>
@@ -341,15 +379,18 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="eyebrow">Dragon Scale Refining</p>
-                <p className="mt-1 font-black">25 chosen dragon scale fragments &rarr; 1 Dragonscale Scale</p>
-                <p className={`mt-1 text-sm font-black ${selectedDragonTotal === 25 ? 'text-[var(--teal)]' : 'text-[var(--muted)]'}`}>Selected {formatQuantity(selectedDragonTotal)} / 25</p>
+                <p className="mt-1 font-black">Every 25 chosen dragon scale fragments &rarr; 1 Dragonscale Scale</p>
+                <p className={`mt-1 text-sm font-black ${selectedDragonTotal >= 25 ? 'text-[var(--teal)]' : 'text-[var(--muted)]'}`}>Selected {formatQuantity(selectedDragonTotal)} / 25+</p>
+                {selectedDragonTotal >= 25 && (
+                  <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">
+                    Creates {formatQuantity(selectedDragonOutput)} scale{selectedDragonOutput === 1 ? '' : 's'}
+                    {selectedDragonReturned > 0 ? `, returns ${formatQuantity(selectedDragonReturned)} fragment${selectedDragonReturned === 1 ? '' : 's'}` : ''}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => setDragonPickerOpen(true)}>Choose Fragments</Button>
-                <Button variant="teal" disabled={saving || selectedDragonTotal !== 25} onClick={() => void runAction({
-                  action: 'dragon-scales',
-                  selections: selectedDragonItems.map((entry) => ({ source: entry.source, itemId: entry.item.id, quantity: entry.quantity }))
-                })}>
+                <Button variant="teal" disabled={saving || selectedDragonTotal < 25} onClick={() => setConfirmConversion('dragon-scales')}>
                   Forge Dragonscale Scale
                 </Button>
               </div>
@@ -402,7 +443,88 @@ export function JurshConversionPanel({ characterId, onConverted }: { characterId
           />
           <div className="mt-4 grid grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => setDragonSelections({})}>Clear</Button>
-            <Button variant="primary" disabled={selectedDragonTotal !== 25} onClick={() => setDragonPickerOpen(false)}>Use These Inputs</Button>
+            <Button variant="primary" disabled={selectedDragonTotal < 25} onClick={() => setDragonPickerOpen(false)}>Use These Inputs</Button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmConversion && (
+        <Modal
+          title={confirmConversion === 'breakdown' ? 'Confirm Breakdown' : confirmConversion === 'forge' ? 'Confirm Forge' : 'Confirm Dragon Scale Refining'}
+          onClose={() => setConfirmConversion(null)}
+        >
+          <div className="grid gap-4">
+            {confirmConversion === 'breakdown' && breakdownSelection && (
+              <ConversionPreview
+                inputName={breakdownSelection.entry.item.displayName || breakdownSelection.entry.item.name}
+                inputType={breakdownSelection.entry.item.type}
+                inputRarity={breakdownSelection.entry.item.rarity}
+                inputQuantity={breakdownSelection.quantity}
+                outputName={breakdownSelection.entry.recipe.scaleItemName}
+                outputType="material"
+                outputRarity={breakdownSelection.entry.recipe.rarity}
+                outputQuantity={breakdownSelection.entry.recipe.scaleQuantity * breakdownSelection.quantity}
+                warning={breakdownSelection.entry.hasExtras ? 'This will destroy modifiers, enhancements, runes, and enchantments on the selected gear.' : ''}
+              />
+            )}
+
+            {confirmConversion === 'forge' && selectedForgeRecipe && (
+              <ConversionPreview
+                inputName={selectedForgeRecipe.scaleItemName}
+                inputType="material"
+                inputRarity={selectedForgeRecipe.rarity}
+                inputQuantity={selectedForgeRecipe.scaleQuantity}
+                outputName={selectedForgeRecipe.itemName}
+                outputType={selectedForgeRecipe.itemType}
+                outputRarity={selectedForgeRecipe.rarity}
+                outputQuantity={1}
+                warning={selectedScaleTotal > selectedForgeRecipe.scaleQuantity ? `${formatQuantity(selectedScaleTotal - selectedForgeRecipe.scaleQuantity)} unused scale${selectedScaleTotal - selectedForgeRecipe.scaleQuantity === 1 ? '' : 's'} stay in Jursh's inventory.` : ''}
+              />
+            )}
+
+            {confirmConversion === 'dragon-scales' && (
+              <div className="grid items-center gap-3 md:grid-cols-[1fr_auto_1fr]">
+                <div className="grid gap-2">
+                  <p className="eyebrow">Using</p>
+                  {selectedDragonItems.map((entry) => (
+                    <PreviewItem
+                      key={sourceItemKey(entry)}
+                      name={entry.item.displayName || entry.item.name}
+                      type={entry.item.type}
+                      rarity={entry.item.rarity}
+                      quantity={entry.quantity}
+                    />
+                  ))}
+                </div>
+                <ConversionArrow />
+                <div className="grid gap-2">
+                  <p className="eyebrow">Creating</p>
+                  <PreviewItem
+                    name="Dragonscale Scale"
+                    type="material"
+                    rarity="Legendary"
+                    quantity={selectedDragonOutput}
+                    featured
+                  />
+                  {selectedDragonReturned > 0 && (
+                    <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)]">
+                      {formatQuantity(selectedDragonConsumed)} fragments are consumed. {formatQuantity(selectedDragonReturned)} extra fragment{selectedDragonReturned === 1 ? '' : 's'} stay in Jursh&apos;s inventory.
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" disabled={saving} onClick={() => setConfirmConversion(null)}>Back</Button>
+              <Button
+                variant="primary"
+                disabled={saving || (confirmConversion === 'breakdown' && !breakdownSelection) || (confirmConversion === 'forge' && !selectedForgeRecipe) || (confirmConversion === 'dragon-scales' && selectedDragonTotal < 25)}
+                onClick={runConfirmedConversion}
+              >
+                Confirm Craft
+              </Button>
+            </div>
           </div>
         </Modal>
       )}
@@ -485,9 +607,15 @@ function SourceQuantityPicker({ items, selections, onChange, total, requiredTota
     <div className="grid gap-3">
       <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
         <p className="eyebrow">Selected</p>
-        <p className={`mt-1 text-2xl font-black ${requiredTotal && total === requiredTotal ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>
-          {formatQuantity(total)}{requiredTotal ? ` / ${requiredTotal}` : ''}
+        <p className={`mt-1 text-2xl font-black ${requiredTotal && total >= requiredTotal ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>
+          {formatQuantity(total)}{requiredTotal ? ` / ${requiredTotal}+` : ''}
         </p>
+        {requiredTotal === 25 && total >= 25 && (
+          <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">
+            Creates {formatQuantity(dragonScaleOutputQuantity(total))} scale{dragonScaleOutputQuantity(total) === 1 ? '' : 's'}
+            {dragonScaleReturnedQuantity(total) > 0 ? `, returns ${formatQuantity(dragonScaleReturnedQuantity(total))}` : ''}
+          </p>
+        )}
       </div>
       {items.length ? (
         <div className="thin-scrollbar grid max-h-[60vh] gap-2 overflow-y-auto pr-1">
@@ -545,6 +673,16 @@ function ConversionPreview({
       <div className="grid place-items-center text-[var(--brass)]"><ArrowRightLeft size={24} /></div>
       <PreviewItem name={outputName} type={outputType} rarity={outputRarity} quantity={outputQuantity} featured />
       {warning && <p className="md:col-span-3 rounded-xl border border-[var(--red)]/35 bg-[var(--red)]/10 p-3 text-xs font-bold text-[var(--red)]">{warning}</p>}
+    </div>
+  );
+}
+
+function ConversionArrow() {
+  return (
+    <div className="relative grid h-16 w-full min-w-24 place-items-center text-[var(--brass)] md:h-24 md:w-24">
+      <span className="absolute h-1 w-full rounded-full bg-gradient-to-r from-transparent via-[var(--brass)] to-[var(--brass)] shadow-[0_0_18px_rgba(209,168,91,.45)]" />
+      <span className="absolute right-1 h-5 w-5 rotate-45 border-r-4 border-t-4 border-[var(--brass)] shadow-[0_0_18px_rgba(209,168,91,.45)]" />
+      <Sparkles size={20} className="relative rounded-full bg-[#1a100c] p-0.5 text-[var(--brass)]" />
     </div>
   );
 }

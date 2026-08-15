@@ -1703,6 +1703,17 @@ as $$
   end
 $$;
 
+create or replace function public.format_item_quantity(p_quantity numeric)
+returns text
+language sql
+immutable
+as $$
+  select case
+    when p_quantity is null then '0'
+    else trim(trailing '.' from trim(trailing '0' from p_quantity::text))
+  end
+$$;
+
 create or replace function public.catalog_storage_capacity(p_item_name text)
 returns int
 language sql
@@ -3421,6 +3432,7 @@ $$;
 
 grant execute on function public.loadout_slot_accepts_item(text, text, boolean) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
+grant execute on function public.format_item_quantity(numeric) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
 grant execute on function public.wallet_balances_for_character(uuid) to anon, authenticated;
 grant execute on function public.get_character_inventory(text, uuid) to anon, authenticated;
@@ -8749,14 +8761,16 @@ begin
     v_total := v_total + v_quantity;
   end loop;
 
-  if v_total <> coalesce(p_required_quantity, 25) then
-    raise exception 'Choose exactly % dragon scale fragments.', coalesce(p_required_quantity, 25);
+  if v_total < coalesce(p_required_quantity, 25) then
+    raise exception 'Choose at least % dragon scale fragments.', coalesce(p_required_quantity, 25);
   end if;
 
+  v_total := coalesce(p_required_quantity, 25);
   for v_entry in select * from jsonb_array_elements(coalesce(p_selections, '[]'::jsonb)) loop
+    exit when v_total <= 0;
     v_source := lower(trim(coalesce(v_entry->>'source', '')));
     v_item_id := nullif(coalesce(v_entry->>'itemId', v_entry->>'id', ''), '')::uuid;
-    v_quantity := coalesce((v_entry->>'quantity')::numeric, 0);
+    v_quantity := least(coalesce((v_entry->>'quantity')::numeric, 0), v_total);
     if v_item_id is null or v_quantity <= 0 then
       continue;
     end if;
@@ -8774,6 +8788,7 @@ begin
       'rarity', v_selected.rarity,
       'quantity', v_quantity
     ));
+    v_total := v_total - v_quantity;
   end loop;
 
   return v_consumed;
@@ -9197,23 +9212,44 @@ declare
   v_station_city_name text;
   v_consumed jsonb;
   v_output public.inventory_items%rowtype;
+  v_available_total numeric := 0;
+  v_output_quantity numeric := 0;
+  v_required_quantity numeric := 0;
+  v_entry jsonb;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
   v_station_city_name := coalesce(nullif(trim(p_station_city_name), ''), v_character.location_name);
+
+  if p_selections is not null and jsonb_typeof(p_selections) = 'array' then
+    for v_entry in select * from jsonb_array_elements(coalesce(p_selections, '[]'::jsonb)) loop
+      v_available_total := v_available_total + greatest(0, coalesce(nullif(v_entry->>'quantity', '')::numeric, 0));
+    end loop;
+  else
+    select coalesce(sum(public.accessible_item_quantity_by_name(v_character.id, fragment_name, v_station_city_name)), 0)
+    into v_available_total
+    from unnest(public.dragon_scale_fragment_names()) as fragment_name;
+  end if;
+
+  v_output_quantity := floor(v_available_total / 25);
+  if v_output_quantity < 1 then
+    raise exception 'Need 25 total dragon scale fragments to forge 1 Dragonscale Scale.';
+  end if;
+  v_required_quantity := v_output_quantity * 25;
+
   v_consumed := case
     when p_selections is not null and jsonb_typeof(p_selections) = 'array'
-      then public.consume_dragon_scale_fragment_selections(v_character.id, v_station_city_name, p_selections, 25)
-    else public.consume_accessible_dragon_scale_fragments(v_character.id, v_station_city_name, 25)
+      then public.consume_dragon_scale_fragment_selections(v_character.id, v_station_city_name, p_selections, v_required_quantity)
+    else public.consume_accessible_dragon_scale_fragments(v_character.id, v_station_city_name, v_required_quantity)
   end;
   v_output := public.grant_material_conversion_item(
     v_character.id,
     'Dragonscale Scale',
     'material',
     'Legendary',
-    1,
+    v_output_quantity,
     'Dragonscale',
     '{}'::jsonb,
     false
@@ -9221,6 +9257,8 @@ begin
 
   return jsonb_build_object(
     'consumed', v_consumed,
+    'createdQuantity', v_output_quantity,
+    'returnedFragments', v_available_total - v_required_quantity,
     'createdItem', public.inventory_item_record_to_json(v_output)
   );
 end;
@@ -12007,7 +12045,7 @@ begin
 
   v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
   if v_source_item.quantity < v_quantity then raise exception 'A trade item quantity is no longer available.'; end if;
-  v_item_label := v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name);
+  v_item_label := public.format_item_quantity(v_quantity) || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name);
 
   if v_source_item.is_storage then
     if v_quantity <> 1 then raise exception 'Storage containers must be traded one at a time.'; end if;
@@ -12232,7 +12270,7 @@ begin
       'type', v_offered_item.item_type,
       'rarity', v_offered_item.rarity
     ));
-    v_offer_labels := array_append(v_offer_labels, v_quantity::text || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name));
+    v_offer_labels := array_append(v_offer_labels, public.format_item_quantity(v_quantity) || ' ' || coalesce(v_offered_item.display_name, v_offered_item.item_name));
   end loop;
 
   for v_entry in select * from jsonb_array_elements(v_requested_items_source) loop
@@ -12262,7 +12300,7 @@ begin
       'type', v_requested_item.item_type,
       'rarity', v_requested_item.rarity
     ));
-    v_request_labels := array_append(v_request_labels, v_quantity::text || ' ' || coalesce(v_requested_item.display_name, v_requested_item.item_name));
+    v_request_labels := array_append(v_request_labels, public.format_item_quantity(v_quantity) || ' ' || coalesce(v_requested_item.display_name, v_requested_item.item_name));
   end loop;
 
   if jsonb_array_length(v_offered_items) = 0 and jsonb_array_length(v_offered_currency) = 0 then
@@ -12566,7 +12604,7 @@ begin
     values (
       v_target_character.owner_user_id,
       v_sender.name || ' gave something to ' || v_target_character.name,
-      v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name) || ' was placed into ' || v_target_character.name || '''s inventory.',
+      public.format_item_quantity(v_quantity) || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name) || ' was placed into ' || v_target_character.name || '''s inventory.',
       'notice',
       'gift',
       v_target_character.location_name

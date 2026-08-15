@@ -598,6 +598,18 @@ function formatQuantity(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function dragonScaleOutputQuantity(total: number) {
+  return Math.floor(total / 25);
+}
+
+function dragonScaleConsumedQuantity(total: number) {
+  return dragonScaleOutputQuantity(total) * 25;
+}
+
+function dragonScaleReturnedQuantity(total: number) {
+  return Math.max(0, total - dragonScaleConsumedQuantity(total));
+}
+
 export function CitiesPanel({ profile }: { profile: Profile }) {
   const [payload, setPayload] = useState<CitiesPayload>(EMPTY_PAYLOAD);
   const [selectedCityKey, setSelectedCityKey] = useState('');
@@ -648,7 +660,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     .map((entry) => ({ ...entry, quantity: Math.max(0, dragonScaleSelections[sourceItemKey(entry)] ?? 0) }))
     .filter((entry) => entry.quantity > 0), [dragonScaleItems, dragonScaleSelections]);
   const selectedDragonScaleTotal = selectedDragonScaleItems.reduce((total, entry) => total + entry.quantity, 0);
-  const canConfirmForge = useMemo(() => {
+  const selectedDragonScaleOutput = dragonScaleOutputQuantity(selectedDragonScaleTotal);
+  const selectedDragonScaleConsumed = dragonScaleConsumedQuantity(selectedDragonScaleTotal);
+  const selectedDragonScaleReturned = dragonScaleReturnedQuantity(selectedDragonScaleTotal);
+  const canConfirmForge = (() => {
     if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
     const walletCoin = walletTotalCoin(craftWallet);
     if (craftModal.mode === 'craft') {
@@ -656,7 +671,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
       return plan.canCover && walletCoin >= totalCost;
     }
-    if (craftModal.mode === 'dragon-scales') return selectedDragonScaleTotal === 25;
+    if (craftModal.mode === 'dragon-scales') return selectedDragonScaleTotal >= 25;
 
     const rune = forgeRunes.find((product) => product.id === craftRuneProductId);
     const requiredRunes = cappedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity, rune ?? null);
@@ -668,7 +683,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
     const laborCost = craftModal.mode === 'enhance' && craftModal.service === 'armory' && isArmorCladClass(selectedShopper) ? 0 : 1000;
     return walletCoin >= laborCost + rune.priceCoin * requiredRunes;
-  }, [canShop, craftHouseItems, craftInventory, craftMaterialProductId, craftMaterials, craftModal, craftModifier, craftRuneProductId, craftRuneQuantity, craftTargetItemId, craftWallet, forgeRunes, selectedDragonScaleTotal, selectedShopper, selectedVendor]);
+  })();
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === selectedCity?.key)
@@ -965,8 +980,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           name: 'Dragonscale Scale',
           type: 'material' as ItemType,
           rarity: 'Legendary' as ItemRarity,
-          quantity: 1,
-          note: 'A refined forging scale for Dragonscale gear.'
+          quantity: selectedDragonScaleOutput,
+          note: selectedDragonScaleReturned > 0
+            ? `${formatQuantity(selectedDragonScaleConsumed)} fragments are consumed. ${formatQuantity(selectedDragonScaleReturned)} extra fragment${selectedDragonScaleReturned === 1 ? '' : 's'} stay in storage.`
+            : 'A refined forging scale for Dragonscale gear.'
         }
       };
     }
@@ -1275,13 +1292,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             ) : craftModal.mode === 'dragon-scales' ? (
               <div className="grid gap-3">
                 <SoftCard>
-                  <p className="font-black">Forge 25 chosen dragon scale fragments into 1 Dragonscale Scale.</p>
-                  <p className="mt-1 text-sm font-bold text-[var(--muted)]">Choose exact stacks from inventory or accessible house storage before crafting.</p>
+                  <p className="font-black">Forge every 25 chosen dragon scale fragments into 1 Dragonscale Scale.</p>
+                  <p className="mt-1 text-sm font-bold text-[var(--muted)]">Choose fragments from inventory or accessible house storage. Extra fragments that do not complete a set of 25 stay where they are.</p>
                 </SoftCard>
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <SoftCard>
                     <p className="eyebrow">Selected fragments</p>
-                    <p className={`mt-1 text-xl font-black ${selectedDragonScaleTotal === 25 ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>{selectedDragonScaleTotal} / 25</p>
+                    <p className={`mt-1 text-xl font-black ${selectedDragonScaleTotal >= 25 ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>{formatQuantity(selectedDragonScaleTotal)} / 25+</p>
+                    {selectedDragonScaleTotal >= 25 && (
+                      <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">
+                        Creates {formatQuantity(selectedDragonScaleOutput)} scale{selectedDragonScaleOutput === 1 ? '' : 's'}
+                        {selectedDragonScaleReturned > 0 ? `, returns ${formatQuantity(selectedDragonScaleReturned)} fragment${selectedDragonScaleReturned === 1 ? '' : 's'}` : ''}
+                      </p>
+                    )}
                   </SoftCard>
                   <Button variant="secondary" onClick={() => setDragonScalePickerOpen(true)}>Choose Inputs</Button>
                 </div>
@@ -1302,8 +1325,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     ))}
                   </div>
                 )}
-                {selectedDragonScaleTotal !== 25 && (
-                  <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose exactly 25 compatible dragon scale fragments.</div>
+                {selectedDragonScaleTotal < 25 && (
+                  <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose at least 25 compatible dragon scale fragments.</div>
                 )}
               </div>
             ) : (
@@ -1342,7 +1365,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           />
           <div className="mt-4 grid grid-cols-2 gap-2">
             <Button variant="secondary" onClick={() => setDragonScaleSelections({})}>Clear</Button>
-            <Button variant="primary" disabled={selectedDragonScaleTotal !== 25} onClick={() => setDragonScalePickerOpen(false)}>Use These Inputs</Button>
+            <Button variant="primary" disabled={selectedDragonScaleTotal < 25} onClick={() => setDragonScalePickerOpen(false)}>Use These Inputs</Button>
           </div>
         </Modal>
       )}
@@ -2215,7 +2238,13 @@ function DragonScaleInputPicker({ items, selections, onChange, total }: {
     <div className="grid gap-3">
       <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
         <p className="eyebrow">Selected</p>
-        <p className={`mt-1 text-2xl font-black ${total === 25 ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>{total} / 25</p>
+        <p className={`mt-1 text-2xl font-black ${total >= 25 ? 'text-[var(--teal)]' : 'text-[var(--brass)]'}`}>{formatQuantity(total)} / 25+</p>
+        {total >= 25 && (
+          <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">
+            Creates {formatQuantity(dragonScaleOutputQuantity(total))} scale{dragonScaleOutputQuantity(total) === 1 ? '' : 's'}
+            {dragonScaleReturnedQuantity(total) > 0 ? `, returns ${formatQuantity(dragonScaleReturnedQuantity(total))}` : ''}
+          </p>
+        )}
       </div>
       {items.length ? (
         <div className="thin-scrollbar grid max-h-[55vh] gap-2 overflow-y-auto pr-1">

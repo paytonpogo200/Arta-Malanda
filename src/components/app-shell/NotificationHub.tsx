@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { Bell, Check, Loader2, Megaphone, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import type { DashboardNotice } from '@/features/dashboard/state';
@@ -18,6 +19,12 @@ function noticeLabel(kind: DashboardNotice['kind']) {
   if (kind === 'announcement') return 'Announcement';
   if (kind === 'system') return 'System';
   return 'Notice';
+}
+
+function cleanNotificationText(value: string) {
+  return value
+    .replace(/\b(\d+)\.(\d*?[1-9])0{2,}\b/g, '$1.$2')
+    .replace(/\b(\d+)\.0{2,}\b/g, '$1');
 }
 
 const LOCATION_PRESETS = ['All locations', 'Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
@@ -117,9 +124,9 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
         )}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Notifications">
-          <section className="surface w-full max-w-md rounded-2xl p-4 sm:p-5">
+          <section className="modal-panel surface flex max-h-[calc(100dvh-var(--bottom-nav-space)-1rem)] w-[min(94vw,32rem)] flex-col overflow-hidden rounded-2xl p-4 sm:p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <p className="eyebrow">Campaign</p>
@@ -168,7 +175,7 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
               </form>
             )}
 
-            <div className="grid gap-2">
+            <div className="modal-body thin-scrollbar grid min-h-0 flex-1 gap-2 overflow-y-auto pr-1">
               {orderedNotices.map((notice) => (
                 <article key={notice.id} className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
                   <div className="flex items-start justify-between gap-3">
@@ -180,7 +187,7 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
                       {busyId === notice.id ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                     </button>
                   </div>
-                  {notice.body && <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">{notice.body}</p>}
+                  {notice.body && <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">{cleanNotificationText(notice.body)}</p>}
                   {notice.kind === 'trade' && notice.sourceId && (
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <Button variant="teal" onClick={() => respondToTrade(notice.sourceId!, 'accepted')} disabled={busyId.startsWith(notice.sourceId)}>
@@ -201,7 +208,8 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
