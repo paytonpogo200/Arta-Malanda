@@ -3482,6 +3482,16 @@ create table if not exists public.house_access_permissions (
   constraint house_access_permissions_some_access check (can_access_house or can_access_stable)
 );
 
+create table if not exists public.mobile_storage_access_permissions (
+  storage_item_id uuid not null references public.inventory_items(id) on delete cascade,
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  grantee_user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (storage_item_id, grantee_user_id),
+  constraint mobile_storage_access_permissions_not_self check (owner_user_id <> grantee_user_id)
+);
+
 create table if not exists public.house_inventory_items (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
@@ -3711,12 +3721,14 @@ create index if not exists wagon_activity_log_wagon_created_idx
 
 alter table public.player_houses enable row level security;
 alter table public.house_access_permissions enable row level security;
+alter table public.mobile_storage_access_permissions enable row level security;
 alter table public.house_inventory_items enable row level security;
 alter table public.campaign_properties enable row level security;
 alter table public.wagon_activity_log enable row level security;
 
 revoke all on public.player_houses from anon, authenticated;
 revoke all on public.house_access_permissions from anon, authenticated;
+revoke all on public.mobile_storage_access_permissions from anon, authenticated;
 revoke all on public.house_inventory_items from anon, authenticated;
 revoke all on public.campaign_properties from anon, authenticated;
 revoke all on public.wagon_activity_log from anon, authenticated;
@@ -3733,6 +3745,14 @@ for each row execute function public.touch_updated_at();
 
 create index if not exists house_access_permissions_grantee_idx
   on public.house_access_permissions (grantee_user_id);
+
+drop trigger if exists mobile_storage_access_permissions_touch_updated_at on public.mobile_storage_access_permissions;
+create trigger mobile_storage_access_permissions_touch_updated_at
+before update on public.mobile_storage_access_permissions
+for each row execute function public.touch_updated_at();
+
+create index if not exists mobile_storage_access_permissions_owner_idx
+  on public.mobile_storage_access_permissions (owner_user_id, grantee_user_id);
 
 drop trigger if exists house_inventory_items_touch_updated_at on public.house_inventory_items;
 create trigger house_inventory_items_touch_updated_at
@@ -3921,6 +3941,23 @@ as $$
   from public.house_access_permissions a
   join public.profiles p on p.id = a.grantee_user_id
   where a.owner_user_id = p_owner_user_id
+$$;
+
+create or replace function public.mobile_storage_permissions_to_json(p_storage_item_id uuid)
+returns jsonb
+language sql
+stable
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'storageItemId', a.storage_item_id,
+    'ownerUserId', a.owner_user_id,
+    'granteeUserId', a.grantee_user_id,
+    'granteeName', coalesce(nullif(p.display_name, ''), p.username::text, 'Player'),
+    'access', true
+  ) order by coalesce(nullif(p.display_name, ''), p.username::text, 'Player')), '[]'::jsonb)
+  from public.mobile_storage_access_permissions a
+  join public.profiles p on p.id = a.grantee_user_id
+  where a.storage_item_id = p_storage_item_id
 $$;
 
 create or replace function public.house_inventory_items_stackable(a public.house_inventory_items, b public.house_inventory_items)
@@ -5478,10 +5515,10 @@ as $$
           or p_owner_character.owner_user_id is not distinct from p_profile.id
           or exists (
             select 1
-            from public.house_access_permissions a
-            where a.owner_user_id = p_owner_character.owner_user_id
+            from public.mobile_storage_access_permissions a
+            where a.storage_item_id = p_storage.id
+              and a.owner_user_id = p_owner_character.owner_user_id
               and a.grantee_user_id = p_profile.id
-              and a.can_access_house
           )
         )
       )
@@ -5492,10 +5529,10 @@ as $$
           or p_owner_character.owner_user_id is not distinct from p_profile.id
           or exists (
             select 1
-            from public.house_access_permissions a
-            where a.owner_user_id = p_owner_character.owner_user_id
+            from public.mobile_storage_access_permissions a
+            where a.storage_item_id = p_storage.id
+              and a.owner_user_id = p_owner_character.owner_user_id
               and a.grantee_user_id = p_profile.id
-              and a.can_access_stable
           )
         )
       )
@@ -6029,11 +6066,15 @@ grant execute on function public.house_item_record_to_json(public.house_inventor
 grant execute on function public.property_record_to_json(public.campaign_properties) to anon, authenticated;
 grant execute on function public.house_access_to_json(public.profiles, uuid) to anon, authenticated;
 grant execute on function public.house_permissions_to_json(uuid) to anon, authenticated;
+grant execute on function public.mobile_storage_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_wagon(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_is_mobile_home_storage(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_is_caged_wagon_storage(text, text) to anon, authenticated;
 grant execute on function public.inventory_storage_visible_to_profile(public.profiles, public.inventory_items, public.characters) to anon, authenticated;
+grant execute on function public.assert_mobile_storage_permission_owner(public.profiles, uuid) to anon, authenticated;
+grant execute on function public.get_mobile_storage_permissions(text, uuid) to anon, authenticated;
+grant execute on function public.set_mobile_storage_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.house_stable_slot_offset() to anon, authenticated;
 grant execute on function public.find_first_free_house_stable_slot(uuid, public.player_houses) to anon, authenticated;
@@ -8414,6 +8455,135 @@ begin
   end loop;
 
   return public.get_player_house(p_session_token, p_owner_user_id);
+end;
+$$;
+
+create or replace function public.assert_mobile_storage_permission_owner(
+  p_profile public.profiles,
+  p_storage_item_id uuid
+)
+returns table(storage public.inventory_items, owner_character public.characters)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_storage public.inventory_items%rowtype;
+  v_owner_character public.characters%rowtype;
+begin
+  select * into v_storage
+  from public.inventory_items
+  where id = p_storage_item_id;
+
+  if v_storage.id is null
+    or not coalesce(v_storage.is_storage, false)
+    or v_storage.parent_item_id is not null
+    or v_storage.loadout_slot is not null
+    or not (
+      public.inventory_item_is_mobile_home_storage(v_storage.item_name, v_storage.item_type)
+      or public.inventory_item_is_caged_wagon_storage(v_storage.item_name, v_storage.item_type)
+    )
+  then
+    raise exception 'Permissioned mobile storage was not found.';
+  end if;
+
+  select * into v_owner_character
+  from public.characters
+  where id = v_storage.character_id;
+
+  if v_owner_character.id is null or v_owner_character.owner_user_id is null then
+    raise exception 'Permissioned mobile storage must be owned by an assigned character.';
+  end if;
+
+  if p_profile.role <> 'dm'::public.user_role and v_owner_character.owner_user_id is distinct from p_profile.id then
+    raise exception 'Only the storage owner or Dungeon Master can change these permissions.';
+  end if;
+
+  storage := v_storage;
+  owner_character := v_owner_character;
+  return next;
+end;
+$$;
+
+create or replace function public.get_mobile_storage_permissions(
+  p_session_token text,
+  p_storage_item_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_record record;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_record
+  from public.assert_mobile_storage_permission_owner(v_profile, p_storage_item_id);
+
+  return jsonb_build_object(
+    'storageItemId', (v_record.storage).id,
+    'ownerUserId', (v_record.owner_character).owner_user_id,
+    'storageLabel', case
+      when public.inventory_item_is_mobile_home_storage((v_record.storage).item_name, (v_record.storage).item_type) then 'Wagon Home'
+      else 'Caged Wagon'
+    end,
+    'permissions', public.mobile_storage_permissions_to_json(p_storage_item_id)
+  );
+end;
+$$;
+
+create or replace function public.set_mobile_storage_permissions(
+  p_session_token text,
+  p_storage_item_id uuid,
+  p_permissions jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_record record;
+  v_entry jsonb;
+  v_grantee_user_id uuid;
+  v_access boolean;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_record
+  from public.assert_mobile_storage_permission_owner(v_profile, p_storage_item_id);
+
+  delete from public.mobile_storage_access_permissions
+  where storage_item_id = p_storage_item_id;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_permissions, '[]'::jsonb)) loop
+    v_grantee_user_id := nullif(coalesce(v_entry->>'granteeUserId', v_entry->>'grantee_user_id', ''), '')::uuid;
+    v_access := coalesce((v_entry->>'access')::boolean, false);
+
+    if v_grantee_user_id is null
+      or v_grantee_user_id = (v_record.owner_character).owner_user_id
+      or not v_access
+    then
+      continue;
+    end if;
+
+    if not exists (select 1 from public.profiles where id = v_grantee_user_id) then
+      raise exception 'A selected player account does not exist.';
+    end if;
+
+    insert into public.mobile_storage_access_permissions (storage_item_id, owner_user_id, grantee_user_id)
+    values (p_storage_item_id, (v_record.owner_character).owner_user_id, v_grantee_user_id)
+    on conflict (storage_item_id, grantee_user_id) do update
+    set owner_user_id = excluded.owner_user_id;
+  end loop;
+
+  return public.get_mobile_storage_permissions(p_session_token, p_storage_item_id);
 end;
 $$;
 
@@ -14474,6 +14644,11 @@ drop trigger if exists app_live_house_access_permissions on public.house_access_
 create trigger app_live_house_access_permissions
 after insert or update or delete on public.house_access_permissions
 for each row execute function public.touch_app_live_update_trigger('house,inventory,cities');
+
+drop trigger if exists app_live_mobile_storage_access_permissions on public.mobile_storage_access_permissions;
+create trigger app_live_mobile_storage_access_permissions
+after insert or update or delete on public.mobile_storage_access_permissions
+for each row execute function public.touch_app_live_update_trigger('inventory,wagon,cities');
 
 drop trigger if exists app_live_campaign_properties on public.campaign_properties;
 create trigger app_live_campaign_properties
