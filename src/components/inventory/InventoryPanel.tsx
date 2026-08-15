@@ -110,11 +110,15 @@ function isPotionConsumable(item: InventoryItem) {
 }
 
 function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
-  return item.isStorage && item.name.toLowerCase().includes('wagon');
+  const normalized = item.name.toLowerCase();
+  return item.isStorage
+    && normalized.includes('wagon')
+    && !normalized.includes('wagon home')
+    && !normalized.includes('caged wagon');
 }
 
 function isCagedWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
-  return isWagonStorage(item) && item.name.toLowerCase().includes('caged wagon');
+  return item.isStorage && item.name.toLowerCase().includes('caged wagon');
 }
 
 function quantityText(quantity: number) {
@@ -368,10 +372,10 @@ export function InventoryPanel({
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, tradeCharacters]);
   const tradeTargetCharacter = useMemo(() => tradeTargets.find((entry) => entry.id === tradeTargetId) ?? null, [tradeTargetId, tradeTargets]);
   const targetPreviewItems = useMemo(() => (targetPreview?.items ?? [])
-    .filter((item) => !item.isStorage && (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
+    .filter((item) => (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
     .sort((a, b) => (a.slotIndex - b.slotIndex) || a.name.localeCompare(b.name)), [targetPreview]);
   const ownTradeItems = useMemo(() => items
-    .filter((item) => !item.isStorage && (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
+    .filter((item) => (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
     .sort((a, b) => (a.slotIndex - b.slotIndex) || a.name.localeCompare(b.name)), [items]);
   const battleStats = useMemo(() => calculateCharacterSheetStats(character, items, classTemplate), [character, classTemplate, items]);
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
@@ -566,6 +570,10 @@ export function InventoryPanel({
       setError('Animals can only occupy the active pet slot, a stable slot, or a Caged Wagon.');
       return;
     }
+    if (movingItem && movingItem.type !== 'pet' && targetStorage && isCagedWagonStorage(targetStorage)) {
+      setError('Only animals can be placed in a Caged Wagon.');
+      return;
+    }
 
     setTarget(`${parentItemId ?? 'main'}:${slot}`);
     const targetItem = items.find((item) => item.id !== itemId && sameContainer(item, parentItemId) && item.slotIndex === slot);
@@ -609,6 +617,10 @@ export function InventoryPanel({
     const movingItem = items.find((item) => item.id === itemId);
     const wagon = [...storageItems, ...nearbyWagons.map((entry) => entry.wagon)].find((entry) => entry.id === wagonId);
     if (!movingItem) return;
+    if (wagon && isCagedWagonStorage(wagon) && movingItem.type !== 'pet') {
+      setError('Only animals can be placed in a Caged Wagon.');
+      return;
+    }
     if (movingItem.type === 'pet' && (!wagon || !isCagedWagonStorage(wagon))) {
       setError('Animals can only occupy the active pet slot, a stable slot, or a Caged Wagon.');
       return;
@@ -737,10 +749,10 @@ export function InventoryPanel({
     return Object.entries(selections)
       .map(([itemId, quantity]) => {
         const item = sourceItems.find((entry) => entry.id === itemId);
-        if (!item || (item.loadoutSlot && item.type !== 'pet') || item.isStorage) return null;
+        if (!item || (item.loadoutSlot && item.type !== 'pet')) return null;
         return {
           itemId,
-          quantity: Math.min(item.quantity, Math.max(quantityStepForItem(item), quantity))
+          quantity: item.isStorage ? 1 : Math.min(item.quantity, Math.max(quantityStepForItem(item), quantity))
         };
       })
       .filter((entry): entry is { itemId: string; quantity: number } => Boolean(entry));
@@ -817,7 +829,7 @@ export function InventoryPanel({
   }
 
   async function giftItem(item: InventoryItem) {
-    if (!canManage || !tradeTargetId || (item.loadoutSlot && item.type !== 'pet') || item.isStorage) return;
+    if (!canManage || !tradeTargetId || (item.loadoutSlot && item.type !== 'pet')) return;
     const targetCharacter = tradeTargetCharacter;
     if (!targetCharacter) return;
     if (targetCharacter.ownerUserId !== character.ownerUserId && !targetCharacter.giftInventoryOpen) {
@@ -829,7 +841,7 @@ export function InventoryPanel({
     setError('');
     setNotice('');
     try {
-      const quantity = Math.min(item.quantity, Math.max(quantityStepForItem(item), tradeQuantity));
+      const quantity = item.isStorage ? 1 : Math.min(item.quantity, Math.max(quantityStepForItem(item), tradeQuantity));
       const response = await fetch(`/api/inventory/items/${item.id}/gift`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1088,7 +1100,7 @@ export function InventoryPanel({
   }
 
   function chooseTradeItem(side: TradeSelectionSide, item: InventoryItem) {
-    if (item.loadoutSlot || item.isStorage) return;
+    if (item.loadoutSlot) return;
     const selections = side === 'offer' ? offeredItemDraft : requestedItemDraft;
     if (selections[item.id]) {
       removeTradeItem(side, item.id);
@@ -1103,7 +1115,7 @@ export function InventoryPanel({
 
   function renderTradeSelectableItem(item: InventoryItem, side: TradeSelectionSide) {
     const selectedQuantity = side === 'offer' ? offeredItemDraft[item.id] : requestedItemDraft[item.id];
-    const disabled = Boolean(item.loadoutSlot || item.isStorage);
+    const disabled = Boolean(item.loadoutSlot);
     return (
       <button
         key={item.id}
@@ -1310,7 +1322,7 @@ export function InventoryPanel({
 
     if (itemActionModal === 'gift') {
       return (
-        <Modal title="Gift item" onClose={() => setItemActionModal(null)}>
+        <Modal title={item.isStorage ? 'Gift storage' : 'Gift item'} onClose={() => setItemActionModal(null)}>
           <div className="grid gap-3">
             <label className="grid gap-1">
               <span className="text-[10px] font-black uppercase text-[var(--muted)]">Recipient</span>
@@ -1321,10 +1333,16 @@ export function InventoryPanel({
                 This character is closed to gifts.
               </p>
             )}
-            <label className="grid gap-2">
-              <span className="text-[10px] font-black uppercase text-[var(--muted)]">Quantity</span>
-              {renderQuantityRange(tradeQuantity, step, maxQuantity, step, setTradeQuantity)}
-            </label>
+            {item.isStorage ? (
+              <div className="rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3 text-sm leading-6 text-[var(--paper)]">
+                This moves the storage container and every item inside it.
+              </div>
+            ) : (
+              <label className="grid gap-2">
+                <span className="text-[10px] font-black uppercase text-[var(--muted)]">Quantity</span>
+                {renderQuantityRange(tradeQuantity, step, maxQuantity, step, setTradeQuantity)}
+              </label>
+            )}
             <Button variant="teal" onClick={() => giftItem(item)} disabled={!tradeTargetId || saving}>
               <Gift className="mr-2 inline" size={15} />
               {tradeTargetCharacter?.ownerUserId === character.ownerUserId ? 'Move now' : 'Gift now'}
@@ -1552,7 +1570,7 @@ export function InventoryPanel({
 
           {nearbyWagons.length > 0 && (
             <div className="mt-5 space-y-2">
-              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Nearby Wagons</h3></div>
+              <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Nearby Storage</h3></div>
               {nearbyWagons.map(({ wagon, ownerName, locationName }) => {
                 const childItems = nearbyWagonItems.filter((item) => item.parentItemId === wagon.id);
                 const childBySlot = new Map(childItems.map((item) => [item.slotIndex, item]));
@@ -1730,13 +1748,16 @@ export function InventoryPanel({
                       Gift item
                     </Button>
                   )}
+                  {tradeTargets.length > 0 && modal.item.isStorage && (
+                    <Button variant="teal" onClick={() => setItemActionModal('gift')} disabled={saving}>
+                      <Gift className="mr-2 inline" size={15} />
+                      Gift storage and contents
+                    </Button>
+                  )}
                   {tradeTargets.length > 0 && modal.item.loadoutSlot && modal.item.type !== 'pet' && (
                     <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">
                       Unequip this item before offering it to another player.
                     </p>
-                  )}
-                  {tradeTargets.length > 0 && modal.item.isStorage && (
-                    <p className="rounded-xl border border-[var(--line)] bg-black/10 p-3 text-xs text-[var(--muted)]">Storage containers cannot be gifted or traded.</p>
                   )}
                   {modal.item.stackable && modal.item.quantity > quantityStepForItem(modal.item) && (
                     <Button variant="secondary" onClick={() => setItemActionModal('split')} disabled={saving}>

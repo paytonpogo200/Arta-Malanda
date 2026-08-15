@@ -2499,30 +2499,6 @@ as $$
   )
 $$;
 
-with duplicate_empty_storage as (
-  select id
-  from (
-    select i.id,
-      row_number() over (
-        partition by i.character_id, lower(i.item_name)
-        order by i.created_at, i.id
-      ) as duplicate_rank
-    from public.inventory_items i
-    where i.parent_item_id is null
-      and i.loadout_slot is null
-      and i.item_type = 'storage'::text
-      and i.is_storage = true
-  ) ranked
-  where duplicate_rank > 1
-    and not exists (
-      select 1 from public.inventory_items child where child.parent_item_id = ranked.id
-    )
-)
-update public.inventory_items i
-set is_storage = false,
-    storage_capacity = 0
-where i.id in (select id from duplicate_empty_storage);
-
 with active_storage as (
   select i.id,
     row_number() over (partition by i.character_id order by i.created_at, i.id) as storage_rank
@@ -2598,6 +2574,32 @@ immutable
 as $$
   select lower(coalesce(p_item_type, '')) = 'storage'
     and lower(coalesce(p_item_name, '')) like '%wagon%'
+    and lower(coalesce(p_item_name, '')) not like '%wagon home%'
+    and lower(coalesce(p_item_name, '')) not like '%caged wagon%'
+$$;
+
+create or replace function public.inventory_item_is_mobile_home_storage(
+  p_item_name text,
+  p_item_type text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select lower(coalesce(p_item_type, '')) = 'storage'
+    and lower(coalesce(p_item_name, '')) like '%wagon home%'
+$$;
+
+create or replace function public.inventory_item_is_caged_wagon_storage(
+  p_item_name text,
+  p_item_type text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select lower(coalesce(p_item_type, '')) = 'storage'
+    and lower(coalesce(p_item_name, '')) like '%caged wagon%'
 $$;
 
 drop function if exists public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text);
@@ -2705,6 +2707,9 @@ begin
   end if;
 
   v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
+  if v_item_type = 'storage'::text then
+    v_quantity := 1;
+  end if;
 
   if v_item_type = 'pet' then
     return public.place_pet_item_for_character(
@@ -2726,8 +2731,7 @@ begin
 
   v_make_storage_container := v_item_type = 'storage'::text
     and coalesce(p_is_storage, false)
-    and p_parent_item_id is null
-    and not public.character_storage_container_exists(p_character_id, v_item_name);
+    and p_parent_item_id is null;
 
   if v_make_storage_container then
     insert into public.inventory_items (
@@ -3008,6 +3012,16 @@ begin
 
       if v_parent_item.id is null or lower(v_parent_item.item_name) not like '%caged wagon%' then
         raise exception 'Pets can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
+      end if;
+    elsif v_parent_item_id is not null then
+      select * into v_parent_item
+      from public.inventory_items
+      where id = v_parent_item_id
+        and character_id = v_item.character_id
+        and is_storage = true;
+
+      if v_parent_item.id is not null and public.inventory_item_is_caged_wagon_storage(v_parent_item.item_name, v_parent_item.item_type) then
+        raise exception 'Only animals can be placed in a Caged Wagon.';
       end if;
     end if;
 
@@ -3417,6 +3431,8 @@ grant execute on function public.next_storage_container_slot(uuid) to anon, auth
 grant execute on function public.character_storage_container_exists(uuid, text) to anon, authenticated;
 grant execute on function public.inventory_items_stackable(public.inventory_items, public.inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_mythril(text, text) to anon, authenticated;
+grant execute on function public.inventory_item_is_mobile_home_storage(text, text) to anon, authenticated;
+grant execute on function public.inventory_item_is_caged_wagon_storage(text, text) to anon, authenticated;
 grant execute on function public.add_character_inventory_item(text, uuid, uuid, int, text, text, text, numeric, boolean, int, jsonb, text, text, int, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.update_inventory_item_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.drop_inventory_item_quantity(text, uuid, numeric) to anon, authenticated;
@@ -5428,6 +5444,52 @@ begin
 end;
 $$;
 
+create or replace function public.inventory_storage_visible_to_profile(
+  p_profile public.profiles,
+  p_storage public.inventory_items,
+  p_owner_character public.characters
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce(p_storage.is_storage, false)
+    and p_storage.parent_item_id is null
+    and p_storage.loadout_slot is null
+    and (
+      public.inventory_item_is_wagon(p_storage.item_name, p_storage.item_type)
+      or (
+        public.inventory_item_is_mobile_home_storage(p_storage.item_name, p_storage.item_type)
+        and (
+          p_profile.role = 'dm'::public.user_role
+          or p_owner_character.owner_user_id is not distinct from p_profile.id
+          or exists (
+            select 1
+            from public.house_access_permissions a
+            where a.owner_user_id = p_owner_character.owner_user_id
+              and a.grantee_user_id = p_profile.id
+              and a.can_access_house
+          )
+        )
+      )
+      or (
+        public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type)
+        and (
+          p_profile.role = 'dm'::public.user_role
+          or p_owner_character.owner_user_id is not distinct from p_profile.id
+          or exists (
+            select 1
+            from public.house_access_permissions a
+            where a.owner_user_id = p_owner_character.owner_user_id
+              and a.grantee_user_id = p_profile.id
+              and a.can_access_stable
+          )
+        )
+      )
+    )
+$$;
+
 create or replace function public.get_location_wagon_storage(
   p_session_token text,
   p_character_id uuid
@@ -5458,10 +5520,7 @@ begin
       ) order by owner_character.name, w.item_name), '[]'::jsonb)
       from public.inventory_items w
       join public.characters owner_character on owner_character.id = w.character_id
-      where w.is_storage
-        and public.inventory_item_is_wagon(w.item_name, w.item_type)
-        and w.parent_item_id is null
-        and w.loadout_slot is null
+      where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
         and public.city_names_match(owner_character.location_name, v_character.location_name)
     ),
     'items', (
@@ -5469,10 +5528,7 @@ begin
       from public.inventory_items child
       join public.inventory_items w on w.id = child.parent_item_id
       join public.characters owner_character on owner_character.id = w.character_id
-      where w.is_storage
-        and public.inventory_item_is_wagon(w.item_name, w.item_type)
-        and w.parent_item_id is null
-        and w.loadout_slot is null
+      where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
         and public.city_names_match(owner_character.location_name, v_character.location_name)
     ),
     'activity', (
@@ -5491,10 +5547,7 @@ begin
         from public.wagon_activity_log log_entry
         join public.inventory_items w on w.id = log_entry.wagon_item_id
         join public.characters owner_character on owner_character.id = w.character_id
-        where w.is_storage
-          and public.inventory_item_is_wagon(w.item_name, w.item_type)
-          and w.parent_item_id is null
-          and w.loadout_slot is null
+        where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
           and public.city_names_match(owner_character.location_name, v_character.location_name)
         order by log_entry.created_at desc
         limit 30
@@ -5538,19 +5591,36 @@ begin
     raise exception 'Empty this storage item before moving it into a wagon.';
   end if;
   select * into v_wagon from public.inventory_items where id = p_wagon_id;
-  if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
-    raise exception 'Wagon storage not found.';
+  if v_wagon.id is null
+    or not v_wagon.is_storage
+    or not (
+      public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type)
+      or public.inventory_item_is_mobile_home_storage(v_wagon.item_name, v_wagon.item_type)
+      or public.inventory_item_is_caged_wagon_storage(v_wagon.item_name, v_wagon.item_type)
+    )
+  then
+    raise exception 'Storage was not found.';
+  end if;
+
+  if public.inventory_item_is_caged_wagon_storage(v_wagon.item_name, v_wagon.item_type)
+    and public.normalize_item_type(v_item.item_type) <> 'pet'
+  then
+    raise exception 'Only animals can be placed in a Caged Wagon.';
   end if;
 
   if public.normalize_item_type(v_item.item_type) = 'pet'
-    and lower(v_wagon.item_name) not like '%caged wagon%'
+    and not public.inventory_item_is_caged_wagon_storage(v_wagon.item_name, v_wagon.item_type)
   then
     raise exception 'Animals can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
   end if;
 
   select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
   if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
-    raise exception 'That wagon is not in this character''s location.';
+    raise exception 'That storage is not in this character''s location.';
+  end if;
+
+  if not public.inventory_storage_visible_to_profile(v_profile, v_wagon, v_wagon_owner) then
+    raise exception 'You do not have permission to use that storage.';
   end if;
 
   perform public.assert_inventory_slot_capacity(v_wagon_owner, v_wagon.id, p_slot_index);
@@ -5626,13 +5696,24 @@ begin
   if v_item.parent_item_id is null then raise exception 'That item is not inside a wagon.'; end if;
 
   select * into v_wagon from public.inventory_items where id = v_item.parent_item_id;
-  if v_wagon.id is null or not v_wagon.is_storage or not public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type) then
-    raise exception 'Wagon storage not found.';
+  if v_wagon.id is null
+    or not v_wagon.is_storage
+    or not (
+      public.inventory_item_is_wagon(v_wagon.item_name, v_wagon.item_type)
+      or public.inventory_item_is_mobile_home_storage(v_wagon.item_name, v_wagon.item_type)
+      or public.inventory_item_is_caged_wagon_storage(v_wagon.item_name, v_wagon.item_type)
+    )
+  then
+    raise exception 'Storage was not found.';
   end if;
 
   select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
   if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
-    raise exception 'That wagon is not in this character''s location.';
+    raise exception 'That storage is not in this character''s location.';
+  end if;
+
+  if not public.inventory_storage_visible_to_profile(v_profile, v_wagon, v_wagon_owner) then
+    raise exception 'You do not have permission to use that storage.';
   end if;
 
   if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
@@ -5938,6 +6019,9 @@ grant execute on function public.house_access_to_json(public.profiles, uuid) to 
 grant execute on function public.house_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.house_inventory_items_stackable(public.house_inventory_items, public.house_inventory_items) to anon, authenticated;
 grant execute on function public.inventory_item_is_wagon(text, text) to anon, authenticated;
+grant execute on function public.inventory_item_is_mobile_home_storage(text, text) to anon, authenticated;
+grant execute on function public.inventory_item_is_caged_wagon_storage(text, text) to anon, authenticated;
+grant execute on function public.inventory_storage_visible_to_profile(public.profiles, public.inventory_items, public.characters) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.house_stable_slot_offset() to anon, authenticated;
 grant execute on function public.find_first_free_house_stable_slot(uuid, public.player_houses) to anon, authenticated;
@@ -7323,6 +7407,9 @@ begin
   if public.normalize_item_type(v_product.item_type) = 'pet' then
     v_quantity := 1;
   end if;
+  if public.normalize_item_type(v_product.item_type) = 'storage' then
+    v_quantity := 1;
+  end if;
 
   if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
     raise exception 'Not enough stock.';
@@ -7363,9 +7450,7 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_product.item_type = 'storage'::text
-    and not public.character_storage_container_exists(v_character.id, v_item_name)
-  then
+  if v_product.item_type = 'storage'::text then
     insert into public.inventory_items (
       character_id,
       parent_item_id,
@@ -7706,6 +7791,24 @@ as $$
       where c.id = p_character_id
         and h.is_storage = false
         and lower(h.item_name) = lower(trim(p_item_name))
+    ), 0) + coalesce((
+      select sum(child.quantity)
+      from public.characters c
+      join public.characters owner_character
+        on owner_character.owner_user_id = c.owner_user_id
+      join public.inventory_items mobile_home
+        on mobile_home.character_id = owner_character.id
+      join public.inventory_items child
+        on child.parent_item_id = mobile_home.id
+      where c.id = p_character_id
+        and public.city_names_match(owner_character.location_name, p_station_city_name)
+        and mobile_home.parent_item_id is null
+        and mobile_home.loadout_slot is null
+        and mobile_home.is_storage = true
+        and public.inventory_item_is_mobile_home_storage(mobile_home.item_name, mobile_home.item_type)
+        and child.is_storage = false
+        and child.loadout_slot is null
+        and lower(child.item_name) = lower(trim(p_item_name))
     ), 0)
     else 0
   end
@@ -7766,6 +7869,7 @@ as $$
 declare
   v_needed numeric := greatest(0.5, coalesce(p_quantity, 1));
   v_item public.house_inventory_items%rowtype;
+  v_mobile_item public.inventory_items%rowtype;
   v_take numeric;
 begin
   if v_needed <= 0 then return; end if;
@@ -7788,6 +7892,36 @@ begin
       delete from public.house_inventory_items where id = v_item.id;
     else
       update public.house_inventory_items set quantity = quantity - v_take where id = v_item.id;
+    end if;
+    v_needed := v_needed - v_take;
+  end loop;
+
+  for v_mobile_item in
+    select child.*
+    from public.characters c
+    join public.characters owner_character
+      on owner_character.owner_user_id = c.owner_user_id
+    join public.inventory_items mobile_home
+      on mobile_home.character_id = owner_character.id
+    join public.inventory_items child
+      on child.parent_item_id = mobile_home.id
+    where c.id = p_character_id
+      and public.city_names_match(owner_character.location_name, p_station_city_name)
+      and mobile_home.parent_item_id is null
+      and mobile_home.loadout_slot is null
+      and mobile_home.is_storage = true
+      and public.inventory_item_is_mobile_home_storage(mobile_home.item_name, mobile_home.item_type)
+      and child.is_storage = false
+      and child.loadout_slot is null
+      and lower(child.item_name) = lower(trim(p_item_name))
+    order by owner_character.name, mobile_home.slot_index, child.slot_index, child.created_at
+  loop
+    exit when v_needed <= 0;
+    v_take := least(v_mobile_item.quantity, v_needed);
+    if v_take >= v_mobile_item.quantity then
+      delete from public.inventory_items where id = v_mobile_item.id;
+    else
+      update public.inventory_items set quantity = quantity - v_take where id = v_mobile_item.id;
     end if;
     v_needed := v_needed - v_take;
   end loop;
@@ -10688,6 +10822,55 @@ begin
 end;
 $$;
 
+create or replace function public.move_inventory_storage_tree_to_character(
+  p_storage_item_id uuid,
+  p_to_character_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_storage public.inventory_items%rowtype;
+  v_slot_index int;
+begin
+  select * into v_storage
+  from public.inventory_items
+  where id = p_storage_item_id
+  for update;
+
+  if v_storage.id is null then raise exception 'Storage container is no longer available.'; end if;
+  if not v_storage.is_storage then raise exception 'That item is not a storage container.'; end if;
+  if v_storage.loadout_slot is not null then raise exception 'Unequip that storage container before moving it.'; end if;
+
+  v_slot_index := public.next_storage_container_slot(p_to_character_id);
+
+  update public.inventory_items
+  set character_id = p_to_character_id,
+      parent_item_id = null,
+      loadout_slot = null,
+      slot_index = v_slot_index
+  where id = p_storage_item_id;
+
+  with recursive descendants as (
+    select child.id
+    from public.inventory_items child
+    where child.parent_item_id = p_storage_item_id
+
+    union all
+
+    select child.id
+    from public.inventory_items child
+    join descendants parent on parent.id = child.parent_item_id
+  )
+  update public.inventory_items moved
+  set character_id = p_to_character_id,
+      loadout_slot = null
+  where moved.id in (select id from descendants);
+end;
+$$;
+
 create or replace function public.transfer_trade_inventory_item(
   p_item_id uuid,
   p_from_character_id uuid,
@@ -10715,7 +10898,6 @@ begin
   if v_source_item.id is null then raise exception 'A trade item is no longer available.'; end if;
   if v_source_item.character_id <> p_from_character_id then raise exception 'A trade item is no longer held by the expected character.'; end if;
   if v_source_item.loadout_slot is not null and public.normalize_item_type(v_source_item.item_type) <> 'pet' then raise exception 'A trade item is currently equipped.'; end if;
-  if v_source_item.is_storage then raise exception 'Storage containers cannot be traded.'; end if;
 
   select * into v_target_character from public.characters where id = p_to_character_id;
   if v_target_character.id is null then raise exception 'Receiving character was not found.'; end if;
@@ -10723,6 +10905,12 @@ begin
   v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
   if v_source_item.quantity < v_quantity then raise exception 'A trade item quantity is no longer available.'; end if;
   v_item_label := v_quantity::text || ' ' || coalesce(v_source_item.display_name, v_source_item.item_name);
+
+  if v_source_item.is_storage then
+    if v_quantity <> 1 then raise exception 'Storage containers must be traded one at a time.'; end if;
+    perform public.move_inventory_storage_tree_to_character(v_source_item.id, v_target_character.id);
+    return '1 ' || coalesce(v_source_item.display_name, v_source_item.item_name);
+  end if;
 
   if public.normalize_item_type(v_source_item.item_type) = 'pet' then
     perform public.place_pet_item_for_character(
@@ -10926,8 +11114,8 @@ begin
 
     if v_offered_item.id is null then raise exception 'Offered item was not found in that inventory.'; end if;
     if v_offered_item.loadout_slot is not null and public.normalize_item_type(v_offered_item.item_type) <> 'pet' then raise exception 'Unequip that item before offering it.'; end if;
-    if v_offered_item.is_storage then raise exception 'Storage containers cannot be offered through trades.'; end if;
     v_quantity := public.assert_valid_item_quantity(v_offered_item.item_name, v_offered_item.item_type, v_quantity);
+    if v_offered_item.is_storage then v_quantity := 1; end if;
     if v_offered_item.quantity < v_quantity then raise exception 'Not enough quantity to offer.'; end if;
 
     if v_offered_items = '[]'::jsonb then
@@ -10956,8 +11144,8 @@ begin
 
     if v_requested_item.id is null then raise exception 'Requested item was not found in that inventory.'; end if;
     if v_requested_item.loadout_slot is not null and public.normalize_item_type(v_requested_item.item_type) <> 'pet' then raise exception 'The requested item is currently equipped.'; end if;
-    if v_requested_item.is_storage then raise exception 'Storage containers cannot be requested through trades.'; end if;
     v_quantity := public.assert_valid_item_quantity(v_requested_item.item_name, v_requested_item.item_type, v_quantity);
+    if v_requested_item.is_storage then v_quantity := 1; end if;
     if v_requested_item.quantity < v_quantity then raise exception 'Not enough quantity to request.'; end if;
 
     if v_requested_items = '[]'::jsonb then
@@ -11090,7 +11278,6 @@ begin
   if v_target_character.id = v_sender.id then raise exception 'Choose another character to gift this to.'; end if;
   if v_target_character.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
   if v_source_item.loadout_slot is not null and public.normalize_item_type(v_source_item.item_type) <> 'pet' then raise exception 'Unequip that item before gifting it.'; end if;
-  if v_source_item.is_storage then raise exception 'Storage containers cannot be gifted.'; end if;
 
   if v_sender.owner_user_id is distinct from v_target_character.owner_user_id
     and v_profile.role <> 'dm'::public.user_role
@@ -11100,7 +11287,33 @@ begin
   end if;
 
   v_quantity := public.assert_valid_item_quantity(v_source_item.item_name, v_source_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+  if v_source_item.is_storage then v_quantity := 1; end if;
   if v_quantity > v_source_item.quantity then raise exception 'Not enough quantity to gift.'; end if;
+
+  if v_source_item.is_storage then
+    perform public.move_inventory_storage_tree_to_character(v_source_item.id, v_target_character.id);
+
+    if v_sender.owner_user_id is distinct from v_target_character.owner_user_id then
+      insert into public.campaign_notifications (
+        recipient_user_id,
+        title,
+        body,
+        notice_kind,
+        source_type,
+        location_name
+      )
+      values (
+        v_target_character.owner_user_id,
+        v_sender.name || ' gave storage to ' || v_target_character.name,
+        coalesce(v_source_item.display_name, v_source_item.item_name) || ' and its contents were transferred to ' || v_target_character.name || '.',
+        'notice',
+        'gift',
+        v_target_character.location_name
+      );
+    end if;
+
+    return public.get_character_inventory(p_session_token, v_sender.id);
+  end if;
 
   if public.normalize_item_type(v_source_item.item_type) = 'pet' then
     perform public.place_pet_item_for_character(
@@ -11596,6 +11809,7 @@ grant execute on function public.create_campaign_announcement(text, text, text, 
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
 grant execute on function public.assert_trade_currency_available(uuid, jsonb) to anon, authenticated;
 grant execute on function public.transfer_trade_currency(uuid, uuid, jsonb) to anon, authenticated;
+grant execute on function public.move_inventory_storage_tree_to_character(uuid, uuid) to anon, authenticated;
 grant execute on function public.transfer_trade_inventory_item(uuid, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.create_trade_offer(text, uuid, uuid, text, text, text, uuid, numeric, uuid, numeric, jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
 grant execute on function public.gift_inventory_item(text, uuid, uuid, numeric) to anon, authenticated;
@@ -12449,6 +12663,9 @@ begin
   limit 1;
 
   v_quantity := public.assert_valid_item_quantity(v_item_name, v_item_type, v_quantity);
+  if v_item_type = 'storage'::text then
+    v_quantity := 1;
+  end if;
   if v_catalog.id is not null then
     v_modifiers := v_catalog.default_modifiers;
     v_material := v_catalog.material;
@@ -12519,9 +12736,7 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_item_type = 'storage'::text
-    and not public.character_storage_container_exists(v_character.id, v_item_name)
-  then
+  if v_item_type = 'storage'::text then
     insert into public.inventory_items (
       character_id,
       parent_item_id,
