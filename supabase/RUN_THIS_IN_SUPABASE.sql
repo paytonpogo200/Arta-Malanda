@@ -7329,15 +7329,6 @@ begin
       raise exception 'Spell is not available.';
     end if;
 
-    if exists (
-      select 1
-      from public.character_spells cs
-      where cs.character_id = v_character.id
-        and cs.spell_id = v_spell.id
-    ) then
-      raise exception '% already knows %.', v_character.name, v_spell.name;
-    end if;
-
     v_quantity := 1;
 
     if v_product.stock_quantity is not null and v_product.stock_quantity < 1 then
@@ -9506,8 +9497,7 @@ create table if not exists public.character_spells (
   is_active boolean not null default false,
   slot_index int check (slot_index is null or slot_index >= 0),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (character_id, spell_id)
+  updated_at timestamptz not null default now()
 );
 
 create unique index if not exists character_spells_active_slot_unique
@@ -9541,6 +9531,13 @@ alter table public.spell_catalog
 alter table public.spell_catalog
   drop constraint if exists spell_catalog_spell_type_valid,
   add constraint spell_catalog_spell_type_valid check (spell_type in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility'));
+
+alter table public.character_spells
+  drop constraint if exists character_spells_character_id_spell_id_key,
+  add column if not exists custom_name text,
+  add column if not exists custom_summary text,
+  add column if not exists custom_details text,
+  add column if not exists custom_mana_cost int check (custom_mana_cost is null or custom_mana_cost >= 0);
 
 create table if not exists public.app_checkpoints (
   checkpoint_key text primary key,
@@ -9727,7 +9724,21 @@ as $$
     'spellId', p_entry.spell_id,
     'active', p_entry.is_active,
     'slotIndex', p_entry.slot_index,
-    'spell', public.spell_record_to_json(s)
+    'spell', jsonb_build_object(
+      'id', s.id,
+      'key', s.spell_key,
+      'name', coalesce(nullif(p_entry.custom_name, ''), s.name),
+      'school', s.school,
+      'type', s.spell_type,
+      'manaCost', coalesce(p_entry.custom_mana_cost, s.mana_cost),
+      'manaLabel', case
+        when p_entry.custom_mana_cost is not null then p_entry.custom_mana_cost::text || ' mana'
+        else s.mana_label
+      end,
+      'summary', coalesce(nullif(p_entry.custom_summary, ''), s.summary),
+      'details', coalesce(nullif(p_entry.custom_details, ''), s.details),
+      'rarity', s.rarity
+    )
   )
   from public.spell_catalog s
   where s.id = p_entry.spell_id
@@ -9838,10 +9849,56 @@ begin
   v_slot := public.find_first_free_spell_slot(p_character_id, v_character.spell_slots);
 
   insert into public.character_spells (character_id, spell_id, is_active, slot_index)
-  values (p_character_id, p_spell_id, v_slot is not null, v_slot)
-  on conflict (character_id, spell_id) do nothing;
+  values (p_character_id, p_spell_id, v_slot is not null, v_slot);
 
   return public.get_character_spells(p_session_token, p_character_id);
+end;
+$$;
+
+create or replace function public.update_character_spell_details(
+  p_session_token text,
+  p_character_spell_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_entry public.character_spells%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_entry from public.character_spells where id = p_character_spell_id;
+  if v_entry.id is null then raise exception 'Character spell not found.'; end if;
+
+  perform public.assert_inventory_access(v_profile, v_entry.character_id, false);
+
+  update public.character_spells
+  set custom_name = case
+        when v_patch ? 'name' then nullif(left(trim(coalesce(v_patch->>'name', '')), 120), '')
+        else custom_name
+      end,
+      custom_summary = case
+        when v_patch ? 'summary' then nullif(left(trim(coalesce(v_patch->>'summary', '')), 500), '')
+        else custom_summary
+      end,
+      custom_details = case
+        when v_patch ? 'details' then nullif(left(trim(coalesce(v_patch->>'details', '')), 4000), '')
+        else custom_details
+      end,
+      custom_mana_cost = case
+        when v_patch ? 'manaCost' and nullif(trim(coalesce(v_patch->>'manaCost', '')), '') is not null then greatest(0, (v_patch->>'manaCost')::int)
+        else custom_mana_cost
+      end
+  where id = p_character_spell_id
+  returning * into v_entry;
+
+  return public.get_character_spells(p_session_token, v_entry.character_id);
 end;
 $$;
 
@@ -9942,6 +9999,7 @@ declare
   v_character public.characters%rowtype;
   v_combatant public.combatants%rowtype;
   v_current_mana int;
+  v_mana_cost int;
   v_remaining_mana int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
@@ -9956,6 +10014,7 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_entry.character_id, false);
   select * into v_spell from public.spell_catalog where id = v_entry.spell_id;
+  v_mana_cost := coalesce(v_entry.custom_mana_cost, v_spell.mana_cost);
 
   select cb.* into v_combatant
   from public.combatants cb
@@ -9967,11 +10026,11 @@ begin
 
   v_current_mana := coalesce(v_combatant.current_mana, v_character.current_mana);
 
-  if v_current_mana < v_spell.mana_cost then
+  if v_current_mana < v_mana_cost then
     raise exception 'Not enough mana.';
   end if;
 
-  v_remaining_mana := v_current_mana - v_spell.mana_cost;
+  v_remaining_mana := v_current_mana - v_mana_cost;
 
   if v_combatant.id is not null then
     update public.combatants
@@ -9986,8 +10045,8 @@ begin
   return jsonb_build_object(
     'characterId', v_character.id,
     'currentMana', v_remaining_mana,
-    'manaSpent', v_spell.mana_cost,
-    'spellName', v_spell.name
+    'manaSpent', v_mana_cost,
+    'spellName', coalesce(nullif(v_entry.custom_name, ''), v_spell.name)
   );
 end;
 $$;
@@ -10069,6 +10128,7 @@ grant execute on function public.character_has_active_battle(uuid) to anon, auth
 grant execute on function public.find_first_free_spell_slot(uuid, int) to anon, authenticated;
 grant execute on function public.get_character_spells(text, uuid) to anon, authenticated;
 grant execute on function public.grant_character_spell(text, uuid, uuid) to anon, authenticated;
+grant execute on function public.update_character_spell_details(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_character_spell_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.use_character_spell(text, uuid) to anon, authenticated;
 grant execute on function public.use_inventory_enchantment_spell(text, uuid, uuid, uuid) to anon, authenticated;

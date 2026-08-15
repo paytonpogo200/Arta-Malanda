@@ -5,7 +5,8 @@ import { BookOpen, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Sparkles 
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
-import { SelectField, TextField } from '@/components/ui/Field';
+import { NumberInput } from '@/components/ui/NumberInput';
+import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeCharacterSpellsPayload, type CharacterSpellsPayload } from '@/features/spells/data';
 import { spellForEnchantment } from '@/features/inventory/itemDetails';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
@@ -33,7 +34,7 @@ function SpellCard({
   canActivate: boolean;
   onUse: (entry: CharacterSpell) => void;
   onToggle: (entry: CharacterSpell, active: boolean) => void;
-  onInspect: (spell: Spell) => void;
+  onInspect: (entry: CharacterSpell) => void;
 }) {
   return (
     <article
@@ -54,7 +55,7 @@ function SpellCard({
       </div>
       {entry.spell.summary && <p className="mt-2 text-sm leading-5 text-[var(--muted)]">{entry.spell.summary}</p>}
       <div className="mt-3 grid gap-2">
-        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onInspect(entry.spell)}>
+        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onInspect(entry)}>
           <Eye className="mr-2 inline" size={14} /> Inspect
         </Button>
         {canManage && (entry.active ? (
@@ -148,13 +149,15 @@ export function SpellsPanel({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [inspectedOwnedSpell, setInspectedOwnedSpell] = useState<CharacterSpell | null>(null);
   const [inspectedSpell, setInspectedSpell] = useState<Spell | null>(null);
+  const [editingSpell, setEditingSpell] = useState(false);
+  const [spellDraft, setSpellDraft] = useState({ name: '', details: '', manaCost: 0 });
 
   const activeBattle = payload.activeBattle || combatLocked;
   const activeSpells = useMemo(() => payload.spells.filter((entry) => entry.active).sort((a, b) => (a.slotIndex ?? 999) - (b.slotIndex ?? 999)), [payload.spells]);
   const inactiveSpells = useMemo(() => payload.spells.filter((entry) => !entry.active).sort((a, b) => a.spell.name.localeCompare(b.spell.name)), [payload.spells]);
-  const learnedIds = useMemo(() => new Set(payload.spells.map((entry) => entry.spellId)), [payload.spells]);
-  const grantOptions = useMemo(() => payload.catalog.filter((spell) => !learnedIds.has(spell.id)), [learnedIds, payload.catalog]);
+  const grantOptions = useMemo(() => payload.catalog, [payload.catalog]);
   const filteredGrantOptions = useMemo(() => {
     const needle = grantSearch.trim().toLowerCase();
     if (!needle) return grantOptions;
@@ -186,7 +189,7 @@ export function SpellsPanel({
       if (!response.ok) throw new Error(body.error ?? 'Spells could not be loaded.');
       const normalized = normalizeCharacterSpellsPayload(body);
       setPayload(normalized);
-      setGrantSpellId((current) => current || normalized.catalog.find((spell) => !normalized.spells.some((entry) => entry.spellId === spell.id))?.id || '');
+      setGrantSpellId((current) => current || normalized.catalog[0]?.id || '');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Spells could not be loaded.');
     } finally {
@@ -200,10 +203,28 @@ export function SpellsPanel({
     void loadSpells();
   }, [loadSpells]);
 
+  useEffect(() => {
+    if (!inspectedOwnedSpell) return;
+    const freshEntry = payload.spells.find((entry) => entry.id === inspectedOwnedSpell.id);
+    if (freshEntry && freshEntry !== inspectedOwnedSpell) setInspectedOwnedSpell(freshEntry);
+    if (!freshEntry) setInspectedOwnedSpell(null);
+  }, [inspectedOwnedSpell, payload.spells]);
+
+  useEffect(() => {
+    if (!inspectedOwnedSpell || editingSpell) return;
+    setSpellDraft({
+      name: inspectedOwnedSpell.spell.name,
+      details: inspectedOwnedSpell.spell.details || inspectedOwnedSpell.spell.summary,
+      manaCost: inspectedOwnedSpell.spell.manaCost
+    });
+  }, [editingSpell, inspectedOwnedSpell]);
+
   async function replaceFromResponse(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error ?? fallback);
-    setPayload(normalizeCharacterSpellsPayload(body));
+    const normalized = normalizeCharacterSpellsPayload(body);
+    setPayload(normalized);
+    return normalized;
   }
 
   async function grantSpell() {
@@ -237,6 +258,29 @@ export function SpellsPanel({
       }), 'Spell could not be changed.');
     } catch (patchError) {
       setError(patchError instanceof Error ? patchError.message : 'Spell could not be changed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveOwnedSpell() {
+    if (!canManage || !inspectedOwnedSpell) return;
+    setSaving(true);
+    setError('');
+    try {
+      const normalized = await replaceFromResponse(await fetch(`/api/characters/spells/${inspectedOwnedSpell.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: spellDraft.name,
+          details: spellDraft.details,
+          manaCost: Math.max(0, Math.round(spellDraft.manaCost))
+        })
+      }), 'Spell could not be saved.');
+      setInspectedOwnedSpell(normalized.spells.find((entry) => entry.id === inspectedOwnedSpell.id) ?? null);
+      setEditingSpell(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Spell could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -344,8 +388,8 @@ export function SpellsPanel({
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{activeOnly ? 'Active spells' : 'Active slots'} {activeSpells.length}/{character.spellSlots}</h3></div>
             {activeOnly ? (
               <div className="grid gap-2 sm:grid-cols-2">
-                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />)}
-                {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} onInspect={setInspectedSpell} />)}
+                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
+                {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} onInspect={(spellValue) => { setInspectedSpell(spellValue); setInspectedOwnedSpell(null); setEditingSpell(false); }} />)}
                 {!activeSpells.length && !enchantedSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
               </div>
             ) : (
@@ -354,7 +398,7 @@ export function SpellsPanel({
                   const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
                   return entry ? (
                     <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
-                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />
+                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />
                     </div>
                   ) : (
                     <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
@@ -368,7 +412,7 @@ export function SpellsPanel({
             <details className="rounded-2xl border border-[var(--line)] bg-black/10">
               <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
               <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={setInspectedSpell} />)}
+                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
                 {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
               </div>
             </details>
@@ -432,6 +476,44 @@ export function SpellsPanel({
               <Button variant="secondary" type="button" onClick={() => setGrantModalOpen(false)}>Cancel</Button>
               <Button variant="teal" type="button" disabled={!grantSpellId || saving} onClick={grantSpell}>{selectedGrantSpell ? `Grant ${selectedGrantSpell.name}` : 'Grant spell'}</Button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {inspectedOwnedSpell && (
+        <Modal title={inspectedOwnedSpell.spell.name} onClose={() => { setInspectedOwnedSpell(null); setEditingSpell(false); }}>
+          <div className={`grid gap-3 rounded-2xl border p-4 ${spellTypeClass(inspectedOwnedSpell.spell.type)}`}>
+            <div>
+              <p className="eyebrow">{inspectedOwnedSpell.spell.type} Spell</p>
+              <h3 className="mt-1 text-2xl font-black">{inspectedOwnedSpell.spell.name}</h3>
+              <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{inspectedOwnedSpell.spell.school} - {spellManaText(inspectedOwnedSpell.spell)} - {inspectedOwnedSpell.spell.rarity}</p>
+            </div>
+            <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
+              {inspectedOwnedSpell.spell.details || inspectedOwnedSpell.spell.summary || 'No spell description entered yet.'}
+            </div>
+            {canManage && !editingSpell && (
+              <Button variant="teal" type="button" onClick={() => setEditingSpell(true)}>Edit owned spell</Button>
+            )}
+            {canManage && editingSpell && (
+              <div className="grid gap-3 rounded-xl border border-[var(--line)] bg-black/20 p-3">
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Personal spell name</span>
+                  <TextField value={spellDraft.name} onChange={(event) => setSpellDraft({ ...spellDraft, name: event.target.value })} placeholder="Spell name" />
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Personal mana cost</span>
+                  <NumberInput value={spellDraft.manaCost} min={0} onValueChange={(manaCost) => setSpellDraft({ ...spellDraft, manaCost })} />
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Personal description</span>
+                  <TextAreaField rows={6} value={spellDraft.details} onChange={(event) => setSpellDraft({ ...spellDraft, details: event.target.value })} placeholder="Spell description" />
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button variant="secondary" type="button" disabled={saving} onClick={() => setEditingSpell(false)}>Cancel</Button>
+                  <Button variant="teal" type="button" disabled={saving} onClick={saveOwnedSpell}>Save spell</Button>
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}

@@ -13,7 +13,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('update_character_spell_state', {
+    const isDetailsPatch = patch && typeof patch === 'object' && ['name', 'summary', 'details', 'manaCost'].some((key) => key in patch);
+    const rpcName = isDetailsPatch ? 'update_character_spell_details' : 'update_character_spell_state';
+    const { data, error } = await supabase.rpc(rpcName, {
       p_session_token: token,
       p_character_spell_id: id,
       p_patch: patch
