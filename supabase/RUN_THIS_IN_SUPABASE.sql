@@ -6072,9 +6072,6 @@ grant execute on function public.inventory_item_is_wagon(text, text) to anon, au
 grant execute on function public.inventory_item_is_mobile_home_storage(text, text) to anon, authenticated;
 grant execute on function public.inventory_item_is_caged_wagon_storage(text, text) to anon, authenticated;
 grant execute on function public.inventory_storage_visible_to_profile(public.profiles, public.inventory_items, public.characters) to anon, authenticated;
-grant execute on function public.assert_mobile_storage_permission_owner(public.profiles, uuid) to anon, authenticated;
-grant execute on function public.get_mobile_storage_permissions(text, uuid) to anon, authenticated;
-grant execute on function public.set_mobile_storage_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.find_first_free_house_slot(uuid, uuid, int) to anon, authenticated;
 grant execute on function public.house_stable_slot_offset() to anon, authenticated;
 grant execute on function public.find_first_free_house_stable_slot(uuid, public.player_houses) to anon, authenticated;
@@ -8586,6 +8583,10 @@ begin
   return public.get_mobile_storage_permissions(p_session_token, p_storage_item_id);
 end;
 $$;
+
+grant execute on function public.assert_mobile_storage_permission_owner(public.profiles, uuid) to anon, authenticated;
+grant execute on function public.get_mobile_storage_permissions(text, uuid) to anon, authenticated;
+grant execute on function public.set_mobile_storage_permissions(text, uuid, jsonb) to anon, authenticated;
 
 drop function if exists public.consume_forge_materials(uuid, uuid, numeric, int);
 drop function if exists public.consume_forge_materials(uuid, uuid, numeric, int, text);
