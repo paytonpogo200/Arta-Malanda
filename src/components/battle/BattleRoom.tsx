@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Eye, Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
+import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
 import { Button } from '@/components/ui/Button';
@@ -380,9 +381,15 @@ export function BattleRoom({ profile }: { profile: Profile }) {
               {room.characters.filter((entry) => entry.kind === 'player').map((character) => {
                 const chosen = selectedIds.includes(character.id);
                 return (
-                  <button key={character.id} onClick={() => toggleParticipant(character.id)} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${chosen ? 'border-[var(--brass)] bg-[#d1a85b0e]' : 'border-[var(--line)] bg-black/10'}`}>
+                  <button key={character.id} onClick={() => toggleParticipant(character.id)} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition ${characterLevelFrameClass(character.level)} ${chosen ? 'border-[var(--brass)] bg-[#d1a85b0e]' : 'border-[var(--line)] bg-black/10'}`}>
                     <span className="grid h-10 w-10 place-items-center rounded-full border border-white/20 font-black" style={{ background: character.tokenColor }}>{character.name[0]}</span>
-                    <span className="min-w-0 flex-1"><span className="block truncate font-black">{character.name}</span><span className="block truncate text-xs text-[var(--muted)]">Level {character.level} {character.className}</span></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-black">{character.name}</span>
+                        <LevelBadge level={character.level} compact />
+                      </span>
+                      <span className="block truncate text-xs text-[var(--muted)]">{character.className}</span>
+                    </span>
                     <span className={`h-5 w-5 rounded-md border ${chosen ? 'border-[var(--brass)] bg-[var(--brass)]' : 'border-[var(--muted)]'}`} />
                   </button>
                 );
@@ -470,11 +477,12 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             const loadoutItems = character ? loadoutItemsByCharacterId.get(character.id) ?? [] : [];
             const sheetStats = character ? calculateCharacterSheetStats(character, loadoutItems, classByKey.get(character.classKey)) : null;
             return (
-              <article key={entry.id} className={`rounded-xl border p-3 transition ${selectedCombatantId === entry.id ? 'border-[var(--brass)] bg-[#d1a85b0b]' : 'border-[var(--line)] bg-black/10'}`}>
+              <article key={entry.id} className={`rounded-xl border p-3 transition ${characterLevelFrameClass(character?.level)} ${selectedCombatantId === entry.id ? 'border-[var(--brass)] bg-[#d1a85b0b]' : 'border-[var(--line)] bg-black/10'}`}>
                 <button type="button" onClick={canUseDmTools ? () => setSelectedCombatantId((current) => current === entry.id ? null : entry.id) : undefined} className={`w-full text-left ${canUseDmTools ? '' : 'cursor-default'}`}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="min-w-0 flex items-center gap-2">
                       <span className="truncate font-black">{character?.name ?? 'Unknown'}</span>
+                      <LevelBadge level={character?.level} compact />
                       <span className="shrink-0 rounded-md border border-[var(--line)] bg-black/25 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{character?.className ?? 'Adventurer'}</span>
                     </span>
                   </div>

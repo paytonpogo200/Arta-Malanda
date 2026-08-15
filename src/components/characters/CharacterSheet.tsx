@@ -2,13 +2,14 @@
 
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Heart, Loader2, MapPin, Save, Shield, Sparkles, Trash2, UserRound, WandSparkles } from 'lucide-react';
+import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
 import { HousePanel } from '@/components/houses/HousePanel';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { JurshConversionPanel } from '@/components/inventory/JurshConversionPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
-import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
@@ -175,7 +176,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
 
   return (
     <div className="space-y-4">
-      <Card>
+      <Card className={characterLevelFrameClass(character.level)}>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
             <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full border border-white/20" style={{ background: character.tokenColor }}>
@@ -183,8 +184,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </div>
             <div>
               <p className="eyebrow">{owned ? 'Controlled character' : 'Campaign character'}</p>
-              <h2 className="mt-1 text-3xl font-black tracking-tight">{character.name}</h2>
-              <p className="mt-1 text-sm text-[var(--muted)]">Level {character.level} {character.className}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <h2 className="text-3xl font-black tracking-tight">{character.name}</h2>
+                <LevelBadge level={character.level} />
+              </div>
+              <p className="mt-1 text-sm text-[var(--muted)]">{character.className}</p>
               <p className="mt-2 flex items-center gap-2 text-xs font-black uppercase tracking-wide text-[var(--brass)]"><MapPin size={13} /> {character.locationName}</p>
               {!character.ownerUserId && character.previousOwnerName && (
                 <p className="mt-2 rounded-full border border-[var(--line)] bg-black/15 px-3 py-1 text-xs font-black text-[var(--muted)]">
@@ -256,7 +260,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             <div className="grid gap-2 sm:grid-cols-3">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Inventory slots</span><NumberInput value={draft.inventorySlots} min={0} onValueChange={(inventorySlots) => setDraft({ ...draft, inventorySlots })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Spell slots</span><NumberInput value={draft.spellSlots} min={0} onValueChange={(spellSlots) => setDraft({ ...draft, spellSlots })} /></label>
-              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Class color</span><TextField aria-label="Token color" type="color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} /></label>
+              <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Class color</span><ColorField aria-label="Token color" value={draft.tokenColor} onChange={(event) => setDraft({ ...draft, tokenColor: event.target.value })} /></label>
             </div>
             <Card className="p-3">
               <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Attributes & Skills</h3></div>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ArrowLeft, Loader2, Plus, RefreshCw, UserRound } from 'lucide-react';
+import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
 import { CharacterSheet } from '@/components/characters/CharacterSheet';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -307,14 +308,17 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
                   <button
                     key={character.id}
                     onClick={() => setSelectedId(character.id)}
-                    className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
+                    className={`rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99] ${characterLevelFrameClass(character.level)}`}
                   >
                     <span className="flex items-center gap-3">
                       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/20" style={{ background: character.tokenColor }}>
                         <UserRound size={19} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate font-black">{character.name}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate font-black">{character.name}</span>
+                          <LevelBadge level={character.level} compact />
+                        </span>
                         <span className="block truncate text-xs text-[var(--muted)]">{mine ? 'Your character' : owner} · {character.className}</span>
                         <span className="mt-1 block text-[10px] font-black uppercase tracking-wide text-[var(--brass)]">{character.locationName}</span>
                       </span>

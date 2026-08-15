@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { LocateFixed, Minus, PaintBucket, Pencil, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
+import { characterLevelTokenClass, LevelPips } from '@/components/characters/LevelBadge';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
 import type { Battle, BattleTerrain, Character, Combatant, Profile } from '@/lib/types';
@@ -35,7 +36,7 @@ const BattleToken = memo(function BattleToken({
         event.stopPropagation();
         onSelect(token.id);
       }}
-      className={`absolute flex h-[70px] w-[70px] flex-col items-center justify-end gap-2 overflow-visible rounded-[22px] border-2 px-2 pb-2.5 pt-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_20px_rgba(0,0,0,0.34)] active:scale-95 ${
+      className={`absolute flex h-[70px] w-[70px] flex-col items-center justify-end gap-2 overflow-visible rounded-[22px] border-2 px-2 pb-2.5 pt-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_20px_rgba(0,0,0,0.34)] active:scale-95 ${characterLevelTokenClass(character?.level)} ${
         selected ? 'border-[var(--brass)] ring-4 ring-[#d1a85b33]' : mine ? 'border-[var(--teal)]' : enemy ? 'border-[#d76a6299]' : 'border-white/25'
       }`}
       style={{
@@ -45,6 +46,7 @@ const BattleToken = memo(function BattleToken({
       }}
       title={character?.name}
     >
+      <LevelPips level={character?.level} />
       <span className="pointer-events-none absolute left-1/2 top-2.5 z-20 max-w-[11rem] -translate-x-1/2 whitespace-nowrap px-1 text-center text-[12px] font-black leading-none text-white [text-shadow:0_2px_3px_rgba(0,0,0,0.95),0_0_9px_rgba(0,0,0,0.85)]">
         {character?.name ?? 'Token'}
       </span>
