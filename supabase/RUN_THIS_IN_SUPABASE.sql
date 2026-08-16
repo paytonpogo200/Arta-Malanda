@@ -949,12 +949,20 @@ drop function if exists public.is_retired_bestiary_category(text);
 drop function if exists public.purge_retired_bestiary_categories();
 grant execute on function public.import_bestiary_workbook(text, jsonb, jsonb) to anon, authenticated;
 
+-- Seed/refresh bestiary rows that are expected to exist after running this SQL directly.
+-- The workbook importer can still replace the whole bestiary, but the SQL runner itself
+-- must not leave new Expedition Threats absent from the app.
 insert into public.bestiary_categories (category_key, name, is_hidden, display_order)
-values ('bosses', 'Bosses', false, 900)
+values
+  ('expedition-threats', 'Expedition Threats', false, 850),
+  ('bosses', 'Bosses', false, 900)
 on conflict (category_key) do update
 set name = excluded.name,
     is_hidden = excluded.is_hidden,
     display_order = excluded.display_order;
+
+delete from public.bestiary_entities
+where entity_key in ('bosses-seraphel', 'bosses-healing-support-1', 'bosses-healing-support-2');
 
 insert into public.bestiary_entities (
   entity_key,
@@ -970,6 +978,114 @@ insert into public.bestiary_entities (
 )
 values
   (
+    'expedition-threats-ruin-scavenger',
+    'Ruin Scavenger',
+    'expedition-threats',
+    75,
+    0,
+    '',
+    '',
+    jsonb_build_object('Damage', '1d6', 'Strength', '+1', 'Vitality', '+2', 'Magic Resistance', '7', 'Armor / Hide', '7'),
+    false,
+    850
+  ),
+  (
+    'expedition-threats-roadside-cutthroat',
+    'Roadside Cutthroat',
+    'expedition-threats',
+    90,
+    0,
+    'Can go invisible once per combat',
+    '',
+    jsonb_build_object('Damage', '1d6', 'Strength', '+2', 'Vitality', '+1', 'Magic Resistance', '7', 'Armor / Hide', '10', 'Special Effects', 'Can go invisible once per combat'),
+    false,
+    860
+  ),
+  (
+    'expedition-threats-contract-blade',
+    'Contract Blade',
+    'expedition-threats',
+    110,
+    0,
+    '',
+    '',
+    jsonb_build_object('Damage', '3d6', 'Strength', '+2', 'Vitality', '+2', 'Magic Resistance', '7', 'Armor / Hide', '10'),
+    false,
+    870
+  ),
+  (
+    'expedition-threats-banished-knight',
+    'Banished Knight',
+    'expedition-threats',
+    125,
+    0,
+    'Knight passive',
+    '',
+    jsonb_build_object('Damage', '2d6', 'Strength', '+1', 'Vitality', '+1', 'Magic Resistance', '7', 'Armor / Hide', '10', 'Special Effects', 'Knight passive'),
+    false,
+    880
+  ),
+  (
+    'expedition-threats-banished-warlock',
+    'Banished Warlock',
+    'expedition-threats',
+    80,
+    150,
+    '',
+    '',
+    jsonb_build_object('Damage', '2d6', 'Strength', '-3', 'Vitality', '-4', 'Magic Resistance', '7', 'Armor / Hide', '7', 'Mana Pool', '150', 'Spells', 'Judas, Fireball, Cripple', 'Role', 'Mage'),
+    false,
+    890
+  ),
+  (
+    'expedition-threats-known-mercinary',
+    'Known Mercinary',
+    'expedition-threats',
+    90,
+    0,
+    'Has Swiftness',
+    '',
+    jsonb_build_object('Damage', '2d6', 'Strength', '+1', 'Vitality', '+1', 'Magic Resistance', '7', 'Armor / Hide', '10', 'Special Effects', 'Has Swiftness'),
+    false,
+    900
+  ),
+  (
+    'expedition-threats-fallen-sage',
+    'Fallen Sage',
+    'expedition-threats',
+    70,
+    100,
+    '',
+    '',
+    jsonb_build_object('Damage', '2d6', 'Strength', '-2', 'Vitality', '-2', 'Magic Resistance', '9', 'Armor / Hide', '10', 'Mana Pool', '100', 'Spells', 'Greater Mend, Retaliation, Insurance', 'Role', 'Sage'),
+    false,
+    910
+  ),
+  (
+    'expedition-threats-relic-hunter',
+    'Relic Hunter',
+    'expedition-threats',
+    150,
+    0,
+    'Has a random accessory of varying power',
+    '',
+    jsonb_build_object('Damage', '3d6', 'Strength', '+2', 'Vitality', '+2', 'Magic Resistance', '5', 'Armor / Hide', '13', 'Special Effects', 'Has a random accessory of varying power'),
+    false,
+    920
+  ),
+  (
+    'expedition-threats-the-exiled-black-knight',
+    'The Exiled Black Knight',
+    'expedition-threats',
+    250,
+    0,
+    'Wields the Shadows Accomplice, and 2 invis potions',
+    '',
+    jsonb_build_object('Damage', '25', 'Strength', '+4', 'Vitality', '+4', 'Magic Resistance', '8', 'Armor / Hide', '13', 'Special Effects', 'Wields the Shadows Accomplice, and 2 invis potions'),
+    false,
+    930
+  ),
+  (
     'boss-seraphel',
     'Seraphel',
     'bosses',
@@ -977,7 +1093,7 @@ values
     100,
     'Main boss encounter. Battlefield chip uses the Turquoise/Lime Green boss gradient.',
     'Boss stats imported from Bestiary.md.',
-    jsonb_build_object('Damage', '35', 'Strength', '+5', 'Vitality', '+6', 'Magic Res', '14', 'Armor / Hide', '10', 'Color', 'Turquoise/Lime green gradient'),
+    jsonb_build_object('Damage', '35', 'Strength', '+5', 'Vitality', '+6', 'Magic Resistance', '14', 'Armor / Hide', '10', 'Color', 'Turquoise/Lime green gradient'),
     true,
     901
   ),
@@ -989,7 +1105,7 @@ values
     90,
     'Boss support encounter. Battlefield chip uses the Turquoise boss gradient.',
     'Boss support stats imported from Bestiary.md.',
-    jsonb_build_object('Damage', '18', 'Strength', '+1', 'Vitality', '+3', 'Magic Res', '8', 'Armor / Hide', '7', 'Color', 'Turquoise'),
+    jsonb_build_object('Damage', '18', 'Strength', '+1', 'Vitality', '+3', 'Magic Resistance', '8', 'Armor / Hide', '7', 'Color', 'Turquoise'),
     true,
     902
   ),
@@ -1001,7 +1117,7 @@ values
     100,
     'Boss support encounter. Battlefield chip uses the Lime Green boss gradient.',
     'Boss support stats imported from Bestiary.md.',
-    jsonb_build_object('Damage', '16', 'Strength', '0', 'Vitality', '+2', 'Magic Res', '9', 'Armor / Hide', '7', 'Color', 'Lime Green'),
+    jsonb_build_object('Damage', '16', 'Strength', '0', 'Vitality', '+2', 'Magic Resistance', '9', 'Armor / Hide', '7', 'Color', 'Lime Green'),
     true,
     903
   )
