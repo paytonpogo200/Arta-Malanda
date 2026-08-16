@@ -964,6 +964,20 @@ set name = excluded.name,
 delete from public.bestiary_entities
 where entity_key in ('bosses-seraphel', 'bosses-healing-support-1', 'bosses-healing-support-2');
 
+delete from public.bestiary_entities
+where category = 'expedition-threats'
+  and entity_key not in (
+    'expedition-threats-ruin-scavenger',
+    'expedition-threats-roadside-cutthroat',
+    'expedition-threats-contract-blade',
+    'expedition-threats-banished-knight',
+    'expedition-threats-banished-warlock',
+    'expedition-threats-known-mercinary',
+    'expedition-threats-fallen-sage',
+    'expedition-threats-relic-hunter',
+    'expedition-threats-the-exiled-black-knight'
+  );
+
 insert into public.bestiary_entities (
   entity_key,
   name,
