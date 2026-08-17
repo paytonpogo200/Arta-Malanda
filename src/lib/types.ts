@@ -216,6 +216,9 @@ export type House = {
   stableSlots: number;
   propertySlots: number;
   locked: boolean;
+  kind?: 'house' | 'wagon-home';
+  storageItemId?: string | null;
+  storageCharacterId?: string | null;
 };
 
 export type HouseAccess = {

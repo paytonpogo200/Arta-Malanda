@@ -75,8 +75,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
   const [takeTargetCharacterId, setTakeTargetCharacterId] = useState(caretakerCharacterId);
+  const [homeKind, setHomeKind] = useState<'house' | 'wagon-home'>('house');
+  const [homeStorageItemId, setHomeStorageItemId] = useState<string | null>(null);
+  const [homeStorageCharacterId, setHomeStorageCharacterId] = useState<string | null>(null);
+  const [homeAvailable, setHomeAvailable] = useState(false);
   useDragAutoScroll();
 
+  const isWagonHome = homeKind === 'wagon-home' && Boolean(homeStorageItemId);
+  const rootParentItemId = isWagonHome ? homeStorageItemId : null;
   const stableItems = useMemo(() => items.filter((item) => (
     sameContainer(item, null)
     && item.type === 'pet'
@@ -84,7 +90,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     && item.slotIndex < STABLE_SLOT_OFFSET + stableSlots
   )), [items, stableSlots]);
   const stableItemIds = useMemo(() => new Set(stableItems.map((item) => item.id)), [stableItems]);
-  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage && !stableItemIds.has(item.id)), [items, stableItemIds]);
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, rootParentItemId) && !item.isStorage && !stableItemIds.has(item.id)), [items, rootParentItemId, stableItemIds]);
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const stableItemBySlot = useMemo(() => new Map(stableItems.map((item) => [item.slotIndex, item])), [stableItems]);
   const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
@@ -117,12 +123,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'House could not be loaded.');
       const normalized = normalizeHousePayload(payload);
+      setHomeAvailable(Boolean(normalized.house));
       setItems(normalized.items);
       setProperties(normalized.properties);
       setInventorySlots(normalized.house?.inventorySlots ?? 45);
       setStableSlots(normalized.house?.stableSlots ?? 5);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
       setHouseLocked(Boolean(normalized.house?.locked));
+      setHomeKind(normalized.house?.kind ?? 'house');
+      setHomeStorageItemId(normalized.house?.storageItemId ?? null);
+      setHomeStorageCharacterId(normalized.house?.storageCharacterId ?? null);
       setHouseAccess(normalized.access);
       setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
     } catch (loadError) {
@@ -240,7 +250,11 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setError('Animals can only be placed in stable slots.');
       return;
     }
-    await requestHouseChange(`/api/houses/${ownerUserId}/items`, {
+    if (isWagonHome && itemDraft.type === 'pet') {
+      setError('Animals need an active pet slot or a Caged Wagon.');
+      return;
+    }
+    await requestHouseChange(isWagonHome && homeStorageCharacterId ? `/api/characters/${homeStorageCharacterId}/inventory` : `/api/houses/${ownerUserId}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -262,7 +276,11 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setError('Animals can only be placed in stable slots.');
       return;
     }
-    await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
+    if (isWagonHome && itemDraft.type === 'pet') {
+      setError('Animals need an active pet slot or a Caged Wagon.');
+      return;
+    }
+    await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -290,7 +308,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   }
 
   async function moveItem(itemId: string, slotIndex: number, parentItemId: string | null) {
-    if (!canManage) return;
+    if (!canManageAny) return;
     const movingHouseItem = items.find((item) => item.id === itemId);
     if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
     if (movingHouseItem?.type === 'pet' && (parentItemId !== null || slotIndex < STABLE_SLOT_OFFSET)) {
@@ -311,7 +329,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setTargetSlot(`${parentItemId ?? 'main'}:${slotIndex}`);
     const existingHouseItem = items.some((item) => item.id === itemId);
     if (existingHouseItem) {
-      await requestHouseChange(`/api/houses/items/${itemId}`, {
+      await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemId}` : `/api/houses/items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slotIndex, parentItemId })
@@ -330,7 +348,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   async function savePetDisplayName(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManageAny) return;
-    await requestHouseChange(`/api/houses/items/${itemModal.item.id}`, {
+    await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName: itemDraft.displayName.trim() || null })
@@ -339,7 +357,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
 
   async function dropItem(item: InventoryItem) {
     if (!canManageAny) return;
-    await requestHouseChange(`/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
+    await requestHouseChange(isWagonHome ? `/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}` : `/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function takeItem(item: InventoryItem) {
@@ -349,7 +367,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setError('Choose a character to receive this item.');
       return;
     }
-    const moved = await requestHouseChange(`/api/houses/items/${item.id}/take`, {
+    const moved = await requestHouseChange(isWagonHome ? `/api/wagons/items/${item.id}/take` : `/api/houses/items/${item.id}/take`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ characterId })
@@ -362,18 +380,30 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(`/api/houses/${ownerUserId}/permissions`, {
+      const response = await fetch(isWagonHome && homeStorageItemId ? `/api/inventory/items/${homeStorageItemId}/permissions` : `/api/houses/${ownerUserId}/permissions`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          permissions: Object.entries(permissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access }))
+          permissions: Object.entries(permissions).map(([granteeUserId, access]) => isWagonHome
+            ? ({ granteeUserId, access: access.house || access.stable })
+            : ({ granteeUserId, ...access }))
         })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'House permissions could not be saved.');
-      const normalized = normalizeHousePayload(payload);
-      setHouseAccess(normalized.access);
-      setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
+      if (isWagonHome) {
+        const source = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+        const rawPermissions = Array.isArray(source.permissions) ? source.permissions : [];
+        setPermissions(Object.fromEntries(rawPermissions.map((entry) => {
+          const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+          return [String(record.granteeUserId ?? ''), { house: Boolean(record.access), stable: false }];
+        }).filter(([granteeUserId]) => granteeUserId)));
+        await loadHouse(false);
+      } else {
+        const normalized = normalizeHousePayload(payload);
+        setHouseAccess(normalized.access);
+        setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
+      }
       setPermissionsOpen(false);
     } catch (permissionError) {
       setError(permissionError instanceof Error ? permissionError.message : 'House permissions could not be saved.');
@@ -414,13 +444,13 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="eyebrow">Calostrynn</p>
-          <h3 className="mt-1 flex items-center gap-2 text-xl font-black"><Home size={19} className="text-[var(--brass)]" /> House</h3>
+          <p className="eyebrow">{homeAvailable && !isWagonHome ? 'Calostrynn' : 'Mobile home'}</p>
+          <h3 className="mt-1 flex items-center gap-2 text-xl font-black"><Home size={19} className="text-[var(--brass)]" /> {homeAvailable && !isWagonHome ? 'House' : 'Wagon Home'}</h3>
           {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="p-3" onClick={() => void loadHouse()} aria-label="Refresh house"><RefreshCw size={16} /></Button>
-          {canAdd && (
+          {canAdd && !isWagonHome && (
             <Button variant={houseLocked ? 'danger' : 'teal'} className="p-3" onClick={toggleHouseLock} aria-label={houseLocked ? 'Unlock house' : 'Lock house'}>
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
             </Button>
@@ -430,7 +460,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               <Users size={16} />
             </Button>
           )}
-          {canAdd && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
+          {canAdd && !isWagonHome && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
         </div>
       </div>
 
@@ -442,8 +472,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
         </div>
       ) : (
         <div className="space-y-5">
+          {!homeAvailable && (
+            <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
+              No wagon home is available for this player.
+            </div>
+          )}
+          {homeAvailable && (
           <section>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">House inventory</h3></div>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{isWagonHome ? 'Wagon home inventory' : 'House inventory'}</h3></div>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
               {Array.from({ length: inventorySlots }, (_, slot) => {
                 const item = itemBySlot.get(slot);
@@ -454,14 +490,14 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     item={item}
                     canEdit={canManageHouse}
                     canAdd={canAdd}
-                    target={targetSlot === `main:${slot}`}
-                    onOpen={() => openItem(slot, null, item)}
-                    onDropItem={(itemId) => moveItem(itemId, slot, null)}
+                    target={targetSlot === `${rootParentItemId ?? 'main'}:${slot}`}
+                    onOpen={() => openItem(slot, rootParentItemId, item)}
+                    onDropItem={(itemId) => moveItem(itemId, slot, rootParentItemId)}
                   />
                 );
               })}
             </div>
-            <div className="mt-5">
+            {!isWagonHome && <div className="mt-5">
               <div className="rule-title mb-3">
                 <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-wider">
                   <PawPrint size={16} className="text-[var(--brass)]" />
@@ -487,7 +523,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                   );
                 })}
               </div>
-            </div>
+            </div>}
             {storageItems.length > 0 && (
               <div className="mt-5 space-y-2">
                 <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Additional Storage</h3></div>
@@ -526,8 +562,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               </div>
             )}
           </section>
+          )}
 
-          <section>
+          {!isWagonHome && <section>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Property</h3></div>
             <div className="grid gap-2 sm:grid-cols-2">
               {properties.map((property) => (
@@ -552,7 +589,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               {!properties.length && <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">No property yet.</div>}
             </div>
             <p className="mt-2 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{properties.length}/{propertySlots} property slots</p>
-          </section>
+          </section>}
         </div>
       )}
 
@@ -639,16 +676,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                       checked={access.house}
                       onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), house: event.target.checked } }))}
                     />
-                    House
+                    {isWagonHome ? 'Wagon Home' : 'House'}
                   </label>
-                  <label className="flex items-center gap-2 text-sm font-black">
+                  {!isWagonHome && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.stable}
                       onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), stable: event.target.checked } }))}
                     />
                     Stable
-                  </label>
+                  </label>}
                 </div>
               );
             })}
