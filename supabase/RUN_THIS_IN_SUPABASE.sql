@@ -15500,6 +15500,7 @@ do $$
 begin
   perform public.upsert_item_catalog_entry('Wood Logs', 'material', 'Common', 'Construction Materials', array['Construction material']::text[], 1, true, '{}'::jsonb, 'Wood', false, 0, 'Construction-ready logs for city projects.', true, 4000);
   perform public.upsert_item_catalog_entry('Stone Scale', 'ore', 'Common', 'Construction Materials', array['Construction material']::text[], 1, true, '{}'::jsonb, 'Stone', false, 0, 'Measured stone for city projects.', true, 4010);
+  perform public.upsert_item_catalog_entry('Coal', 'ore', 'Uncommon', 'Construction Materials', array['Construction material']::text[], 1, true, '{}'::jsonb, 'Coal', false, 0, 'Usable coal for city projects and crafting.', true, 4020);
 end $$;
 
 create table if not exists public.city_construction_projects (
