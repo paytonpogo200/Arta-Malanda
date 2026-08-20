@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Settings, ShoppingBag, Sparkles, Star, Store, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Unlock, Users, WandSparkles, X } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -655,6 +655,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [cityDraft, setCityDraft] = useState<CityDraft | null>(null);
   const [itemCatalog, setItemCatalog] = useState<ItemCatalogEntry[]>([]);
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null);
+  const [catalogPickerIndex, setCatalogPickerIndex] = useState<number | null>(null);
+  const [catalogSearch, setCatalogSearch] = useState('');
   const [editProject, setEditProject] = useState<CityConstructionProject | null>(null);
   const [contributeProject, setContributeProject] = useState<CityConstructionProject | null>(null);
   const [contributionSources, setContributionSources] = useState<ContributionSourceItem[]>([]);
@@ -697,6 +699,21 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     .filter((project) => project.cityKey === selectedCity?.key && project.status === 'active')
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.constructionProjects, selectedCity?.key]);
   const canContribute = Boolean(selectedShopper && selectedCity && selectedCity.showUnderConstruction && !cityLocked && shopperInCity);
+  const constructionCatalogItems = useMemo(() => itemCatalog
+    .filter((item) => item.type !== 'pet' && item.type !== 'storage')
+    .sort((a, b) => a.name.localeCompare(b.name)), [itemCatalog]);
+  const filteredConstructionCatalog = useMemo(() => {
+    const query = catalogSearch.trim().toLowerCase();
+    if (!query) return constructionCatalogItems;
+    return constructionCatalogItems.filter((item) => [
+      item.name,
+      item.type,
+      item.rarity,
+      item.category,
+      item.notes,
+      item.properties.join(' ')
+    ].join(' ').toLowerCase().includes(query));
+  }, [catalogSearch, constructionCatalogItems]);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
   const forgeRunes = useMemo(() => sharedForgeRuneProducts(payload.vendors), [payload.vendors]);
@@ -1334,21 +1351,25 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     setSelectedVendorId('');
                     setCityDetailOpen(true);
                   }}
-                  className={`rounded-2xl border p-4 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
+                  className={`group flex min-h-[13.5rem] flex-col rounded-2xl border p-4 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
                 >
-                  <span className="flex items-start justify-between gap-3">
+                  <span className="flex flex-1 flex-col justify-between gap-4">
+                    <span className="flex items-start justify-between gap-3">
                     <span className="min-w-0">
                       <span className="flex flex-wrap items-center gap-2">
                         {city.currentResidence && <span className="inline-grid h-7 w-7 place-items-center rounded-full border border-[var(--brass)]/70 bg-[var(--brass)]/15 text-[var(--brass)]"><Star size={14} fill="currentColor" /></span>}
-                        <span className="block break-words text-xl font-black">{city.name}</span>
-                      </span>
-                      {city.description && <span className="mt-2 line-clamp-3 block text-sm font-bold leading-6 text-[var(--muted)]">{city.description}</span>}
-                      <span className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
-                        <span>{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
-                        {city.showUnderConstruction && <span>{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                        <span className="block break-words text-2xl font-black leading-tight sm:text-3xl">{city.name}</span>
                       </span>
                     </span>
                     <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
+                    </span>
+                    <span className="block rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                      <span className="line-clamp-3 min-h-[4.5rem] text-sm font-bold leading-6 text-[var(--muted)]">{city.description || 'No city notes yet.'}</span>
+                    </span>
+                    <span className="flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                      <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
+                      {city.showUnderConstruction && <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                    </span>
                   </span>
                 </button>
               );
@@ -1374,14 +1395,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : !cityDetailOpen && !selectedVendor ? null : !selectedVendor ? (
         <div className="space-y-4">
           <Card className="overflow-hidden">
-            <div className="rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.12)] p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+            <div className="rounded-2xl border border-[var(--brass)]/35 bg-gradient-to-br from-[rgba(245,180,76,0.2)] via-black/15 to-[rgba(31,120,117,0.16)] p-5 shadow-[0_0_34px_rgba(245,180,76,0.08)] sm:p-6">
+              <div className="grid gap-5 lg:grid-cols-[1fr_23rem]">
+                <div className="min-w-0">
                   <p className="eyebrow">City</p>
-                  <h3 className="mt-1 text-3xl font-black">{selectedCity.name}</h3>
-                  {selectedCity.description && <p className="mt-3 max-w-4xl text-sm font-bold leading-6 text-[var(--muted)]">{selectedCity.description}</p>}
+                  <h3 className="mt-1 break-words text-4xl font-black leading-tight sm:text-5xl">{selectedCity.name}</h3>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    <span className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wider ${selectedCity.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{selectedCity.locked ? 'Locked' : 'Open'}</span>
+                    {selectedCity.currentResidence && <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--brass)]/55 bg-[var(--brass)]/15 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]"><Star size={13} fill="currentColor" /> Residence</span>}
+                    {selectedCity.showUnderConstruction && <span className="rounded-xl border border-[var(--line)] bg-black/15 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Construction Open</span>}
+                  </div>
                 </div>
-                {selectedCity.currentResidence && <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--brass)]/55 bg-[var(--brass)]/15 px-3 py-2 text-xs font-black uppercase tracking-wider text-[var(--brass)]"><Star size={14} fill="currentColor" /> Residence</span>}
+                <div className="rounded-2xl border border-[var(--line)] bg-black/20 p-4">
+                  <p className="eyebrow">City Notes</p>
+                  <div className="mt-2 max-h-32 overflow-y-auto pr-2 text-sm font-bold leading-6 text-[var(--muted)]">
+                    {selectedCity.description || 'No city description has been written yet.'}
+                  </div>
+                </div>
               </div>
             </div>
           </Card>
@@ -1711,7 +1741,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {projectDraft && selectedCity && (
-        <Modal title={editProject ? `Edit ${editProject.name}` : 'Create Construction Project'} onClose={() => { setProjectDraft(null); setEditProject(null); }}>
+        <Modal title={editProject ? `Edit ${editProject.name}` : 'Create Construction Project'} onClose={() => { setProjectDraft(null); setEditProject(null); setCatalogPickerIndex(null); }}>
           <form onSubmit={saveProject} className="grid gap-4">
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Project name</span>
@@ -1721,17 +1751,32 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <p className="eyebrow">Required materials</p>
               {projectDraft.requirements.map((requirement, index) => (
                 <div key={index} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3 sm:grid-cols-[1fr_8rem_auto]">
-                  <SelectField value={requirement.itemCatalogId} onChange={(event) => {
-                    const requirements = [...projectDraft.requirements];
-                    requirements[index] = { ...requirement, itemCatalogId: event.target.value };
-                    setProjectDraft({ ...projectDraft, requirements });
-                  }}>
-                    <option value="">Choose catalog item</option>
-                    {itemCatalog
-                      .filter((item) => item.type !== 'pet' && item.type !== 'storage')
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((item) => <option key={item.id} value={item.id}>{item.name} · {item.type}</option>)}
-                  </SelectField>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCatalogPickerIndex(index);
+                      setCatalogSearch('');
+                    }}
+                    className="flex min-h-[3.25rem] items-center gap-3 rounded-xl border border-[var(--line)] bg-black/20 px-3 py-2 text-left transition hover:border-[var(--brass)]/60"
+                  >
+                    {(() => {
+                      const selectedItem = itemCatalog.find((item) => item.id === requirement.itemCatalogId) ?? null;
+                      return selectedItem ? (
+                        <>
+                          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border bg-black/25 ${rarityClass(selectedItem.rarity)}`}><ItemIcon type={selectedItem.type} size={18} /></span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-black">{selectedItem.name}</span>
+                            <span className="block text-xs font-bold text-[var(--muted)]">{selectedItem.rarity} · {selectedItem.type}</span>
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><PackageCheck size={17} /></span>
+                          <span className="font-black text-[var(--muted)]">Choose item catalog</span>
+                        </>
+                      );
+                    })()}
+                  </button>
                   <NumberInput min={0.5} step={0.5} value={requirement.quantity} onValueChange={(quantity) => {
                     const requirements = [...projectDraft.requirements];
                     requirements[index] = { ...requirement, quantity };
@@ -1744,6 +1789,47 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             </div>
             <Button variant="primary" disabled={!projectDraft.name.trim() || projectDraft.requirements.every((requirement) => !requirement.itemCatalogId) || saving}><PackageCheck className="mr-2 inline" size={15} /> Save project</Button>
           </form>
+        </Modal>
+      )}
+
+      {projectDraft && catalogPickerIndex !== null && (
+        <Modal title="Choose Construction Item" onClose={() => setCatalogPickerIndex(null)}>
+          <div className="grid gap-4">
+            <label className="relative block">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
+              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search item catalog" autoFocus />
+            </label>
+            <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/15 p-2">
+              {filteredConstructionCatalog.length === 0 ? (
+                <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">No catalog items match that search.</div>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {filteredConstructionCatalog.map((item) => {
+                    const active = projectDraft.requirements[catalogPickerIndex]?.itemCatalogId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          const requirements = [...projectDraft.requirements];
+                          requirements[catalogPickerIndex] = { ...requirements[catalogPickerIndex], itemCatalogId: item.id };
+                          setProjectDraft({ ...projectDraft, requirements });
+                          setCatalogPickerIndex(null);
+                        }}
+                        className={`flex min-h-[4.5rem] items-center gap-3 rounded-xl border p-3 text-left transition ${active ? 'border-[var(--brass)] bg-[var(--brass)]/12' : 'border-[var(--line)] bg-black/20 hover:border-[var(--brass)]/60'}`}
+                      >
+                        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-black/25 ${rarityClass(item.rarity)}`}><ItemIcon type={item.type} size={21} /></span>
+                        <span className="min-w-0">
+                          <span className="block break-words font-black">{item.name}</span>
+                          <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{item.rarity} · {item.type}{item.category ? ` · ${item.category}` : ''}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
