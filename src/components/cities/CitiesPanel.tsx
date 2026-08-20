@@ -686,9 +686,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [error, setError] = useState('');
   const isDm = profile.role === 'dm';
 
-  const visibleCities = useMemo(() => [...payload.cities].sort((a, b) => Number(b.currentResidence) - Number(a.currentResidence) || a.order - b.order || a.name.localeCompare(b.name)), [payload.cities]);
+  const visibleCities = useMemo(() => [...payload.cities].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.cities]);
   const currentResidenceCity = visibleCities.find((city) => city.currentResidence) ?? null;
-  const selectedCity = visibleCities.find((city) => city.key === selectedCityKey) ?? currentResidenceCity ?? visibleCities.find((city) => city.key === 'calostrynn') ?? visibleCities[0] ?? null;
+  const selectedCity = visibleCities.find((city) => city.key === selectedCityKey) ?? visibleCities[0] ?? null;
   const shoppers = useMemo(() => payload.characters.filter((character) => isDm || character.ownerUserId === profile.id), [isDm, payload.characters, profile.id]);
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
@@ -765,9 +765,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? 'Discovered cities could not be loaded.');
       const normalized = normalizeCitiesPayload(body);
+      const orderedCities = [...normalized.cities].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
       setPayload(normalized);
       setShoppingAs((current) => current || normalized.characters.find((character) => isDm || character.ownerUserId === profile.id)?.id || '');
-      setSelectedCityKey((current) => current || normalized.cities.find((city) => city.currentResidence)?.key || normalized.cities.find((city) => city.key === 'calostrynn')?.key || normalized.cities[0]?.key || '');
+      setSelectedCityKey((current) => current || orderedCities[0]?.key || '');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Discovered cities could not be loaded.');
     } finally {
@@ -1337,7 +1338,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </div>
         {error && <div className="mt-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
         {!selectedVendor && !cityDetailOpen && (
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-5 grid gap-4">
             {visibleCities.map((city) => {
               const active = city.key === selectedCity?.key;
               const vendorCount = payload.vendors.filter((vendor) => vendor.cityKey === city.key && activeCityVendor(vendor) && (isDm || !vendor.hidden)).length;
@@ -1351,24 +1352,31 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     setSelectedVendorId('');
                     setCityDetailOpen(true);
                   }}
-                  className={`group flex min-h-[13.5rem] flex-col rounded-2xl border p-4 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
+                  className={`group relative overflow-hidden rounded-2xl border text-left transition hover:-translate-y-0.5 hover:border-[var(--brass)]/65 ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10'}`}
                 >
-                  <span className="flex flex-1 flex-col justify-between gap-4">
-                    <span className="flex items-start justify-between gap-3">
-                    <span className="min-w-0">
-                      <span className="flex flex-wrap items-center gap-2">
-                        {city.currentResidence && <span className="inline-grid h-7 w-7 place-items-center rounded-full border border-[var(--brass)]/70 bg-[var(--brass)]/15 text-[var(--brass)]"><Star size={14} fill="currentColor" /></span>}
-                        <span className="block break-words text-2xl font-black leading-tight sm:text-3xl">{city.name}</span>
+                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[var(--brass)] via-[rgba(245,180,76,0.45)] to-[var(--teal)]" />
+                  <span className="block bg-gradient-to-br from-[rgba(245,180,76,0.13)] via-black/5 to-[rgba(31,120,117,0.12)] p-4 sm:p-5">
+                    <span className="grid gap-4 lg:grid-cols-[minmax(14rem,20rem)_1fr_auto] lg:items-stretch">
+                      <span className="flex min-w-0 flex-col justify-between gap-4">
+                        <span>
+                          <span className="flex flex-wrap items-center gap-2">
+                            {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border border-[var(--brass)]/60 bg-[var(--brass)]/15 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]"><Star size={12} fill="currentColor" /> Residence</span>}
+                            <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wider ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
+                          </span>
+                          <span className="mt-3 block break-words text-3xl font-black leading-tight sm:text-4xl">{city.name}</span>
+                        </span>
+                        <span className="flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                          <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
+                          {city.showUnderConstruction && <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                        </span>
                       </span>
-                    </span>
-                    <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
-                    </span>
-                    <span className="block rounded-2xl border border-[var(--line)] bg-black/15 p-3">
-                      <span className="line-clamp-3 min-h-[4.5rem] text-sm font-bold leading-6 text-[var(--muted)]">{city.description || 'No city notes yet.'}</span>
-                    </span>
-                    <span className="flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
-                      <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
-                      {city.showUnderConstruction && <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                      <span className="rounded-2xl border border-[var(--line)] bg-black/20 p-4">
+                        <span className="eyebrow">City Notes</span>
+                        <span className="mt-2 line-clamp-3 block min-h-[4.5rem] text-sm font-bold leading-6 text-[var(--muted)]">{city.description || 'No city notes yet.'}</span>
+                      </span>
+                      <span className="hidden min-w-[9rem] place-items-center rounded-2xl border border-[var(--line)] bg-black/15 px-4 text-[var(--brass)] lg:grid">
+                        <ChevronRight size={28} />
+                      </span>
                     </span>
                   </span>
                 </button>
