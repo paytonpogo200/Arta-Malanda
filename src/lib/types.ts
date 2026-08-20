@@ -260,8 +260,32 @@ export type City = {
   id: string;
   key: string;
   name: string;
+  description: string;
   locked: boolean;
+  currentResidence: boolean;
+  showUnderConstruction: boolean;
   order: number;
+};
+
+export type CityConstructionRequirement = {
+  id: string;
+  projectId: string;
+  item: ItemCatalogEntry;
+  requiredQuantity: number;
+  contributedQuantity: number;
+  complete: boolean;
+  order: number;
+};
+
+export type CityConstructionProject = {
+  id: string;
+  cityKey: string;
+  name: string;
+  status: 'active' | 'ended';
+  order: number;
+  complete: boolean;
+  progress: number;
+  requirements: CityConstructionRequirement[];
 };
 
 export type MarketProduct = {

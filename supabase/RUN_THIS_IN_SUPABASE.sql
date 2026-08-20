@@ -15472,3 +15472,523 @@ for each row execute function public.touch_app_live_update_trigger('caves,explor
 grant execute on function public.touch_app_live_update(text, text) to anon, authenticated;
 grant execute on function public.touch_app_live_update_trigger() to anon, authenticated;
 
+
+-- ============================================================
+-- Ruined City hub and construction projects.
+
+alter table public.cities
+  add column if not exists description text not null default '',
+  add column if not exists is_current_residence boolean not null default false,
+  add column if not exists show_under_construction boolean not null default false;
+
+insert into public.cities (city_key, name, description, is_locked, is_current_residence, show_under_construction, display_order)
+values ('the-ruined-city', 'The Ruined City*', '', false, true, false, 5)
+on conflict (city_key) do update
+set name = excluded.name,
+    display_order = least(public.cities.display_order, excluded.display_order),
+    updated_at = now();
+
+update public.cities
+set is_current_residence = city_key = 'the-ruined-city';
+
+drop index if exists cities_one_current_residence_idx;
+create unique index cities_one_current_residence_idx
+on public.cities ((is_current_residence))
+where is_current_residence;
+
+do $$
+begin
+  perform public.upsert_item_catalog_entry('Wood Logs', 'material', 'Common', 'Construction Materials', array['Construction material']::text[], 1, true, '{}'::jsonb, 'Wood', false, 0, 'Construction-ready logs for city projects.', true, 4000);
+  perform public.upsert_item_catalog_entry('Stone Scale', 'ore', 'Common', 'Construction Materials', array['Construction material']::text[], 1, true, '{}'::jsonb, 'Stone', false, 0, 'Measured stone for city projects.', true, 4010);
+end $$;
+
+create table if not exists public.city_construction_projects (
+  id uuid primary key default gen_random_uuid(),
+  city_key text not null references public.cities(city_key) on delete cascade,
+  project_name text not null,
+  status text not null default 'active' check (status in ('active', 'ended')),
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.city_construction_requirements (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.city_construction_projects(id) on delete cascade,
+  item_catalog_id uuid not null references public.item_catalog(id),
+  required_quantity numeric(12,1) not null check (required_quantity > 0),
+  contributed_quantity numeric(12,1) not null default 0 check (contributed_quantity >= 0),
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(project_id, item_catalog_id)
+);
+
+create table if not exists public.city_construction_contributions (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.city_construction_projects(id) on delete cascade,
+  requirement_id uuid not null references public.city_construction_requirements(id) on delete cascade,
+  character_id uuid not null references public.characters(id) on delete cascade,
+  source_item_id uuid,
+  item_catalog_id uuid not null references public.item_catalog(id),
+  quantity numeric(12,1) not null check (quantity > 0),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists city_construction_projects_city_idx on public.city_construction_projects(city_key, status, display_order);
+create index if not exists city_construction_requirements_project_idx on public.city_construction_requirements(project_id, display_order);
+create index if not exists city_construction_contributions_project_idx on public.city_construction_contributions(project_id, created_at desc);
+
+alter table public.city_construction_projects enable row level security;
+alter table public.city_construction_requirements enable row level security;
+alter table public.city_construction_contributions enable row level security;
+
+revoke all on public.city_construction_projects from anon, authenticated;
+revoke all on public.city_construction_requirements from anon, authenticated;
+revoke all on public.city_construction_contributions from anon, authenticated;
+
+drop trigger if exists city_construction_projects_touch_updated_at on public.city_construction_projects;
+create trigger city_construction_projects_touch_updated_at
+before update on public.city_construction_projects
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists city_construction_requirements_touch_updated_at on public.city_construction_requirements;
+create trigger city_construction_requirements_touch_updated_at
+before update on public.city_construction_requirements
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists app_live_city_construction_projects on public.city_construction_projects;
+create trigger app_live_city_construction_projects
+after insert or update or delete on public.city_construction_projects
+for each row execute function public.touch_app_live_update_trigger('cities,inventory,assets');
+
+drop trigger if exists app_live_city_construction_requirements on public.city_construction_requirements;
+create trigger app_live_city_construction_requirements
+after insert or update or delete on public.city_construction_requirements
+for each row execute function public.touch_app_live_update_trigger('cities,inventory,assets');
+
+drop trigger if exists app_live_city_construction_contributions on public.city_construction_contributions;
+create trigger app_live_city_construction_contributions
+after insert or update or delete on public.city_construction_contributions
+for each row execute function public.touch_app_live_update_trigger('cities,inventory');
+
+create or replace function public.city_record_to_json(p_city public.cities)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_city.id,
+    'key', p_city.city_key,
+    'name', p_city.name,
+    'description', p_city.description,
+    'locked', p_city.is_locked,
+    'currentResidence', p_city.is_current_residence,
+    'showUnderConstruction', p_city.show_under_construction,
+    'order', p_city.display_order
+  )
+$$;
+
+create or replace function public.city_construction_requirement_to_json(p_requirement public.city_construction_requirements)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_requirement.id,
+    'projectId', p_requirement.project_id,
+    'item', public.catalog_record_to_json(c),
+    'requiredQuantity', p_requirement.required_quantity,
+    'contributedQuantity', p_requirement.contributed_quantity,
+    'complete', p_requirement.contributed_quantity >= p_requirement.required_quantity,
+    'order', p_requirement.display_order
+  )
+  from public.item_catalog c
+  where c.id = p_requirement.item_catalog_id
+$$;
+
+create or replace function public.city_construction_project_to_json(p_project public.city_construction_projects)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  with requirement_totals as (
+    select
+      coalesce(sum(r.required_quantity), 0) as required_total,
+      coalesce(sum(least(r.contributed_quantity, r.required_quantity)), 0) as contributed_total,
+      bool_and(r.contributed_quantity >= r.required_quantity) as all_complete
+    from public.city_construction_requirements r
+    where r.project_id = p_project.id
+  )
+  select jsonb_build_object(
+    'id', p_project.id,
+    'cityKey', p_project.city_key,
+    'name', p_project.project_name,
+    'status', p_project.status,
+    'order', p_project.display_order,
+    'complete', coalesce(t.all_complete, false) and t.required_total > 0,
+    'progress', case when t.required_total > 0 then least(1, t.contributed_total / t.required_total) else 0 end,
+    'requirements', (
+      select coalesce(jsonb_agg(public.city_construction_requirement_to_json(r) order by r.display_order, r.created_at), '[]'::jsonb)
+      from public.city_construction_requirements r
+      where r.project_id = p_project.id
+    )
+  )
+  from requirement_totals t
+$$;
+
+create or replace function public.get_discovered_cities(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  return jsonb_build_object(
+    'characters', (
+      select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
+      from public.characters c
+      where c.kind = 'player'
+        and (v_profile.role = 'dm'::public.user_role or c.owner_user_id = v_profile.id)
+    ),
+    'cities', (
+      select coalesce(jsonb_agg(public.city_record_to_json(c) order by c.is_current_residence desc, c.display_order, c.name), '[]'::jsonb)
+      from public.cities c
+    ),
+    'vendors', (
+      select coalesce(jsonb_agg(public.shop_vendor_record_to_json(v, v_profile.role = 'dm'::public.user_role) order by v.city_key, v.display_order, v.name), '[]'::jsonb)
+      from public.shop_vendors v
+      where v_profile.role = 'dm'::public.user_role or not v.is_hidden
+    ),
+    'constructionProjects', (
+      select coalesce(jsonb_agg(public.city_construction_project_to_json(p) order by p.city_key, p.display_order, p.project_name), '[]'::jsonb)
+      from public.city_construction_projects p
+      where p.status = 'active'
+    )
+  );
+end;
+$$;
+
+create or replace function public.update_city_access(
+  p_session_token text,
+  p_city_key text,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+
+  if not exists (select 1 from public.cities where city_key = p_city_key) then
+    raise exception 'City not found.';
+  end if;
+
+  if coalesce((v_patch->>'currentResidence')::boolean, false) then
+    update public.cities set is_current_residence = false where is_current_residence;
+  end if;
+
+  update public.cities
+  set
+    name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
+    description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
+    is_locked = case when v_patch ? 'locked' then coalesce((v_patch->>'locked')::boolean, false) else is_locked end,
+    show_under_construction = case when v_patch ? 'showUnderConstruction' then coalesce((v_patch->>'showUnderConstruction')::boolean, false) else show_under_construction end,
+    is_current_residence = case when v_patch ? 'currentResidence' then coalesce((v_patch->>'currentResidence')::boolean, false) else is_current_residence end,
+    display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
+  where city_key = p_city_key;
+
+  if not exists (select 1 from public.cities where is_current_residence) then
+    update public.cities
+    set is_current_residence = true
+    where city_key = p_city_key;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.construction_source_item_accessible(
+  p_profile public.profiles,
+  p_actor public.characters,
+  p_item public.inventory_items
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_root public.inventory_items%rowtype;
+  v_owner public.characters%rowtype;
+begin
+  if p_item.character_id = p_actor.id then
+    return true;
+  end if;
+
+  with recursive ancestry as (
+    select i.*
+    from public.inventory_items i
+    where i.id = p_item.id
+    union all
+    select parent.*
+    from public.inventory_items parent
+    join ancestry child on child.parent_item_id = parent.id
+  )
+  select * into v_root
+  from ancestry
+  where parent_item_id is null
+  order by id
+  limit 1;
+
+  if v_root.id is null then
+    return false;
+  end if;
+
+  select * into v_owner
+  from public.characters
+  where id = v_root.character_id;
+
+  return public.inventory_storage_visible_to_profile(p_profile, v_root, v_owner)
+    and public.city_names_match(v_owner.location_name, p_actor.location_name);
+end;
+$$;
+
+create or replace function public.create_city_construction_project(
+  p_session_token text,
+  p_city_key text,
+  p_project_name text,
+  p_requirements jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_project public.city_construction_projects%rowtype;
+  v_entry jsonb;
+  v_catalog public.item_catalog%rowtype;
+  v_quantity numeric;
+  v_order int := 0;
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+
+  if not exists (select 1 from public.cities where city_key = p_city_key) then
+    raise exception 'City not found.';
+  end if;
+  if length(trim(coalesce(p_project_name, ''))) = 0 then
+    raise exception 'Project name is required.';
+  end if;
+  if jsonb_typeof(coalesce(p_requirements, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_requirements, '[]'::jsonb)) = 0 then
+    raise exception 'Add at least one required material.';
+  end if;
+
+  insert into public.city_construction_projects (city_key, project_name, display_order)
+  values (
+    p_city_key,
+    trim(p_project_name),
+    coalesce((select max(display_order) + 10 from public.city_construction_projects where city_key = p_city_key), 10)
+  )
+  returning * into v_project;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_requirements, '[]'::jsonb))
+  loop
+    select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and active;
+    if v_catalog.id is null then raise exception 'Required item was not found in the item catalog.'; end if;
+    v_quantity := public.assert_valid_item_quantity(v_catalog.item_name, v_catalog.item_type, coalesce((v_entry->>'quantity')::numeric, 0));
+    v_order := v_order + 10;
+
+    insert into public.city_construction_requirements (project_id, item_catalog_id, required_quantity, display_order)
+    values (v_project.id, v_catalog.id, v_quantity, v_order)
+    on conflict (project_id, item_catalog_id) do update
+    set required_quantity = public.city_construction_requirements.required_quantity + excluded.required_quantity;
+  end loop;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.update_city_construction_project(
+  p_session_token text,
+  p_project_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_project public.city_construction_projects%rowtype;
+  v_entry jsonb;
+  v_catalog public.item_catalog%rowtype;
+  v_quantity numeric;
+  v_seen uuid[] := '{}';
+  v_order int := 0;
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+
+  select * into v_project from public.city_construction_projects where id = p_project_id;
+  if v_project.id is null then raise exception 'Project not found.'; end if;
+
+  update public.city_construction_projects
+  set project_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), project_name) else project_name end,
+      status = case when v_patch ? 'status' and v_patch->>'status' = 'ended' then 'ended' else status end,
+      display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
+  where id = p_project_id;
+
+  if v_patch ? 'requirements' then
+    if jsonb_typeof(v_patch->'requirements') <> 'array' or jsonb_array_length(v_patch->'requirements') = 0 then
+      raise exception 'A project needs at least one required material.';
+    end if;
+
+    for v_entry in select * from jsonb_array_elements(v_patch->'requirements')
+    loop
+      select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and active;
+      if v_catalog.id is null then raise exception 'Required item was not found in the item catalog.'; end if;
+      v_quantity := public.assert_valid_item_quantity(v_catalog.item_name, v_catalog.item_type, coalesce((v_entry->>'quantity')::numeric, 0));
+      v_order := v_order + 10;
+      v_seen := array_append(v_seen, v_catalog.id);
+
+      insert into public.city_construction_requirements (project_id, item_catalog_id, required_quantity, display_order)
+      values (p_project_id, v_catalog.id, v_quantity, v_order)
+      on conflict (project_id, item_catalog_id) do update
+      set required_quantity = greatest(excluded.required_quantity, public.city_construction_requirements.contributed_quantity),
+          display_order = excluded.display_order;
+    end loop;
+
+    delete from public.city_construction_requirements
+    where project_id = p_project_id
+      and not (item_catalog_id = any(v_seen))
+      and contributed_quantity = 0;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.contribute_city_construction_project(
+  p_session_token text,
+  p_character_id uuid,
+  p_project_id uuid,
+  p_contributions jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_actor public.characters%rowtype;
+  v_project public.city_construction_projects%rowtype;
+  v_city public.cities%rowtype;
+  v_entry jsonb;
+  v_requirement public.city_construction_requirements%rowtype;
+  v_catalog public.item_catalog%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_quantity numeric;
+  v_remaining numeric;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_actor := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  select * into v_project from public.city_construction_projects where id = p_project_id and status = 'active';
+  if v_project.id is null then raise exception 'Active project not found.'; end if;
+
+  select * into v_city from public.cities where city_key = v_project.city_key;
+  if v_city.id is null then raise exception 'Project city not found.'; end if;
+  if v_city.is_locked then raise exception 'This city is locked by the Dungeon Master.'; end if;
+  if not v_city.show_under_construction then raise exception 'Construction is not open in this city.'; end if;
+  if not public.city_names_match(v_actor.location_name, v_city.name) then
+    raise exception '% is in %, not %.', v_actor.name, v_actor.location_name, v_city.name;
+  end if;
+  if jsonb_typeof(coalesce(p_contributions, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_contributions, '[]'::jsonb)) = 0 then
+    raise exception 'Choose at least one item to contribute.';
+  end if;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_contributions, '[]'::jsonb))
+  loop
+    select * into v_requirement
+    from public.city_construction_requirements
+    where id = (v_entry->>'requirementId')::uuid
+      and project_id = p_project_id
+    for update;
+    if v_requirement.id is null then raise exception 'Project material requirement not found.'; end if;
+
+    select * into v_catalog from public.item_catalog where id = v_requirement.item_catalog_id;
+    if v_catalog.id is null then raise exception 'Catalog item not found.'; end if;
+
+    select * into v_item from public.inventory_items where id = (v_entry->>'itemId')::uuid for update;
+    if v_item.id is null then raise exception 'Contribution item not found.'; end if;
+    if v_item.is_storage or v_item.item_type = 'pet' then raise exception 'Storage containers and pets cannot be consumed for construction.'; end if;
+    if v_item.loadout_slot is not null then raise exception 'Remove % from the active loadout before contributing it.', v_item.item_name; end if;
+    if public.catalog_key_for_name(public.normalize_item_name(v_item.item_name)) <> v_catalog.item_key then
+      raise exception '% does not match the required material %.', v_item.item_name, v_catalog.item_name;
+    end if;
+    if not public.construction_source_item_accessible(v_profile, v_actor, v_item) then
+      raise exception 'That item is not in accessible storage for this city.';
+    end if;
+
+    v_remaining := greatest(0, v_requirement.required_quantity - v_requirement.contributed_quantity);
+    if v_remaining <= 0 then raise exception '% is already complete.', v_catalog.item_name; end if;
+    v_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, coalesce((v_entry->>'quantity')::numeric, 0));
+    if v_quantity > v_item.quantity then raise exception 'Not enough % in that stack.', v_item.item_name; end if;
+    if v_quantity > v_remaining then raise exception 'That contribution exceeds the remaining % needed.', v_catalog.item_name; end if;
+
+    update public.city_construction_requirements
+    set contributed_quantity = contributed_quantity + v_quantity
+    where id = v_requirement.id;
+
+    insert into public.city_construction_contributions (project_id, requirement_id, character_id, source_item_id, item_catalog_id, quantity)
+    values (p_project_id, v_requirement.id, v_actor.id, v_item.id, v_catalog.id, v_quantity);
+
+    if v_item.quantity = v_quantity then
+      delete from public.inventory_items where id = v_item.id;
+    else
+      update public.inventory_items set quantity = quantity - v_quantity where id = v_item.id;
+    end if;
+  end loop;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+grant execute on function public.city_construction_requirement_to_json(public.city_construction_requirements) to anon, authenticated;
+grant execute on function public.city_construction_project_to_json(public.city_construction_projects) to anon, authenticated;
+grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
+grant execute on function public.construction_source_item_accessible(public.profiles, public.characters, public.inventory_items) to anon, authenticated;
+grant execute on function public.create_city_construction_project(text, text, text, jsonb) to anon, authenticated;
+grant execute on function public.update_city_construction_project(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.contribute_city_construction_project(text, uuid, uuid, jsonb) to anon, authenticated;
+
+create or replace function public.city_names_match(p_left text, p_right text)
+returns boolean
+language sql
+immutable
+as $$
+  select length(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) > 0
+    and lower(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) = lower(trim(regexp_replace(coalesce(p_right, ''), '\*+$', '')))
+$$;
+
+grant execute on function public.city_names_match(text, text) to anon, authenticated;

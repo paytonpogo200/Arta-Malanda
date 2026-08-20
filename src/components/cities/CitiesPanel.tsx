@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, RefreshCw, ShoppingBag, Sparkles, Store, Unlock, Users, WandSparkles } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Settings, ShoppingBag, Sparkles, Star, Store, Unlock, Users, WandSparkles, X } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -9,15 +9,17 @@ import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
+import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { normalizeWagonPayload } from '@/features/inventory/wagons';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { potionEffectText } from '@/lib/utils/potions';
 import { rarityClass, rarityOptions } from '@/lib/utils/rarity';
 import { spellTypeClass, spellTypeFromProductSection, spellTypes } from '@/lib/utils/spells';
-import type { Character, InventoryItem, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
+import type { Character, City, CityConstructionProject, CityConstructionRequirement, InventoryItem, ItemCatalogEntry, ItemRarity, ItemType, MarketProduct, Profile, ShopVendor, WalletBalance } from '@/lib/types';
 
-const EMPTY_PAYLOAD: CitiesPayload = { characters: [], cities: [], vendors: [] };
+const EMPTY_PAYLOAD: CitiesPayload = { characters: [], cities: [], vendors: [], constructionProjects: [] };
 
 type ProductDraft = {
   name: string;
@@ -38,6 +40,31 @@ type VendorDraft = {
   category: string;
   hidden: boolean;
   order: number;
+};
+
+type CityDraft = {
+  name: string;
+  description: string;
+  locked: boolean;
+  currentResidence: boolean;
+  showUnderConstruction: boolean;
+  order: number;
+};
+
+type ProjectRequirementDraft = {
+  itemCatalogId: string;
+  quantity: number;
+};
+
+type ProjectDraft = {
+  name: string;
+  requirements: ProjectRequirementDraft[];
+};
+
+type ContributionSourceItem = {
+  source: 'inventory' | 'home' | 'wagon';
+  sourceLabel: string;
+  item: InventoryItem;
 };
 
 type CraftRecipe = {
@@ -365,9 +392,13 @@ function activeCityVendor(vendor: ShopVendor) {
 }
 
 function sameCityName(left: string | null | undefined, right: string | null | undefined) {
-  const normalizedLeft = (left ?? '').trim().toLowerCase();
-  const normalizedRight = (right ?? '').trim().toLowerCase();
+  const normalizedLeft = (left ?? '').trim().replace(/\*+$/g, '').trim().toLowerCase();
+  const normalizedRight = (right ?? '').trim().replace(/\*+$/g, '').trim().toLowerCase();
   return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
+function catalogKeyForName(name: string) {
+  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 function forgeMaterialProducts(vendors: ShopVendor[], service: ForgeService) {
@@ -594,6 +625,10 @@ function sourceItemKey(entry: CraftSourceItem) {
   return `${entry.source}:${entry.item.id}`;
 }
 
+function contributionSourceKey(entry: ContributionSourceItem) {
+  return `${entry.source}:${entry.item.id}`;
+}
+
 function formatQuantity(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
@@ -613,8 +648,17 @@ function dragonScaleReturnedQuantity(total: number) {
 export function CitiesPanel({ profile }: { profile: Profile }) {
   const [payload, setPayload] = useState<CitiesPayload>(EMPTY_PAYLOAD);
   const [selectedCityKey, setSelectedCityKey] = useState('');
+  const [cityDetailOpen, setCityDetailOpen] = useState(false);
   const [shoppingAs, setShoppingAs] = useState('');
   const [selectedVendorId, setSelectedVendorId] = useState('');
+  const [editCity, setEditCity] = useState<City | null>(null);
+  const [cityDraft, setCityDraft] = useState<CityDraft | null>(null);
+  const [itemCatalog, setItemCatalog] = useState<ItemCatalogEntry[]>([]);
+  const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null);
+  const [editProject, setEditProject] = useState<CityConstructionProject | null>(null);
+  const [contributeProject, setContributeProject] = useState<CityConstructionProject | null>(null);
+  const [contributionSources, setContributionSources] = useState<ContributionSourceItem[]>([]);
+  const [contributionSelections, setContributionSelections] = useState<Record<string, number>>({});
   const [selectedProduct, setSelectedProduct] = useState<MarketProduct | null>(null);
   const [editProduct, setEditProduct] = useState<MarketProduct | null>(null);
   const [editVendor, setEditVendor] = useState<ShopVendor | null>(null);
@@ -640,14 +684,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [error, setError] = useState('');
   const isDm = profile.role === 'dm';
 
-  const visibleCities = useMemo(() => [...payload.cities].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.cities]);
-  const selectedCity = visibleCities.find((city) => city.key === selectedCityKey) ?? visibleCities.find((city) => city.key === 'calostrynn') ?? visibleCities[0] ?? null;
+  const visibleCities = useMemo(() => [...payload.cities].sort((a, b) => Number(b.currentResidence) - Number(a.currentResidence) || a.order - b.order || a.name.localeCompare(b.name)), [payload.cities]);
+  const currentResidenceCity = visibleCities.find((city) => city.currentResidence) ?? null;
+  const selectedCity = visibleCities.find((city) => city.key === selectedCityKey) ?? currentResidenceCity ?? visibleCities.find((city) => city.key === 'calostrynn') ?? visibleCities[0] ?? null;
   const shoppers = useMemo(() => payload.characters.filter((character) => isDm || character.ownerUserId === profile.id), [isDm, payload.characters, profile.id]);
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
   const cityLocked = Boolean(selectedCity?.locked);
   const shopperInCity = sameCityName(selectedShopper?.locationName, selectedCity?.name);
   const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
+  const cityProjects = useMemo(() => payload.constructionProjects
+    .filter((project) => project.cityKey === selectedCity?.key && project.status === 'active')
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.constructionProjects, selectedCity?.key]);
+  const canContribute = Boolean(selectedShopper && selectedCity && selectedCity.showUnderConstruction && !cityLocked && shopperInCity);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
   const forgeRunes = useMemo(() => sharedForgeRuneProducts(payload.vendors), [payload.vendors]);
@@ -701,7 +750,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const normalized = normalizeCitiesPayload(body);
       setPayload(normalized);
       setShoppingAs((current) => current || normalized.characters.find((character) => isDm || character.ownerUserId === profile.id)?.id || '');
-      setSelectedCityKey((current) => current || normalized.cities.find((city) => city.key === 'calostrynn')?.key || normalized.cities[0]?.key || '');
+      setSelectedCityKey((current) => current || normalized.cities.find((city) => city.currentResidence)?.key || normalized.cities.find((city) => city.key === 'calostrynn')?.key || normalized.cities[0]?.key || '');
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Discovered cities could not be loaded.');
     } finally {
@@ -717,6 +766,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   useEffect(() => {
     void loadCities();
   }, [loadCities]);
+
+  useEffect(() => {
+    if (!isDm) return;
+    let active = true;
+    fetch('/api/assets', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((body) => {
+        if (!active) return;
+        setItemCatalog(normalizeUpdateAssetsPayload(body).itemCatalog.filter((item) => item.active));
+      })
+      .catch(() => {
+        if (active) setItemCatalog([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isDm]);
 
   useEffect(() => {
     if (!craftModal || !selectedShopper || !selectedCity || !canShop) {
@@ -753,6 +819,51 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     };
   }, [canShop, craftModal, craftRefreshSignal, selectedCity, selectedShopper]);
 
+  useEffect(() => {
+    if (!contributeProject || !selectedShopper || !selectedCity || !canContribute) {
+      setContributionSources([]);
+      setContributionSelections({});
+      return;
+    }
+    let active = true;
+    Promise.all([
+      fetch(`/api/characters/${selectedShopper.id}/inventory`, { cache: 'no-store' }).then((response) => response.json()),
+      selectedShopper.ownerUserId
+        ? fetch(`/api/houses/${selectedShopper.ownerUserId}`, { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
+        : Promise.resolve(null),
+      fetch(`/api/characters/${selectedShopper.id}/wagons`, { cache: 'no-store' }).then((response) => response.json()).catch(() => null)
+    ])
+      .then(([inventoryBody, houseBody, wagonBody]) => {
+        if (!active) return;
+        const requirementKeys = new Set(contributeProject.requirements
+          .filter((requirement) => !requirement.complete)
+          .map((requirement) => requirement.item.key));
+        const inventory = normalizeCharacterInventoryPayload(inventoryBody).items
+          .filter((item) => item.loadoutSlot === null && !item.isStorage && item.type !== 'pet' && requirementKeys.has(catalogKeyForName(item.name)))
+          .map((item) => ({ source: 'inventory' as const, sourceLabel: 'Inventory', item }));
+        const house = normalizeHousePayload(houseBody);
+        const houseItems = house.house && sameCityName(house.house.cityName, selectedCity.name) && (house.access.owner || house.access.dm || house.access.house)
+          ? house.items
+            .filter((item) => item.loadoutSlot === null && !item.isStorage && item.type !== 'pet' && requirementKeys.has(catalogKeyForName(item.name)))
+            .map((item) => ({ source: 'home' as const, sourceLabel: house.house?.kind === 'wagon-home' ? 'Wagon Home' : 'Home Storage', item }))
+          : [];
+        const wagons = normalizeWagonPayload(wagonBody);
+        const wagonItems = wagons.items
+          .filter((item) => item.loadoutSlot === null && !item.isStorage && item.type !== 'pet' && requirementKeys.has(catalogKeyForName(item.name)))
+          .map((item) => {
+            const wagon = wagons.wagons.find((entry) => entry.wagon.id === item.parentItemId);
+            return { source: 'wagon' as const, sourceLabel: wagon ? `${wagon.ownerName}'s ${wagon.wagon.displayName || wagon.wagon.name}` : 'Shared Wagon', item };
+          });
+        setContributionSources([...inventory, ...houseItems, ...wagonItems]);
+      })
+      .catch(() => {
+        if (active) setContributionSources([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [canContribute, contributeProject, selectedCity, selectedShopper]);
+
   async function replaceFromResponse(response: Response, fallback: string) {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error ?? fallback);
@@ -773,6 +884,128 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       }), 'City access could not be changed.');
     } catch (lockError) {
       setError(lockError instanceof Error ? lockError.message : 'City access could not be changed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openCityEdit(city: City) {
+    setEditCity(city);
+    setCityDraft({
+      name: city.name,
+      description: city.description,
+      locked: city.locked,
+      currentResidence: city.currentResidence,
+      showUnderConstruction: city.showUnderConstruction,
+      order: city.order
+    });
+  }
+
+  async function saveCity(event: FormEvent) {
+    event.preventDefault();
+    if (!editCity || !cityDraft || !isDm) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/${editCity.key}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cityDraft)
+      }), 'City settings could not be saved.');
+      setEditCity(null);
+      setCityDraft(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'City settings could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openProjectCreate(city: City) {
+    setSelectedCityKey(city.key);
+    setProjectDraft({ name: '', requirements: [{ itemCatalogId: '', quantity: 1 }] });
+    setEditProject(null);
+  }
+
+  function openProjectEdit(project: CityConstructionProject) {
+    setEditProject(project);
+    setProjectDraft({
+      name: project.name,
+      requirements: project.requirements.map((requirement) => ({
+        itemCatalogId: requirement.item.id,
+        quantity: requirement.requiredQuantity
+      }))
+    });
+  }
+
+  async function saveProject(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedCity || !projectDraft || !isDm) return;
+    const requirements = projectDraft.requirements.filter((requirement) => requirement.itemCatalogId && requirement.quantity > 0);
+    if (!projectDraft.name.trim() || requirements.length === 0) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = editProject
+        ? await fetch(`/api/cities/construction/${editProject.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: projectDraft.name, requirements })
+        })
+        : await fetch('/api/cities/construction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cityKey: selectedCity.key, name: projectDraft.name, requirements })
+        });
+      await replaceFromResponse(response, 'Construction project could not be saved.');
+      setProjectDraft(null);
+      setEditProject(null);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Construction project could not be saved.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function endProject(project: CityConstructionProject) {
+    if (!isDm) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/construction/${project.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ended' })
+      }), 'Construction project could not be ended.');
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Construction project could not be ended.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitContribution() {
+    if (!contributeProject || !selectedShopper) return;
+    const contributions = contributionSources
+      .map((entry) => {
+        const quantity = contributionSelections[contributionSourceKey(entry)] ?? 0;
+        const requirement = contributeProject.requirements.find((candidate) => candidate.item.key === catalogKeyForName(entry.item.name) && !candidate.complete);
+        return requirement && quantity > 0 ? { requirementId: requirement.id, itemId: entry.item.id, quantity } : null;
+      })
+      .filter((entry): entry is { requirementId: string; itemId: string; quantity: number } => Boolean(entry));
+    if (contributions.length === 0) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/construction/${contributeProject.id}/contribute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId: selectedShopper.id, contributions })
+      }), 'Construction contribution could not be completed.');
+      setContributeProject(null);
+      setContributionSelections({});
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Construction contribution could not be completed.');
     } finally {
       setSaving(false);
     }
@@ -1064,7 +1297,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     return <Card><div className="h-32 animate-pulse rounded-2xl bg-black/20" /></Card>;
   }
 
-  const pageTitle = selectedVendor ? selectedVendor.name : (selectedCity?.name ?? 'Cities');
+  const pageTitle = selectedVendor ? selectedVendor.name : cityDetailOpen ? (selectedCity?.name ?? 'City') : 'City Hub';
   const craftConfirm = craftConfirmation();
 
   return (
@@ -1074,20 +1307,24 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           <div>
             <p className="eyebrow">Discovered Cities</p>
             <h2 className="mt-1 text-2xl font-black">{pageTitle}</h2>
+            {!selectedVendor && !cityDetailOpen && currentResidenceCity && <p className="mt-1 text-sm font-bold text-[var(--muted)]">Current residence: {currentResidenceCity.name}</p>}
             {selectedVendor && <p className="mt-1 text-sm font-bold text-[var(--muted)]">{selectedVendor.facility} · {selectedVendor.npcName}</p>}
           </div>
           <div className="flex flex-wrap gap-2">
-            {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to Cities</Button>}
+            {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to City</Button>}
+            {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
             <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
+            {isDm && !selectedVendor && selectedCity && <Button variant="secondary" onClick={() => openCityEdit(selectedCity)} disabled={saving}><Settings className="mr-2 inline" size={15} /> City Settings</Button>}
             {isDm && !selectedVendor && selectedCity && <Button variant={cityLocked ? 'danger' : 'teal'} onClick={toggleCityLock} disabled={saving}>{cityLocked ? <Lock className="mr-2 inline" size={15} /> : <Unlock className="mr-2 inline" size={15} />}{cityLocked ? 'Locked' : 'Open'}</Button>}
           </div>
         </div>
         {error && <div className="mt-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
-        {!selectedVendor && (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {!selectedVendor && !cityDetailOpen && (
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {visibleCities.map((city) => {
               const active = city.key === selectedCity?.key;
               const vendorCount = payload.vendors.filter((vendor) => vendor.cityKey === city.key && activeCityVendor(vendor) && (isDm || !vendor.hidden)).length;
+              const projectCount = payload.constructionProjects.filter((project) => project.cityKey === city.key && project.status === 'active').length;
               return (
                 <button
                   key={city.key}
@@ -1095,13 +1332,21 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   onClick={() => {
                     setSelectedCityKey(city.key);
                     setSelectedVendorId('');
+                    setCityDetailOpen(true);
                   }}
-                  className={`rounded-2xl border p-3 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
+                  className={`rounded-2xl border p-4 text-left transition ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10 hover:border-[var(--brass)]/50'}`}
                 >
                   <span className="flex items-start justify-between gap-3">
                     <span className="min-w-0">
-                      <span className="block truncate font-black">{city.name}</span>
-                      <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{vendorCount} shop{vendorCount === 1 ? '' : 's'}</span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        {city.currentResidence && <span className="inline-grid h-7 w-7 place-items-center rounded-full border border-[var(--brass)]/70 bg-[var(--brass)]/15 text-[var(--brass)]"><Star size={14} fill="currentColor" /></span>}
+                        <span className="block break-words text-xl font-black">{city.name}</span>
+                      </span>
+                      {city.description && <span className="mt-2 line-clamp-3 block text-sm font-bold leading-6 text-[var(--muted)]">{city.description}</span>}
+                      <span className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
+                        <span>{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
+                        {city.showUnderConstruction && <span>{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                      </span>
                     </span>
                     <span className={`rounded-lg border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
                   </span>
@@ -1110,7 +1355,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             })}
           </div>
         )}
-        <div className="mt-4 grid gap-3 md:grid-cols-[18rem_1fr]">
+        {(cityDetailOpen || selectedVendor) && <div className="mt-4 grid gap-3 md:grid-cols-[18rem_1fr]">
           <label>
             <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shopping as</span>
             <SelectField value={shoppingAs} onChange={(event) => setShoppingAs(event.target.value)}>
@@ -1121,27 +1366,62 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-sm text-[var(--muted)]">
             {!selectedShopper ? 'Choose who is shopping.' : cityLocked ? `${selectedCity?.name ?? 'This city'} is locked by the DM.` : !shopperInCity ? `${selectedShopper.name} is in ${selectedShopper.locationName}, not ${selectedCity?.name ?? 'this city'}.` : `${selectedShopper.name} can shop here.`}
           </div>
-        </div>
+        </div>}
       </Card>
 
       {!selectedCity ? (
         <Card><p className="text-sm text-[var(--muted)]">No cities have been discovered yet.</p></Card>
-      ) : !selectedVendor ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {cityVendors.map((vendor) => (
-            <ShopCard
-              key={vendor.id}
-              vendor={vendor}
+      ) : !cityDetailOpen && !selectedVendor ? null : !selectedVendor ? (
+        <div className="space-y-4">
+          <Card className="overflow-hidden">
+            <div className="rounded-2xl border border-[var(--line)] bg-gradient-to-br from-[rgba(245,180,76,0.16)] via-black/10 to-[rgba(31,120,117,0.12)] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="eyebrow">City</p>
+                  <h3 className="mt-1 text-3xl font-black">{selectedCity.name}</h3>
+                  {selectedCity.description && <p className="mt-3 max-w-4xl text-sm font-bold leading-6 text-[var(--muted)]">{selectedCity.description}</p>}
+                </div>
+                {selectedCity.currentResidence && <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--brass)]/55 bg-[var(--brass)]/15 px-3 py-2 text-xs font-black uppercase tracking-wider text-[var(--brass)]"><Star size={14} fill="currentColor" /> Residence</span>}
+              </div>
+            </div>
+          </Card>
+
+          <section className="space-y-3">
+            <div className="rule-title"><h3 className="text-sm font-black uppercase tracking-wider">City Services</h3></div>
+            {cityVendors.length === 0 ? (
+              <Card><p className="text-sm font-bold text-[var(--muted)]">No services are available here yet.</p></Card>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {cityVendors.map((vendor) => (
+                  <ShopCard
+                    key={vendor.id}
+                    vendor={vendor}
+                    isDm={isDm}
+                    saving={saving}
+                    index={cityVendors.findIndex((entry) => entry.id === vendor.id)}
+                    total={cityVendors.length}
+                    onOpen={() => setSelectedVendorId(vendor.id)}
+                    onEdit={() => openVendorEdit(vendor)}
+                    onToggleVisibility={() => void patchVendor(vendor, { hidden: !vendor.hidden }, 'Shop visibility could not be changed.')}
+                    onMove={(direction) => void moveVendor(vendor, direction)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+
+          {selectedCity.showUnderConstruction && (
+            <ConstructionSection
+              projects={cityProjects}
               isDm={isDm}
               saving={saving}
-              index={cityVendors.findIndex((entry) => entry.id === vendor.id)}
-              total={cityVendors.length}
-              onOpen={() => setSelectedVendorId(vendor.id)}
-              onEdit={() => openVendorEdit(vendor)}
-              onToggleVisibility={() => void patchVendor(vendor, { hidden: !vendor.hidden }, 'Shop visibility could not be changed.')}
-              onMove={(direction) => void moveVendor(vendor, direction)}
+              canContribute={canContribute}
+              onCreate={() => openProjectCreate(selectedCity)}
+              onEdit={openProjectEdit}
+              onEnd={(project) => void endProject(project)}
+              onContribute={setContributeProject}
             />
-          ))}
+          )}
         </div>
       ) : isBlacksmithVendor(selectedVendor) ? (
         <BlacksmithPage
@@ -1396,6 +1676,106 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </Modal>
       )}
 
+      {editCity && cityDraft && (
+        <Modal title={`Edit ${editCity.name}`} onClose={() => setEditCity(null)}>
+          <form onSubmit={saveCity} className="grid gap-3">
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">City name</span>
+              <TextField value={cityDraft.name} onChange={(event) => setCityDraft({ ...cityDraft, name: event.target.value })} />
+            </label>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Banner description</span>
+              <TextAreaField rows={5} value={cityDraft.description} onChange={(event) => setCityDraft({ ...cityDraft, description: event.target.value })} />
+            </label>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Page position</span>
+              <NumberInput min={0} step={1} value={cityDraft.order} onValueChange={(order) => setCityDraft({ ...cityDraft, order })} />
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                <input type="checkbox" checked={!cityDraft.locked} onChange={(event) => setCityDraft({ ...cityDraft, locked: !event.target.checked })} />
+                Open to party
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                <input type="checkbox" checked={cityDraft.currentResidence} onChange={(event) => setCityDraft({ ...cityDraft, currentResidence: event.target.checked })} />
+                Current residence
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black sm:col-span-2">
+                <input type="checkbox" checked={cityDraft.showUnderConstruction} onChange={(event) => setCityDraft({ ...cityDraft, showUnderConstruction: event.target.checked })} />
+                Show Under Construction
+              </label>
+            </div>
+            <Button variant="primary" disabled={!cityDraft.name.trim() || saving}><PackageCheck className="mr-2 inline" size={15} /> Save city</Button>
+          </form>
+        </Modal>
+      )}
+
+      {projectDraft && selectedCity && (
+        <Modal title={editProject ? `Edit ${editProject.name}` : 'Create Construction Project'} onClose={() => { setProjectDraft(null); setEditProject(null); }}>
+          <form onSubmit={saveProject} className="grid gap-4">
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Project name</span>
+              <TextField value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} />
+            </label>
+            <div className="grid gap-2">
+              <p className="eyebrow">Required materials</p>
+              {projectDraft.requirements.map((requirement, index) => (
+                <div key={index} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/15 p-3 sm:grid-cols-[1fr_8rem_auto]">
+                  <SelectField value={requirement.itemCatalogId} onChange={(event) => {
+                    const requirements = [...projectDraft.requirements];
+                    requirements[index] = { ...requirement, itemCatalogId: event.target.value };
+                    setProjectDraft({ ...projectDraft, requirements });
+                  }}>
+                    <option value="">Choose catalog item</option>
+                    {itemCatalog
+                      .filter((item) => item.type !== 'pet' && item.type !== 'storage')
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((item) => <option key={item.id} value={item.id}>{item.name} · {item.type}</option>)}
+                  </SelectField>
+                  <NumberInput min={0.5} step={0.5} value={requirement.quantity} onValueChange={(quantity) => {
+                    const requirements = [...projectDraft.requirements];
+                    requirements[index] = { ...requirement, quantity };
+                    setProjectDraft({ ...projectDraft, requirements });
+                  }} />
+                  <Button type="button" variant="secondary" className="px-3" onClick={() => setProjectDraft({ ...projectDraft, requirements: projectDraft.requirements.filter((_, entryIndex) => entryIndex !== index) })} disabled={projectDraft.requirements.length <= 1} aria-label="Remove material"><X size={14} /></Button>
+                </div>
+              ))}
+              <Button type="button" variant="secondary" onClick={() => setProjectDraft({ ...projectDraft, requirements: [...projectDraft.requirements, { itemCatalogId: '', quantity: 1 }] })}><Plus className="mr-2 inline" size={15} /> Add material</Button>
+            </div>
+            <Button variant="primary" disabled={!projectDraft.name.trim() || projectDraft.requirements.every((requirement) => !requirement.itemCatalogId) || saving}><PackageCheck className="mr-2 inline" size={15} /> Save project</Button>
+          </form>
+        </Modal>
+      )}
+
+      {contributeProject && (
+        <Modal title={`Contribute to ${contributeProject.name}`} onClose={() => setContributeProject(null)}>
+          <div className="grid gap-4">
+            {!canContribute && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Choose a character in this open city before contributing.</div>}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {contributionSources.length === 0 ? (
+                <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--muted)] sm:col-span-2">No matching materials are available from this character, accessible Wagon Home storage, or nearby shared wagons.</div>
+              ) : contributionSources.map((entry) => {
+                const key = contributionSourceKey(entry);
+                const selected = contributionSelections[key] ?? 0;
+                return (
+                  <div key={key} className={`rounded-2xl border p-3 ${selected > 0 ? 'border-[var(--brass)] bg-[var(--brass)]/10' : 'border-[var(--line)] bg-black/15'}`}>
+                    <button type="button" className="flex w-full items-center gap-3 text-left" onClick={() => setContributionSelections((current) => ({ ...current, [key]: current[key] ? 0 : Math.min(entry.item.quantity, 1) }))}>
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--brass)]/45 bg-black/20 text-[var(--brass)]"><ItemIcon type={entry.item.type} size={21} /></span>
+                      <span className="min-w-0">
+                        <span className="block break-words font-black">{entry.item.displayName || entry.item.name}</span>
+                        <span className="block text-xs font-bold text-[var(--muted)]">{entry.sourceLabel} · {formatQuantity(entry.item.quantity)} available</span>
+                      </span>
+                    </button>
+                    {selected > 0 && <div className="mt-3"><NumberInput min={quantityStepForItem(entry.item)} step={quantityStepForItem(entry.item)} max={entry.item.quantity} value={selected} onValueChange={(quantity) => setContributionSelections((current) => ({ ...current, [key]: quantity }))} /></div>}
+                  </div>
+                );
+              })}
+            </div>
+            <Button variant="primary" disabled={!canContribute || saving || Object.values(contributionSelections).every((quantity) => quantity <= 0)} onClick={submitContribution}><PackageCheck className="mr-2 inline" size={15} /> Contribute</Button>
+          </div>
+        </Modal>
+      )}
+
       {editVendor && vendorDraft && (
         <Modal title={`Edit ${editVendor.name}`} onClose={() => setEditVendor(null)}>
           <form onSubmit={saveVendor} className="grid gap-3">
@@ -1447,6 +1827,76 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </form>
         </Modal>
       )}
+    </div>
+  );
+}
+
+function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, onEdit, onEnd, onContribute }: {
+  projects: CityConstructionProject[];
+  isDm: boolean;
+  saving: boolean;
+  canContribute: boolean;
+  onCreate: () => void;
+  onEdit: (project: CityConstructionProject) => void;
+  onEnd: (project: CityConstructionProject) => void;
+  onContribute: (project: CityConstructionProject) => void;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="rule-title flex-1"><h3 className="text-sm font-black uppercase tracking-wider">Under Construction</h3></div>
+        {isDm && <Button variant="secondary" className="px-3 py-2 text-xs" onClick={onCreate} disabled={saving}><Plus className="mr-2 inline" size={13} /> New project</Button>}
+      </div>
+      {projects.length === 0 ? (
+        <Card><p className="text-sm font-bold text-[var(--muted)]">No active projects yet.</p></Card>
+      ) : (
+        <div className="grid gap-4">
+          {projects.map((project) => (
+            <Card key={project.id} className="overflow-hidden">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="eyebrow">Construction Project</p>
+                  <h4 className="mt-1 text-2xl font-black">{project.name}</h4>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {!project.complete && <Button variant="teal" className="px-3 py-2 text-xs" disabled={!canContribute || saving} onClick={() => onContribute(project)}>Contribute</Button>}
+                  {isDm && !project.complete && <Button variant="secondary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => onEdit(project)}><Pencil className="mr-2 inline" size={13} /> Edit</Button>}
+                  {isDm && <Button variant={project.complete ? 'primary' : 'secondary'} className="px-3 py-2 text-xs" disabled={saving} onClick={() => onEnd(project)}>{project.complete ? <CheckCircle2 className="mr-2 inline" size={13} /> : null} End</Button>}
+                </div>
+              </div>
+              <div className="mt-4 h-3 overflow-hidden rounded-full border border-[var(--line)] bg-black/30">
+                <div className="h-full rounded-full bg-gradient-to-r from-[var(--teal)] to-[var(--brass)]" style={{ width: `${Math.round(project.progress * 100)}%` }} />
+              </div>
+              {project.complete ? (
+                <div className="mt-5 rounded-2xl border border-[var(--teal)]/50 bg-[var(--teal)]/10 p-5 text-center text-2xl font-black text-[var(--teal)]">COMPLETED</div>
+              ) : (
+                <div className="mt-4 grid gap-2">
+                  {project.requirements.map((requirement) => (
+                    <ConstructionRequirementRow key={requirement.id} requirement={requirement} />
+                  ))}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ConstructionRequirementRow({ requirement }: { requirement: CityConstructionRequirement }) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-black/20 ${rarityClass(requirement.item.rarity)}`}><ItemIcon type={requirement.item.type} size={20} /></span>
+        <div className="min-w-0">
+          <p className="break-words font-black">{requirement.item.name}</p>
+          <p className="text-xs font-bold text-[var(--muted)]">{requirement.item.type}</p>
+        </div>
+      </div>
+      <div className={`text-right text-sm font-black ${requirement.complete ? 'text-[var(--teal)]' : 'text-[var(--paper)]'}`}>
+        {requirement.complete ? 'COMPLETE' : `${formatQuantity(requirement.contributedQuantity)} / ${formatQuantity(requirement.requiredQuantity)}`}
+      </div>
     </div>
   );
 }
