@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/Card';
 import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { normalizeLedgerPayload, type CampaignProfile } from '@/features/characters/data';
 import { armorDefenseBase } from '@/features/characters/stats';
+import { normalizeCitiesPayload } from '@/features/cities/data';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { CLASS_TEMPLATES } from '@/lib/constants/classes';
 import type { Character, ClassTemplate, Profile } from '@/lib/types';
@@ -38,6 +39,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   const [profiles, setProfiles] = useState<CampaignProfile[]>([]);
   const [classes, setClasses] = useState<ClassTemplate[]>(CLASS_TEMPLATES);
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [locationOptions, setLocationOptions] = useState<string[]>(['Calostrynn']);
   const [selectedId, setSelectedId] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<CreationDraft>(EMPTY_DRAFT);
@@ -81,11 +83,31 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
     }
   }, []);
 
-  useLiveRefresh(['characters', 'inventory', 'spells', 'trades'], () => loadLedger(false));
+  const loadCityLocations = useCallback(async () => {
+    try {
+      const response = await fetch('/api/cities', { cache: 'no-store' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Cities could not be loaded.');
+      const cityNames = normalizeCitiesPayload(payload)
+        .cities
+        .slice()
+        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+        .map((city) => city.name);
+      if (cityNames.length) setLocationOptions(cityNames);
+    } catch {
+      setLocationOptions((current) => current.length ? current : ['Calostrynn']);
+    }
+  }, []);
+
+  useLiveRefresh(['characters', 'inventory', 'spells', 'trades', 'cities'], () => {
+    void loadLedger(false);
+    void loadCityLocations();
+  });
 
   useEffect(() => {
     void loadLedger();
-  }, [loadLedger]);
+    void loadCityLocations();
+  }, [loadLedger, loadCityLocations]);
 
   const profileById = useMemo(() => new Map(profiles.map((entry) => [entry.id, entry])), [profiles]);
   const selectedClass = useMemo(() => classes.find((entry) => entry.key === draft.classKey) ?? classes[0], [classes, draft.classKey]);
@@ -197,6 +219,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
             profiles={profiles}
             classes={classes}
             characters={characters}
+            locationOptions={locationOptions}
             onSaved={updateCharacter}
             onDeleted={removeCharacter}
           />

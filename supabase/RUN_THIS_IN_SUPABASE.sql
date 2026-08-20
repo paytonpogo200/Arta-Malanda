@@ -1575,7 +1575,7 @@ begin
     attributes = case when v_patch ? 'attributes' and jsonb_typeof(v_patch->'attributes') = 'object' then v_patch->'attributes' else attributes end,
     personal_passives = case when v_patch ? 'personalPassives' then coalesce(v_patch->>'personalPassives', '') else personal_passives end,
     token_color = case when v_patch ? 'tokenColor' then coalesce(nullif(trim(v_patch->>'tokenColor'), ''), token_color) else token_color end,
-    location_name = case when v_patch ? 'locationName' then coalesce(nullif(trim(v_patch->>'locationName'), ''), location_name) else location_name end
+    location_name = case when v_patch ? 'locationName' then public.assert_valid_character_location(v_patch->>'locationName') else location_name end
   where id = p_character_id
   returning * into v_character;
 
@@ -7233,6 +7233,35 @@ as $$
     and lower(trim(coalesce(p_left, ''))) = lower(trim(coalesce(p_right, '')))
 $$;
 
+create or replace function public.assert_valid_character_location(p_location_name text)
+returns text
+language plpgsql
+stable
+set search_path = public, extensions
+as $$
+declare
+  v_location text := coalesce(nullif(trim(p_location_name), ''), 'Wild');
+  v_city public.cities%rowtype;
+begin
+  if public.city_names_match(v_location, 'Wild') then
+    return 'Wild';
+  end if;
+
+  select *
+  into v_city
+  from public.cities
+  where public.city_names_match(name, v_location)
+  order by display_order, name
+  limit 1;
+
+  if v_city.id is null then
+    raise exception 'Character location must be a discovered city or Wild.';
+  end if;
+
+  return v_city.name;
+end;
+$$;
+
 create or replace function public.market_product_record_to_json(p_product public.market_products)
 returns jsonb
 language sql
@@ -10642,6 +10671,7 @@ end;
 $$;
 
 grant execute on function public.city_record_to_json(public.cities) to anon, authenticated;
+grant execute on function public.assert_valid_character_location(text) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products) to anon, authenticated;
 grant execute on function public.currency_coin_value(text) to anon, authenticated;
 grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
@@ -15490,6 +15520,15 @@ set name = excluded.name,
 
 update public.cities
 set is_current_residence = city_key = 'the-ruined-city';
+
+update public.characters c
+set location_name = 'Wild'
+where not public.city_names_match(c.location_name, 'Wild')
+  and not exists (
+    select 1
+    from public.cities city
+    where public.city_names_match(city.name, c.location_name)
+  );
 
 drop index if exists cities_one_current_residence_idx;
 create unique index cities_one_current_residence_idx

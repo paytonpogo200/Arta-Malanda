@@ -1403,29 +1403,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : !cityDetailOpen && !selectedVendor ? null : !selectedVendor ? (
         <div className="space-y-4">
           <Card className="overflow-hidden">
-            <div className="rounded-2xl border border-[var(--brass)]/35 bg-gradient-to-br from-[rgba(245,180,76,0.2)] via-black/15 to-[rgba(31,120,117,0.16)] p-5 shadow-[0_0_34px_rgba(245,180,76,0.08)] sm:p-6">
-              <div className="grid gap-5 lg:grid-cols-[1fr_23rem]">
-                <div className="min-w-0">
-                  <p className="eyebrow">City</p>
-                  <h3 className="mt-1 break-words text-4xl font-black leading-tight sm:text-5xl">{selectedCity.name}</h3>
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    <span className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wider ${selectedCity.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{selectedCity.locked ? 'Locked' : 'Open'}</span>
-                    {selectedCity.currentResidence && <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--brass)]/55 bg-[var(--brass)]/15 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]"><Star size={13} fill="currentColor" /> Residence</span>}
-                    {selectedCity.showUnderConstruction && <span className="rounded-xl border border-[var(--line)] bg-black/15 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Construction Open</span>}
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-[var(--line)] bg-black/20 p-4">
-                  <p className="eyebrow">City Notes</p>
-                  <div className="mt-2 max-h-32 overflow-y-auto pr-2 text-sm font-bold leading-6 text-[var(--muted)]">
-                    {selectedCity.description || 'No city description has been written yet.'}
-                  </div>
+            <div className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/40 bg-[radial-gradient(circle_at_top,rgba(245,180,76,0.22),transparent_38%),linear-gradient(135deg,rgba(35,20,12,0.84),rgba(12,20,22,0.78))] px-4 py-8 text-center shadow-[0_0_42px_rgba(245,180,76,0.1)] sm:px-8 sm:py-10">
+              <div className="pointer-events-none absolute inset-x-8 top-5 h-px bg-gradient-to-r from-transparent via-[var(--brass)]/75 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-16 bottom-5 h-px bg-gradient-to-r from-transparent via-[var(--teal)]/45 to-transparent" />
+              <div className="mx-auto max-w-4xl">
+                <p className="eyebrow justify-center">Discovered City</p>
+                <h3 className="mt-3 break-words text-4xl font-black leading-tight sm:text-6xl">{selectedCity.name}</h3>
+                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  <span className={`rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-wider ${selectedCity.locked ? 'border-[var(--red)]/45 bg-[var(--red)]/10 text-[var(--red)]' : 'border-[var(--teal)]/45 bg-[var(--teal)]/10 text-[var(--teal)]'}`}>{selectedCity.locked ? 'Locked' : 'Open'}</span>
+                  {selectedCity.currentResidence && <span className="inline-flex items-center gap-2 rounded-xl border border-[var(--brass)]/55 bg-[var(--brass)]/15 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]"><Star size={13} fill="currentColor" /> Residence</span>}
+                  {selectedCity.showUnderConstruction && <span className="rounded-xl border border-[var(--line)] bg-black/20 px-3 py-2 text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Construction Open</span>}
                 </div>
               </div>
             </div>
           </Card>
 
           <section className="space-y-3">
-            <div className="rule-title"><h3 className="text-sm font-black uppercase tracking-wider">City Services</h3></div>
+            <CitySectionHeading label="City Services" />
             {cityVendors.length === 0 ? (
               <Card><p className="text-sm font-bold text-[var(--muted)]">No services are available here yet.</p></Card>
             ) : (
@@ -1925,6 +1919,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   );
 }
 
+function CitySectionHeading({ label }: { label: string }) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/30 bg-gradient-to-r from-[rgba(245,180,76,0.16)] via-black/20 to-[rgba(31,120,117,0.12)] px-4 py-3 shadow-[0_12px_28px_rgba(0,0,0,0.18)]">
+      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-[var(--brass)]/70 to-transparent" />
+      <h3 className="text-center text-sm font-black uppercase tracking-[0.24em] text-[var(--brass)]">{label}</h3>
+    </div>
+  );
+}
+
 function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, onEdit, onEnd, onContribute }: {
   projects: CityConstructionProject[];
   isDm: boolean;
@@ -1938,7 +1941,7 @@ function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, 
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="rule-title flex-1"><h3 className="text-sm font-black uppercase tracking-wider">Under Construction</h3></div>
+        <div className="min-w-[14rem] flex-1"><CitySectionHeading label="Under Construction" /></div>
         {isDm && <Button variant="secondary" className="px-3 py-2 text-xs" onClick={onCreate} disabled={saving}><Plus className="mr-2 inline" size={13} /> New project</Button>}
       </div>
       {projects.length === 0 ? (

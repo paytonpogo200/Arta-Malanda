@@ -23,11 +23,22 @@ type CharacterSheetProps = {
   profiles: CampaignProfile[];
   classes: ClassTemplate[];
   characters: Character[];
+  locationOptions: string[];
   onSaved: (character: Character) => void;
   onDeleted?: (characterId: string) => void;
 };
 
-const LOCATION_PRESETS = ['Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
+function characterLocationOptions(cityNames: string[]) {
+  const seen = new Set<string>();
+  return [...cityNames, 'Wild']
+    .map((name) => name.trim())
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
 
 function labelClasses(value: number) {
   if (value > 0) return 'text-[var(--teal)]';
@@ -48,7 +59,7 @@ function isJurshBlacksmith(character: Character, profiles: CampaignProfile[]) {
     && ownerName.includes('eoshigande');
 }
 
-export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, onSaved, onDeleted }: CharacterSheetProps) {
+export const CharacterSheet = memo(function CharacterSheet({ character, profile, profiles, classes, characters, locationOptions, onSaved, onDeleted }: CharacterSheetProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(character);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
@@ -61,6 +72,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
   const owned = character.ownerUserId === profile.id;
   const classTemplate = useMemo(() => classes.find((entry) => entry.key === character.classKey), [character.classKey, classes]);
   const showJurshConversions = isJurshBlacksmith(character, profiles) && (isDm || owned);
+  const availableLocations = useMemo(() => characterLocationOptions(locationOptions), [locationOptions]);
+  const draftLocation = availableLocations.includes(draft.locationName) ? draft.locationName : 'Wild';
 
   useEffect(() => {
     if (characterIdRef.current !== character.id) {
@@ -109,7 +122,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           attributes: draft.attributes,
           personalPassives: draft.personalPassives,
           tokenColor: draft.tokenColor,
-          locationName: draft.locationName,
+          locationName: draftLocation,
           ownerUserId: draft.ownerUserId,
           classKey: draft.classKey,
           className: draft.className,
@@ -241,15 +254,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
               </label>
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span>
-                <SelectField value={LOCATION_PRESETS.includes(draft.locationName) ? draft.locationName : 'custom'} onChange={(event) => setDraft({ ...draft, locationName: event.target.value === 'custom' ? draft.locationName : event.target.value })}>
-                  {LOCATION_PRESETS.map((location) => <option key={location} value={location}>{location}</option>)}
-                  <option value="custom">Custom</option>
+                <SelectField value={draftLocation} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })}>
+                  {availableLocations.map((location) => <option key={location} value={location}>{location}</option>)}
                 </SelectField>
               </label>
             </div>
-            {!LOCATION_PRESETS.includes(draft.locationName) && (
-              <TextField value={draft.locationName} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })} placeholder="Custom location" />
-            )}
             <div className="grid gap-2 sm:grid-cols-5">
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Current HP</span><NumberInput value={draft.currentHp} min={0} onValueChange={(currentHp) => setDraft({ ...draft, currentHp })} /></label>
               <label><span className="mb-1 block text-[10px] font-black uppercase text-[var(--red)]">Max HP</span><NumberInput value={draft.maxHp} min={0} onValueChange={(maxHp) => setDraft({ ...draft, maxHp })} /></label>

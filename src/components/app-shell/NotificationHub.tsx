@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Bell, Check, Loader2, Megaphone, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { normalizeCitiesPayload } from '@/features/cities/data';
 import type { DashboardNotice } from '@/features/dashboard/state';
 import type { Profile, TradeStatus } from '@/lib/types';
 
@@ -27,8 +28,6 @@ function cleanNotificationText(value: string) {
     .replace(/\b(\d+)\.0{2,}\b/g, '$1');
 }
 
-const LOCATION_PRESETS = ['All locations', 'Calostrynn', 'Wild Party 1', 'Wild Party 2', 'Wild Party 3'];
-
 export function NotificationHub({ profile, notices, onRefresh }: NotificationHubProps) {
   const [open, setOpen] = useState(false);
   const [announcing, setAnnouncing] = useState(false);
@@ -40,12 +39,39 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
     locationName: 'All locations',
     inWorld: false
   });
+  const [locationOptions, setLocationOptions] = useState<string[]>(['All locations', 'Calostrynn', 'Wild']);
   const unreadCount = notices.length;
   const isDm = profile.role === 'dm';
 
   const orderedNotices = useMemo(() => {
     return [...notices].sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
   }, [notices]);
+
+  useEffect(() => {
+    if (!isDm) return;
+    let active = true;
+
+    async function loadCityLocations() {
+      try {
+        const response = await fetch('/api/cities', { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error ?? 'Cities could not be loaded.');
+        const cities = normalizeCitiesPayload(payload)
+          .cities
+          .slice()
+          .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+          .map((city) => city.name);
+        if (active && cities.length) setLocationOptions(['All locations', ...cities, 'Wild']);
+      } catch {
+        if (active) setLocationOptions((current) => current.length ? current : ['All locations', 'Calostrynn', 'Wild']);
+      }
+    }
+
+    void loadCityLocations();
+    return () => {
+      active = false;
+    };
+  }, [isDm]);
 
   async function markRead(noticeId: string) {
     setBusyId(noticeId);
@@ -162,7 +188,7 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
                 <TextAreaField rows={4} placeholder="Announcement text" value={announcement.body} onChange={(event) => setAnnouncement({ ...announcement, body: event.target.value })} />
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <SelectField value={announcement.locationName} onChange={(event) => setAnnouncement({ ...announcement, locationName: event.target.value })}>
-                    {LOCATION_PRESETS.map((location) => <option key={location} value={location}>{location}</option>)}
+                    {locationOptions.map((location) => <option key={location} value={location}>{location}</option>)}
                   </SelectField>
                   <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 px-3 py-2 text-xs font-black uppercase tracking-wide text-[var(--muted)]">
                     <input type="checkbox" checked={announcement.inWorld} onChange={(event) => setAnnouncement({ ...announcement, inWorld: event.target.checked })} />
