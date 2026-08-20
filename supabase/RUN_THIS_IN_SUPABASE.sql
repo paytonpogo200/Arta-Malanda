@@ -15810,7 +15810,7 @@ begin
 
   for v_entry in select * from jsonb_array_elements(coalesce(p_requirements, '[]'::jsonb))
   loop
-    select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and active;
+    select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and is_active;
     if v_catalog.id is null then raise exception 'Required item was not found in the item catalog.'; end if;
     v_quantity := public.assert_valid_item_quantity(v_catalog.item_name, v_catalog.item_type, coalesce((v_entry->>'quantity')::numeric, 0));
     v_order := v_order + 10;
@@ -15863,7 +15863,7 @@ begin
 
     for v_entry in select * from jsonb_array_elements(v_patch->'requirements')
     loop
-      select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and active;
+      select * into v_catalog from public.item_catalog where id = (v_entry->>'itemCatalogId')::uuid and is_active;
       if v_catalog.id is null then raise exception 'Required item was not found in the item catalog.'; end if;
       v_quantity := public.assert_valid_item_quantity(v_catalog.item_name, v_catalog.item_type, coalesce((v_entry->>'quantity')::numeric, 0));
       v_order := v_order + 10;
