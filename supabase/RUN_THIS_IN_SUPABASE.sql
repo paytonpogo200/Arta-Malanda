@@ -3702,6 +3702,8 @@ create unique index if not exists house_inventory_parent_slot_unique
 create index if not exists house_inventory_parent_idx on public.house_inventory_items(parent_item_id);
 
 alter table public.player_houses
+  add column if not exists house_name text not null default 'House',
+  add column if not exists stable_name text not null default 'Stable',
   add column if not exists is_locked boolean not null default false,
   add column if not exists stable_slots int not null default 5 check (stable_slots between 0 and 200);
 
@@ -3977,6 +3979,8 @@ as $$
   select jsonb_build_object(
     'id', p_house.id,
     'ownerUserId', p_house.owner_user_id,
+    'name', p_house.house_name,
+    'stableName', p_house.stable_name,
     'cityName', p_house.city_name,
     'inventorySlots', p_house.inventory_slots,
     'stableSlots', p_house.stable_slots,
@@ -8557,17 +8561,121 @@ declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_house public.player_houses%rowtype;
+  v_home record;
+  v_caged record;
+  v_has_house boolean := false;
+  v_has_home boolean := false;
+  v_has_caged boolean := false;
+  v_name text;
+  v_stable_name text;
+  v_city_name text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can change house access.'; end if;
 
-  v_house := public.ensure_player_house(p_owner_user_id);
+  if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the home owner or Dungeon Master can change these settings.';
+  end if;
 
-  update public.player_houses
-  set is_locked = case when v_patch ? 'locked' then (v_patch->>'locked')::boolean else is_locked end
-  where owner_user_id = p_owner_user_id
-  returning * into v_house;
+  select * into v_house
+  from public.player_houses
+  where owner_user_id = p_owner_user_id;
+  v_has_house := found;
+
+  select * into v_home
+  from public.home_wagon_storage_for_owner(p_owner_user_id);
+  v_has_home := found;
+
+  select * into v_caged
+  from public.caged_wagon_storage_for_owner(p_owner_user_id);
+  v_has_caged := found;
+
+  if not v_has_house and not v_has_home and not v_has_caged then
+    v_house := public.ensure_player_house(p_owner_user_id);
+    v_has_house := true;
+  end if;
+
+  v_name := nullif(trim(coalesce(v_patch->>'name', '')), '');
+  v_stable_name := nullif(trim(coalesce(v_patch->>'stableName', '')), '');
+  if v_profile.role = 'dm'::public.user_role and v_patch ? 'cityName' then
+    v_city_name := public.assert_valid_character_location(v_patch->>'cityName');
+  end if;
+
+  if v_has_home and v_name is not null then
+    update public.inventory_items
+    set display_name = v_name,
+        storage_capacity = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'inventorySlots'
+            then greatest(0, least(500, (v_patch->>'inventorySlots')::int))
+          else storage_capacity
+        end
+    where id = (v_home.storage).id;
+  elsif v_has_home and v_profile.role = 'dm'::public.user_role and v_patch ? 'inventorySlots' then
+    update public.inventory_items
+    set storage_capacity = greatest(0, least(500, (v_patch->>'inventorySlots')::int))
+    where id = (v_home.storage).id;
+  end if;
+
+  if v_has_caged and v_stable_name is not null then
+    update public.inventory_items
+    set display_name = v_stable_name,
+        storage_capacity = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'stableSlots'
+            then greatest(0, least(200, (v_patch->>'stableSlots')::int))
+          else storage_capacity
+        end
+    where id = (v_caged.storage).id;
+  elsif v_has_caged and v_profile.role = 'dm'::public.user_role and v_patch ? 'stableSlots' then
+    update public.inventory_items
+    set storage_capacity = greatest(0, least(200, (v_patch->>'stableSlots')::int))
+    where id = (v_caged.storage).id;
+  end if;
+
+  if v_city_name is not null and v_has_home then
+    update public.characters
+    set location_name = v_city_name
+    where id = (v_home.owner_character).id;
+  end if;
+
+  if v_city_name is not null and v_has_caged then
+    update public.characters
+    set location_name = v_city_name
+    where id = (v_caged.owner_character).id;
+  end if;
+
+  if v_has_house then
+    update public.player_houses
+    set house_name = case when v_name is not null then v_name else house_name end,
+        stable_name = case when v_stable_name is not null then v_stable_name else stable_name end,
+        city_name = case
+          when v_city_name is not null
+            then v_city_name
+          else city_name
+        end,
+        inventory_slots = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'inventorySlots'
+            then greatest(0, least(500, (v_patch->>'inventorySlots')::int))
+          else inventory_slots
+        end,
+        stable_slots = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'stableSlots'
+            then greatest(0, least(200, (v_patch->>'stableSlots')::int))
+          else stable_slots
+        end,
+        property_slots = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'propertySlots'
+            then greatest(0, least(200, (v_patch->>'propertySlots')::int))
+          else property_slots
+        end,
+        is_locked = case
+          when v_profile.role = 'dm'::public.user_role and v_patch ? 'locked'
+            then (v_patch->>'locked')::boolean
+          else is_locked
+        end
+    where owner_user_id = p_owner_user_id
+    returning * into v_house;
+  end if;
+
 
   return public.get_player_house(p_session_token, p_owner_user_id);
 end;
@@ -14892,6 +15000,27 @@ begin
 end;
 $$;
 
+create or replace function public.caged_wagon_storage_for_owner(p_owner_user_id uuid)
+returns table(storage public.inventory_items, owner_character public.characters)
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  return query
+  select w, c
+  from public.inventory_items w
+  join public.characters c on c.id = w.character_id
+  where c.owner_user_id = p_owner_user_id
+    and w.parent_item_id is null
+    and w.loadout_slot is null
+    and w.is_storage = true
+    and public.inventory_item_is_caged_wagon_storage(w.item_name, w.item_type)
+  order by c.name, w.slot_index, w.created_at
+  limit 1;
+end;
+$$;
+
 create or replace function public.mobile_home_house_access_to_json(
   p_profile public.profiles,
   p_owner_user_id uuid,
@@ -14946,14 +15075,29 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_home record;
+  v_caged record;
+  v_house public.player_houses%rowtype;
+  v_has_house boolean := false;
+  v_has_home boolean := false;
+  v_has_caged boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
+  select * into v_house
+  from public.player_houses
+  where owner_user_id = p_owner_user_id;
+  v_has_house := found;
+
   select * into v_home
   from public.home_wagon_storage_for_owner(p_owner_user_id);
+  v_has_home := found;
 
-  if not found then
+  select * into v_caged
+  from public.caged_wagon_storage_for_owner(p_owner_user_id);
+  v_has_caged := found;
+
+  if not v_has_house and not v_has_home and not v_has_caged then
     return jsonb_build_object(
       'house', null,
       'access', jsonb_build_object(
@@ -14968,52 +15112,141 @@ begin
     );
   end if;
 
-  if v_profile.role <> 'dm'::public.user_role
+  if not v_has_house
+    and v_profile.role <> 'dm'::public.user_role
     and p_owner_user_id is distinct from v_profile.id
-    and not exists (
+    and not (
+      (v_has_home and exists (
       select 1
       from public.mobile_storage_access_permissions a
       where a.storage_item_id = (v_home.storage).id
         and a.owner_user_id = p_owner_user_id
         and a.grantee_user_id = v_profile.id
+      ))
+      or (v_has_caged and exists (
+        select 1
+        from public.mobile_storage_access_permissions a
+        where a.storage_item_id = (v_caged.storage).id
+          and a.owner_user_id = p_owner_user_id
+          and a.grantee_user_id = v_profile.id
+      ))
     )
   then
-    raise exception 'You do not have access to this wagon home.';
+    raise exception 'You do not have access to this home or stable.';
   end if;
 
   return jsonb_build_object(
     'house', jsonb_build_object(
-      'id', (v_home.storage).id,
+      'id', coalesce(case when v_has_home then (v_home.storage).id else null end, case when v_has_caged then (v_caged.storage).id else null end, v_house.id),
       'ownerUserId', p_owner_user_id,
-      'cityName', coalesce(nullif((v_home.owner_character).location_name, ''), 'Traveling'),
-      'inventorySlots', greatest(0, (v_home.storage).storage_capacity),
-      'stableSlots', 0,
-      'propertySlots', 0,
-      'locked', false,
-      'kind', 'wagon-home',
-      'storageItemId', (v_home.storage).id,
-      'storageCharacterId', (v_home.storage).character_id
+      'name', coalesce(nullif(case when v_has_home then (v_home.storage).display_name else null end, ''), nullif(v_house.house_name, ''), 'Wagon Home'),
+      'stableName', coalesce(nullif(case when v_has_caged then (v_caged.storage).display_name else null end, ''), nullif(v_house.stable_name, ''), 'Stable'),
+      'cityName', coalesce(
+        nullif(case when v_has_home then (v_home.owner_character).location_name else null end, ''),
+        nullif(case when v_has_caged then (v_caged.owner_character).location_name else null end, ''),
+        nullif(v_house.city_name, ''),
+        'Wild'
+      ),
+      'inventorySlots', case when v_has_home then greatest(0, (v_home.storage).storage_capacity) when v_has_house then v_house.inventory_slots else 0 end,
+      'stableSlots', case when v_has_caged then greatest(0, (v_caged.storage).storage_capacity) when v_has_house then v_house.stable_slots else 0 end,
+      'propertySlots', case when v_has_house then v_house.property_slots else 0 end,
+      'locked', case when v_has_house then v_house.is_locked else false end,
+      'kind', case when v_has_home then 'wagon-home' when v_has_caged then 'caged-wagon' else 'house' end,
+      'storageItemId', case when v_has_home then (v_home.storage).id else null end,
+      'storageCharacterId', case when v_has_home then (v_home.storage).character_id else null end,
+      'stableStorageItemId', case when v_has_caged then (v_caged.storage).id else null end,
+      'stableStorageCharacterId', case when v_has_caged then (v_caged.storage).character_id else null end
     ),
-    'access', public.mobile_home_house_access_to_json(v_profile, p_owner_user_id, (v_home.storage).id),
+    'access', jsonb_build_object(
+      'owner', p_owner_user_id is not distinct from v_profile.id,
+      'dm', v_profile.role = 'dm'::public.user_role,
+      'house', v_profile.role = 'dm'::public.user_role
+        or p_owner_user_id is not distinct from v_profile.id
+        or (v_has_house and exists (
+          select 1 from public.house_access_permissions a
+          where a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id and a.can_access_house
+        ))
+        or (v_has_home and exists (
+          select 1 from public.mobile_storage_access_permissions a
+          where a.storage_item_id = (v_home.storage).id and a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id
+        )),
+      'stable', v_profile.role = 'dm'::public.user_role
+        or p_owner_user_id is not distinct from v_profile.id
+        or (v_has_house and exists (
+          select 1 from public.house_access_permissions a
+          where a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id and a.can_access_stable
+        ))
+        or (v_has_caged and exists (
+          select 1 from public.mobile_storage_access_permissions a
+          where a.storage_item_id = (v_caged.storage).id and a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id
+        ))
+    ),
     'permissions', case
       when v_profile.role = 'dm'::public.user_role or p_owner_user_id is not distinct from v_profile.id
-        then public.mobile_home_house_permissions_to_json((v_home.storage).id)
+        then (
+          with raw_permissions as (
+            select a.grantee_user_id, a.can_access_house as house, a.can_access_stable as stable
+            from public.house_access_permissions a
+            where v_has_house and a.owner_user_id = p_owner_user_id
+            union all
+            select a.grantee_user_id, true, false
+            from public.mobile_storage_access_permissions a
+            where v_has_home and a.storage_item_id = (v_home.storage).id
+            union all
+            select a.grantee_user_id, false, true
+            from public.mobile_storage_access_permissions a
+            where v_has_caged and a.storage_item_id = (v_caged.storage).id
+          ),
+          grouped_permissions as (
+            select grantee_user_id, bool_or(house) as house, bool_or(stable) as stable
+            from raw_permissions
+            group by grantee_user_id
+          )
+          select coalesce(jsonb_agg(jsonb_build_object(
+            'ownerUserId', p_owner_user_id,
+            'granteeUserId', p.id,
+            'granteeName', coalesce(nullif(p.display_name, ''), p.username::text, 'Player'),
+            'house', g.house,
+            'stable', g.stable
+          ) order by coalesce(nullif(p.display_name, ''), p.username::text, 'Player')), '[]'::jsonb)
+          from grouped_permissions g
+          join public.profiles p on p.id = g.grantee_user_id
+        )
       else '[]'::jsonb
     end,
     'items', (
-      with recursive contained as (
+      with recursive mobile_contained as (
         select i.*
         from public.inventory_items i
-        where i.parent_item_id = (v_home.storage).id
+        where (v_has_home and i.parent_item_id = (v_home.storage).id)
+           or (v_has_caged and i.parent_item_id = (v_caged.storage).id)
         union all
         select child.*
         from public.inventory_items child
-        join contained parent on parent.id = child.parent_item_id
+        join mobile_contained parent on parent.id = child.parent_item_id
+      ),
+      merged_items as (
+        select public.house_item_record_to_json(h) as item_json,
+          coalesce(h.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) as parent_id,
+          h.slot_index,
+          h.item_name
+        from public.house_inventory_items h
+        where v_has_house and h.owner_user_id = p_owner_user_id
+        union all
+        select public.inventory_item_record_to_json(i),
+          coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid),
+          i.slot_index,
+          i.item_name
+        from mobile_contained i
       )
-      select coalesce(jsonb_agg(public.inventory_item_record_to_json(i) order by coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid), i.slot_index, i.item_name), '[]'::jsonb)
-      from contained i
+      select coalesce(jsonb_agg(item_json order by parent_id, slot_index, item_name), '[]'::jsonb)
+      from merged_items
     ),
-    'properties', '[]'::jsonb
+    'properties', (
+      select coalesce(jsonb_agg(public.property_record_to_json(p) order by p.property_location, p.slot_index, p.property_name), '[]'::jsonb)
+      from public.campaign_properties p
+      where v_has_house and p.owner_user_id = p_owner_user_id
+    )
   );
 end;
 $$;
@@ -15030,52 +15263,85 @@ set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
+  v_house public.player_houses%rowtype;
   v_home record;
+  v_caged record;
+  v_has_house boolean := false;
+  v_has_home boolean := false;
+  v_has_caged boolean := false;
   v_entry jsonb;
   v_grantee_user_id uuid;
-  v_access boolean;
+  v_house_access boolean;
+  v_stable_access boolean;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
+  select * into v_house
+  from public.player_houses
+  where owner_user_id = p_owner_user_id;
+  v_has_house := found;
+
   select * into v_home
   from public.home_wagon_storage_for_owner(p_owner_user_id);
+  v_has_home := found;
 
-  if found then
-    if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
-      raise exception 'Only the wagon home owner or Dungeon Master can change wagon home permissions.';
-    end if;
-
-    delete from public.mobile_storage_access_permissions
-    where storage_item_id = (v_home.storage).id;
-
-    for v_entry in select * from jsonb_array_elements(coalesce(p_permissions, '[]'::jsonb)) loop
-      v_grantee_user_id := nullif(coalesce(v_entry->>'granteeUserId', v_entry->>'grantee_user_id', ''), '')::uuid;
-      v_access := coalesce((v_entry->>'access')::boolean, coalesce((v_entry->>'house')::boolean, false), coalesce((v_entry->>'stable')::boolean, false));
-
-      if v_grantee_user_id is null or v_grantee_user_id = p_owner_user_id or not v_access then
-        continue;
-      end if;
-
-      if not exists (select 1 from public.profiles where id = v_grantee_user_id) then
-        raise exception 'A selected player account does not exist.';
-      end if;
-
-      insert into public.mobile_storage_access_permissions (storage_item_id, owner_user_id, grantee_user_id)
-      values ((v_home.storage).id, p_owner_user_id, v_grantee_user_id)
-      on conflict (storage_item_id, grantee_user_id) do update
-      set owner_user_id = excluded.owner_user_id;
-    end loop;
-
-    return public.get_player_house(p_session_token, p_owner_user_id);
-  end if;
+  select * into v_caged
+  from public.caged_wagon_storage_for_owner(p_owner_user_id);
+  v_has_caged := found;
 
   if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
-    raise exception 'Only the house owner or Dungeon Master can change house permissions.';
+    raise exception 'Only the home owner or Dungeon Master can change these permissions.';
   end if;
 
   delete from public.house_access_permissions
   where owner_user_id = p_owner_user_id;
+
+  if v_has_home then
+    delete from public.mobile_storage_access_permissions
+    where storage_item_id = (v_home.storage).id;
+  end if;
+
+  if v_has_caged then
+    delete from public.mobile_storage_access_permissions
+    where storage_item_id = (v_caged.storage).id;
+  end if;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_permissions, '[]'::jsonb)) loop
+    v_grantee_user_id := nullif(coalesce(v_entry->>'granteeUserId', v_entry->>'grantee_user_id', ''), '')::uuid;
+    v_house_access := coalesce((v_entry->>'house')::boolean, coalesce((v_entry->>'access')::boolean, false), false);
+    v_stable_access := coalesce((v_entry->>'stable')::boolean, false);
+
+    if v_grantee_user_id is null or v_grantee_user_id = p_owner_user_id or not (v_house_access or v_stable_access) then
+      continue;
+    end if;
+
+    if not exists (select 1 from public.profiles where id = v_grantee_user_id) then
+      raise exception 'A selected player account does not exist.';
+    end if;
+
+    if v_has_house then
+      insert into public.house_access_permissions (owner_user_id, grantee_user_id, can_access_house, can_access_stable)
+      values (p_owner_user_id, v_grantee_user_id, v_house_access, v_stable_access)
+      on conflict (owner_user_id, grantee_user_id) do update
+      set can_access_house = excluded.can_access_house,
+          can_access_stable = excluded.can_access_stable;
+    end if;
+
+    if v_has_home and v_house_access then
+      insert into public.mobile_storage_access_permissions (storage_item_id, owner_user_id, grantee_user_id)
+      values ((v_home.storage).id, p_owner_user_id, v_grantee_user_id)
+      on conflict (storage_item_id, grantee_user_id) do update
+      set owner_user_id = excluded.owner_user_id;
+    end if;
+
+    if v_has_caged and v_stable_access then
+      insert into public.mobile_storage_access_permissions (storage_item_id, owner_user_id, grantee_user_id)
+      values ((v_caged.storage).id, p_owner_user_id, v_grantee_user_id)
+      on conflict (storage_item_id, grantee_user_id) do update
+      set owner_user_id = excluded.owner_user_id;
+    end if;
+  end loop;
 
   return public.get_player_house(p_session_token, p_owner_user_id);
 end;
@@ -15096,11 +15362,12 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_item public.inventory_items%rowtype;
-  v_home record;
+  v_storage record;
   v_target_parent_id uuid;
   v_target public.inventory_items%rowtype;
   v_slot_index int;
   v_capacity int;
+  v_is_pet boolean;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -15110,32 +15377,43 @@ begin
 
   v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
   if v_character.owner_user_id is null then
-    raise exception 'That character is not assigned to a player wagon home.';
+    raise exception 'That character is not assigned to a player home.';
   end if;
 
-  select * into v_home
-  from public.home_wagon_storage_for_owner(v_character.owner_user_id);
+  v_is_pet := public.normalize_item_type(v_item.item_type) = 'pet';
 
-  if not found then
-    raise exception 'No wagon home is available for this player.';
+  if v_is_pet then
+    select * into v_storage
+    from public.caged_wagon_storage_for_owner(v_character.owner_user_id);
+
+    if not found then
+      raise exception 'No Caged Wagon stable is available for this player.';
+    end if;
+  else
+    select * into v_storage
+    from public.home_wagon_storage_for_owner(v_character.owner_user_id);
+
+    if not found then
+      raise exception 'No wagon home is available for this player.';
+    end if;
   end if;
 
-  if public.normalize_item_type(v_item.item_type) = 'pet' then
-    raise exception 'Animals need an active pet slot or a Caged Wagon.';
-  end if;
-
-  v_target_parent_id := coalesce(p_parent_item_id, (v_home.storage).id);
+  v_target_parent_id := coalesce(p_parent_item_id, (v_storage.storage).id);
   if v_target_parent_id = p_item_id then
     raise exception 'An item cannot be moved inside itself.';
   end if;
 
-  if v_target_parent_id = (v_home.storage).id then
-    v_capacity := greatest(0, (v_home.storage).storage_capacity);
+  if v_is_pet and v_target_parent_id <> (v_storage.storage).id then
+    raise exception 'Animals can only be placed directly into stable slots.';
+  end if;
+
+  if v_target_parent_id = (v_storage.storage).id then
+    v_capacity := greatest(0, (v_storage.storage).storage_capacity);
   else
     select storage_capacity into v_capacity
     from public.inventory_items
     where id = v_target_parent_id
-      and character_id = (v_home.storage).character_id
+      and character_id = (v_storage.storage).character_id
       and is_storage = true;
 
     if v_capacity is null then
@@ -15147,7 +15425,7 @@ begin
     if not v_item.is_storage then
       select * into v_target
       from public.inventory_items i
-      where i.character_id = (v_home.storage).character_id
+      where i.character_id = (v_storage.storage).character_id
         and i.parent_item_id = v_target_parent_id
         and i.loadout_slot is null
         and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_item.item_name))
@@ -15179,20 +15457,20 @@ begin
       end if;
     end if;
 
-    v_slot_index := public.find_first_free_inventory_slot((v_home.storage).character_id, v_target_parent_id, v_capacity);
+    v_slot_index := public.find_first_free_inventory_slot((v_storage.storage).character_id, v_target_parent_id, v_capacity);
   else
     v_slot_index := p_slot_index;
   end if;
 
   if v_slot_index is null then
-    raise exception 'No open wagon home slot.';
+    raise exception 'No open home storage slot.';
   end if;
 
-  perform public.assert_inventory_slot_capacity((v_home.owner_character), v_target_parent_id, v_slot_index);
+  perform public.assert_inventory_slot_capacity((v_storage.owner_character), v_target_parent_id, v_slot_index);
 
   select * into v_target
   from public.inventory_items i
-  where i.character_id = (v_home.storage).character_id
+  where i.character_id = (v_storage.storage).character_id
     and i.parent_item_id = v_target_parent_id
     and i.loadout_slot is null
     and i.slot_index = v_slot_index
@@ -15202,14 +15480,14 @@ begin
   if v_target.id is not null then
     if public.inventory_items_stackable(v_target, v_item) then
       update public.inventory_items
-      set quantity = quantity + v_item.quantity
+        set quantity = quantity + v_item.quantity
       where id = v_target.id;
 
       delete from public.inventory_items where id = v_item.id;
       return public.get_player_house(p_session_token, v_character.owner_user_id);
     end if;
 
-    raise exception 'That wagon home slot is already occupied.';
+    raise exception 'That home storage slot is already occupied.';
   end if;
 
   with recursive moved_tree as (
@@ -15222,7 +15500,7 @@ begin
     join moved_tree parent on parent.id = child.parent_item_id
   )
   update public.inventory_items
-  set character_id = (v_home.storage).character_id
+  set character_id = (v_storage.storage).character_id
   where id in (select id from moved_tree);
 
   update public.inventory_items
@@ -15232,7 +15510,7 @@ begin
   where id = v_item.id;
 
   insert into public.wagon_activity_log (wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
-  values ((v_home.storage).id, v_character.id, v_character.name, 'stored', v_item.item_name, v_item.quantity);
+  values ((v_storage.storage).id, v_character.id, v_character.name, 'stored', v_item.item_name, v_item.quantity);
 
   return public.get_player_house(p_session_token, v_character.owner_user_id);
 end;
@@ -15426,6 +15704,7 @@ begin
 end $$;
 
 grant execute on function public.home_wagon_storage_for_owner(uuid) to anon, authenticated;
+grant execute on function public.caged_wagon_storage_for_owner(uuid) to anon, authenticated;
 grant execute on function public.mobile_home_house_access_to_json(public.profiles, uuid, uuid) to anon, authenticated;
 grant execute on function public.mobile_home_house_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_home_wagon(text, uuid, int, uuid) to anon, authenticated;
@@ -15508,6 +15787,9 @@ grant execute on function public.touch_app_live_update_trigger() to anon, authen
 
 alter table public.cities
   add column if not exists description text not null default '',
+  add column if not exists primary_color text not null default '#d1a85b',
+  add column if not exists secondary_color text not null default '#1f7875',
+  add column if not exists accent_color text not null default '#f5b44c',
   add column if not exists is_current_residence boolean not null default false,
   add column if not exists show_under_construction boolean not null default false;
 
@@ -15622,6 +15904,9 @@ as $$
     'key', p_city.city_key,
     'name', p_city.name,
     'description', p_city.description,
+    'primaryColor', p_city.primary_color,
+    'secondaryColor', p_city.secondary_color,
+    'accentColor', p_city.accent_color,
     'locked', p_city.is_locked,
     'currentResidence', p_city.is_current_residence,
     'showUnderConstruction', p_city.show_under_construction,
@@ -15746,6 +16031,9 @@ begin
   set
     name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), name) else name end,
     description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
+    primary_color = case when v_patch ? 'primaryColor' then coalesce(nullif(trim(v_patch->>'primaryColor'), ''), primary_color) else primary_color end,
+    secondary_color = case when v_patch ? 'secondaryColor' then coalesce(nullif(trim(v_patch->>'secondaryColor'), ''), secondary_color) else secondary_color end,
+    accent_color = case when v_patch ? 'accentColor' then coalesce(nullif(trim(v_patch->>'accentColor'), ''), accent_color) else accent_color end,
     is_locked = case when v_patch ? 'locked' then coalesce((v_patch->>'locked')::boolean, false) else is_locked end,
     show_under_construction = case when v_patch ? 'showUnderConstruction' then coalesce((v_patch->>'showUnderConstruction')::boolean, false) else show_under_construction end,
     is_current_residence = case when v_patch ? 'currentResidence' then coalesce((v_patch->>'currentResidence')::boolean, false) else is_current_residence end,

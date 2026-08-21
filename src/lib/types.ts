@@ -211,14 +211,18 @@ export type PropertyLocation = 'with_character' | 'at_house';
 export type House = {
   id: string;
   ownerUserId: string;
+  name: string;
+  stableName: string;
   cityName: string;
   inventorySlots: number;
   stableSlots: number;
   propertySlots: number;
   locked: boolean;
-  kind?: 'house' | 'wagon-home';
+  kind?: 'house' | 'wagon-home' | 'caged-wagon';
   storageItemId?: string | null;
   storageCharacterId?: string | null;
+  stableStorageItemId?: string | null;
+  stableStorageCharacterId?: string | null;
 };
 
 export type HouseAccess = {
@@ -261,6 +265,9 @@ export type City = {
   key: string;
   name: string;
   description: string;
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
   locked: boolean;
   currentResidence: boolean;
   showUnderConstruction: boolean;

@@ -1,11 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Unlock, Users, WandSparkles, X } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
-import { SelectField, TextAreaField, TextField } from '@/components/ui/Field';
+import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
@@ -45,6 +45,9 @@ type VendorDraft = {
 type CityDraft = {
   name: string;
   description: string;
+  primaryColor: string;
+  secondaryColor: string;
+  accentColor: string;
   locked: boolean;
   currentResidence: boolean;
   showUnderConstruction: boolean;
@@ -912,6 +915,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setCityDraft({
       name: city.name,
       description: city.description,
+      primaryColor: city.primaryColor,
+      secondaryColor: city.secondaryColor,
+      accentColor: city.accentColor,
       locked: city.locked,
       currentResidence: city.currentResidence,
       showUnderConstruction: city.showUnderConstruction,
@@ -1352,10 +1358,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     setSelectedVendorId('');
                     setCityDetailOpen(true);
                   }}
+                  style={{
+                    '--city-primary': city.primaryColor,
+                    '--city-secondary': city.secondaryColor,
+                    '--city-accent': city.accentColor
+                  } as CSSProperties}
                   className={`group relative overflow-hidden rounded-2xl border text-left transition hover:-translate-y-0.5 hover:border-[var(--brass)]/65 ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10'}`}
                 >
-                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[var(--brass)] via-[rgba(245,180,76,0.45)] to-[var(--teal)]" />
-                  <span className="block bg-gradient-to-br from-[rgba(245,180,76,0.13)] via-black/5 to-[rgba(31,120,117,0.12)] p-4 sm:p-5">
+                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[var(--city-primary)] via-[var(--city-accent)] to-[var(--city-secondary)]" />
+                  <span className="block p-4 sm:p-5" style={{ background: `linear-gradient(135deg, ${city.primaryColor}26, rgba(0,0,0,0.06), ${city.secondaryColor}24)` }}>
                     <span className="grid gap-4 lg:grid-cols-[minmax(14rem,20rem)_1fr_auto] lg:items-stretch">
                       <span className="flex min-w-0 flex-col justify-between gap-4">
                         <span>
@@ -1403,9 +1414,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : !cityDetailOpen && !selectedVendor ? null : !selectedVendor ? (
         <div className="space-y-4">
           <Card className="overflow-hidden">
-            <div className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/40 bg-[radial-gradient(circle_at_top,rgba(245,180,76,0.22),transparent_38%),linear-gradient(135deg,rgba(35,20,12,0.84),rgba(12,20,22,0.78))] px-4 py-8 text-center shadow-[0_0_42px_rgba(245,180,76,0.1)] sm:px-8 sm:py-10">
-              <div className="pointer-events-none absolute inset-x-8 top-5 h-px bg-gradient-to-r from-transparent via-[var(--brass)]/75 to-transparent" />
-              <div className="pointer-events-none absolute inset-x-16 bottom-5 h-px bg-gradient-to-r from-transparent via-[var(--teal)]/45 to-transparent" />
+            <div
+              className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/40 px-4 py-8 text-center shadow-[0_0_42px_rgba(245,180,76,0.1)] sm:px-8 sm:py-10"
+              style={{ background: `radial-gradient(circle at top, ${selectedCity.accentColor}30, transparent 38%), linear-gradient(135deg, ${selectedCity.primaryColor}42, rgba(18,15,14,0.86), ${selectedCity.secondaryColor}38)` }}
+            >
+              <div className="pointer-events-none absolute inset-x-8 top-5 h-px" style={{ background: `linear-gradient(90deg, transparent, ${selectedCity.primaryColor}, transparent)` }} />
+              <div className="pointer-events-none absolute inset-x-16 bottom-5 h-px" style={{ background: `linear-gradient(90deg, transparent, ${selectedCity.secondaryColor}, transparent)` }} />
               <div className="mx-auto max-w-4xl">
                 <p className="eyebrow justify-center">Discovered City</p>
                 <h3 className="mt-3 break-words text-4xl font-black leading-tight sm:text-6xl">{selectedCity.name}</h3>
@@ -1719,6 +1733,20 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Banner description</span>
               <TextAreaField rows={5} value={cityDraft.description} onChange={(event) => setCityDraft({ ...cityDraft, description: event.target.value })} />
             </label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Primary color</span>
+                <ColorField value={cityDraft.primaryColor} onChange={(event) => setCityDraft({ ...cityDraft, primaryColor: event.target.value })} />
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Secondary color</span>
+                <ColorField value={cityDraft.secondaryColor} onChange={(event) => setCityDraft({ ...cityDraft, secondaryColor: event.target.value })} />
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Accent color</span>
+                <ColorField value={cityDraft.accentColor} onChange={(event) => setCityDraft({ ...cityDraft, accentColor: event.target.value })} />
+              </label>
+            </div>
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Page position</span>
               <NumberInput min={0} step={1} value={cityDraft.order} onValueChange={(order) => setCityDraft({ ...cityDraft, order })} />

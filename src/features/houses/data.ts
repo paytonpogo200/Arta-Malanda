@@ -35,14 +35,18 @@ export function normalizeHouse(value: unknown): House | null {
   return {
     id,
     ownerUserId,
+    name: String(source.name ?? (source.kind === 'wagon-home' ? 'Wagon Home' : source.kind === 'caged-wagon' ? 'Caged Wagon Stable' : 'House')),
+    stableName: String(source.stableName ?? (source.kind === 'caged-wagon' ? 'Caged Wagon Stable' : 'Stable')),
     cityName: String(source.cityName ?? 'Calostrynn'),
     inventorySlots: Math.max(0, numberFrom(source.inventorySlots, 45)),
     stableSlots: Math.max(0, numberFrom(source.stableSlots, 5)),
     propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
     locked: Boolean(source.locked),
-    kind: source.kind === 'wagon-home' ? 'wagon-home' : 'house',
+    kind: source.kind === 'wagon-home' || source.kind === 'caged-wagon' ? source.kind : 'house',
     storageItemId: source.storageItemId ? String(source.storageItemId) : null,
-    storageCharacterId: source.storageCharacterId ? String(source.storageCharacterId) : null
+    storageCharacterId: source.storageCharacterId ? String(source.storageCharacterId) : null,
+    stableStorageItemId: source.stableStorageItemId ? String(source.stableStorageItemId) : null,
+    stableStorageCharacterId: source.stableStorageCharacterId ? String(source.stableStorageCharacterId) : null
   };
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Unlock, Users } from 'lucide-react';
+import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Settings, Unlock, Users } from 'lucide-react';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +11,7 @@ import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import type { CampaignProfile } from '@/features/characters/data';
+import { normalizeCitiesPayload } from '@/features/cities/data';
 import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/features/houses/data';
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
@@ -52,6 +53,16 @@ const EMPTY_PROPERTY: PropertyDraft = {
 
 const STABLE_SLOT_OFFSET = 45;
 
+type HouseSettingsDraft = {
+  name: string;
+  stableName: string;
+  cityName: string;
+  inventorySlots: number;
+  stableSlots: number;
+  propertySlots: number;
+  locked: boolean;
+};
+
 export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, profiles = [], characters = [], canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
@@ -61,7 +72,21 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [inventorySlots, setInventorySlots] = useState(45);
   const [stableSlots, setStableSlots] = useState(5);
   const [propertySlots, setPropertySlots] = useState(10);
+  const [houseName, setHouseName] = useState('House');
+  const [stableName, setStableName] = useState('Stable');
+  const [houseCityName, setHouseCityName] = useState('Wild');
   const [houseLocked, setHouseLocked] = useState(false);
+  const [houseSettingsOpen, setHouseSettingsOpen] = useState(false);
+  const [houseSettingsDraft, setHouseSettingsDraft] = useState<HouseSettingsDraft>({
+    name: 'House',
+    stableName: 'Stable',
+    cityName: 'Wild',
+    inventorySlots: 45,
+    stableSlots: 5,
+    propertySlots: 10,
+    locked: false
+  });
+  const [cityOptions, setCityOptions] = useState<string[]>(['Wild']);
   const [loading, setLoading] = useState(Boolean(ownerUserId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -75,29 +100,38 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
   const [takeTargetCharacterId, setTakeTargetCharacterId] = useState(caretakerCharacterId);
-  const [homeKind, setHomeKind] = useState<'house' | 'wagon-home'>('house');
+  const [homeKind, setHomeKind] = useState<'house' | 'wagon-home' | 'caged-wagon'>('house');
   const [homeStorageItemId, setHomeStorageItemId] = useState<string | null>(null);
   const [homeStorageCharacterId, setHomeStorageCharacterId] = useState<string | null>(null);
+  const [stableStorageItemId, setStableStorageItemId] = useState<string | null>(null);
+  const [stableStorageCharacterId, setStableStorageCharacterId] = useState<string | null>(null);
   const [homeAvailable, setHomeAvailable] = useState(false);
   useDragAutoScroll();
 
   const isWagonHome = homeKind === 'wagon-home' && Boolean(homeStorageItemId);
+  const isCagedWagonOnly = homeKind === 'caged-wagon' && Boolean(homeStorageItemId);
   const rootParentItemId = isWagonHome ? homeStorageItemId : null;
+  const stableParentItemId = isCagedWagonOnly ? homeStorageItemId : stableStorageItemId;
+  const mobileStorageCharacterIds = useMemo(() => new Set([homeStorageCharacterId, stableStorageCharacterId].filter((entry): entry is string => Boolean(entry))), [homeStorageCharacterId, stableStorageCharacterId]);
+  const isMobileItem = useCallback((item: InventoryItem) => Boolean(item.characterId && mobileStorageCharacterIds.has(item.characterId)), [mobileStorageCharacterIds]);
   const stableItems = useMemo(() => items.filter((item) => (
-    sameContainer(item, null)
-    && item.type === 'pet'
-    && item.slotIndex >= STABLE_SLOT_OFFSET
-    && item.slotIndex < STABLE_SLOT_OFFSET + stableSlots
-  )), [items, stableSlots]);
+    stableParentItemId
+      ? sameContainer(item, stableParentItemId) && item.type === 'pet'
+      : sameContainer(item, null)
+        && item.type === 'pet'
+        && item.slotIndex >= STABLE_SLOT_OFFSET
+        && item.slotIndex < STABLE_SLOT_OFFSET + stableSlots
+  )), [items, stableParentItemId, stableSlots]);
   const stableItemIds = useMemo(() => new Set(stableItems.map((item) => item.id)), [stableItems]);
   const mainItems = useMemo(() => items.filter((item) => sameContainer(item, rootParentItemId) && !item.isStorage && !stableItemIds.has(item.id)), [items, rootParentItemId, stableItemIds]);
   const itemBySlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
   const stableItemBySlot = useMemo(() => new Map(stableItems.map((item) => [item.slotIndex, item])), [stableItems]);
-  const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const storageItems = useMemo(() => items.filter((item) => item.isStorage && item.id !== homeStorageItemId && item.id !== stableParentItemId), [homeStorageItemId, items, stableParentItemId]);
   const canManageHouse = canManage || houseAccess.house;
   const canManageStable = canManage || houseAccess.stable;
   const canManageAny = canManageHouse || canManageStable;
   const canEditPermissions = canAdd || houseAccess.owner;
+  const canCustomizeHouse = canAdd || houseAccess.owner;
   const permissionProfiles = useMemo(() => profiles
     .filter((entry) => entry.id !== ownerUserId)
     .sort((a, b) => (a.displayName || a.username || '').localeCompare(b.displayName || b.username || '')), [ownerUserId, profiles]);
@@ -126,6 +160,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setHomeAvailable(Boolean(normalized.house));
       setItems(normalized.items);
       setProperties(normalized.properties);
+      setHouseName(normalized.house?.name ?? 'House');
+      setStableName(normalized.house?.stableName ?? 'Stable');
+      setHouseCityName(normalized.house?.cityName ?? 'Wild');
       setInventorySlots(normalized.house?.inventorySlots ?? 45);
       setStableSlots(normalized.house?.stableSlots ?? 5);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
@@ -133,6 +170,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setHomeKind(normalized.house?.kind ?? 'house');
       setHomeStorageItemId(normalized.house?.storageItemId ?? null);
       setHomeStorageCharacterId(normalized.house?.storageCharacterId ?? null);
+      setStableStorageItemId(normalized.house?.stableStorageItemId ?? null);
+      setStableStorageCharacterId(normalized.house?.stableStorageCharacterId ?? null);
       setHouseAccess(normalized.access);
       setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
     } catch (loadError) {
@@ -145,6 +184,27 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   useEffect(() => {
     void loadHouse();
   }, [loadHouse]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/cities', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const cities = normalizeCitiesPayload(payload)
+          .cities
+          .slice()
+          .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
+          .map((city) => city.name);
+        setCityOptions([...cities, 'Wild'].filter((entry, index, list) => entry && list.indexOf(entry) === index));
+      })
+      .catch(() => {
+        if (!cancelled) setCityOptions((current) => current.length ? current : ['Wild']);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setTakeTargetCharacterId((current) => {
@@ -242,19 +302,28 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   async function addItem(event: FormEvent) {
     event.preventDefault();
     if (!ownerUserId || !itemModal || itemModal.item || !itemDraft.name.trim() || !canAdd) return;
-    if (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET && itemDraft.type !== 'pet') {
+    const addingToStable = itemModal.parentItemId === stableParentItemId || (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET);
+    if (addingToStable && itemDraft.type !== 'pet') {
       setError('Only animals can be placed in stable slots.');
       return;
     }
-    if (itemDraft.type === 'pet' && (itemModal.parentItemId !== null || itemModal.slot < STABLE_SLOT_OFFSET)) {
+    if (itemDraft.type === 'pet' && !addingToStable) {
       setError('Animals can only be placed in stable slots.');
       return;
     }
-    if (isWagonHome && itemDraft.type === 'pet') {
-      setError('Animals need an active pet slot or a Caged Wagon.');
+    if (itemDraft.type === 'pet' && isWagonHome && !stableParentItemId) {
+      setError('Animals need an active pet slot or a Caged Wagon stable.');
       return;
     }
-    await requestHouseChange(isWagonHome && homeStorageCharacterId ? `/api/characters/${homeStorageCharacterId}/inventory` : `/api/houses/${ownerUserId}/items`, {
+    const parentItem = itemModal.parentItemId ? items.find((item) => item.id === itemModal.parentItemId) : null;
+    const targetCharacterId = parentItem && isMobileItem(parentItem)
+      ? parentItem.characterId
+      : itemModal.parentItemId === stableParentItemId
+      ? stableStorageCharacterId
+      : itemModal.parentItemId === homeStorageItemId
+        ? homeStorageCharacterId
+        : null;
+    await requestHouseChange(targetCharacterId ? `/api/characters/${targetCharacterId}/inventory` : `/api/houses/${ownerUserId}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -265,22 +334,50 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     });
   }
 
+  function openHouseSettings() {
+    setHouseSettingsDraft({
+      name: houseName,
+      stableName,
+      cityName: houseCityName,
+      inventorySlots,
+      stableSlots,
+      propertySlots,
+      locked: houseLocked
+    });
+    setHouseSettingsOpen(true);
+  }
+
+  async function saveHouseSettings(event: FormEvent) {
+    event.preventDefault();
+    if (!ownerUserId || !canCustomizeHouse) return;
+    await requestHouseChange(`/api/houses/${ownerUserId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(canAdd ? houseSettingsDraft : {
+        name: houseSettingsDraft.name,
+        stableName: houseSettingsDraft.stableName
+      })
+    });
+    setHouseSettingsOpen(false);
+  }
+
   async function updateItem(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || !itemDraft.name.trim() || !canAdd) return;
-    if (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET && itemDraft.type !== 'pet') {
+    const editingStable = itemModal.parentItemId === stableParentItemId || (itemModal.parentItemId === null && itemModal.slot >= STABLE_SLOT_OFFSET);
+    if (editingStable && itemDraft.type !== 'pet') {
       setError('Only animals can be placed in stable slots.');
       return;
     }
-    if (itemDraft.type === 'pet' && (itemModal.parentItemId !== null || itemModal.slot < STABLE_SLOT_OFFSET)) {
+    if (itemDraft.type === 'pet' && !editingStable) {
       setError('Animals can only be placed in stable slots.');
       return;
     }
-    if (isWagonHome && itemDraft.type === 'pet') {
-      setError('Animals need an active pet slot or a Caged Wagon.');
+    if (itemDraft.type === 'pet' && isWagonHome && !stableParentItemId) {
+      setError('Animals need an active pet slot or a Caged Wagon stable.');
       return;
     }
-    await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
+    await requestHouseChange(isMobileItem(itemModal.item) ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -311,16 +408,18 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     if (!canManageAny) return;
     const movingHouseItem = items.find((item) => item.id === itemId);
     if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
-    if (movingHouseItem?.type === 'pet' && (parentItemId !== null || slotIndex < STABLE_SLOT_OFFSET)) {
+    const movingToStable = parentItemId === stableParentItemId || (parentItemId === null && slotIndex >= STABLE_SLOT_OFFSET);
+    if (movingHouseItem?.type === 'pet' && !movingToStable) {
       setError('Animals can only be placed in stable slots.');
       return;
     }
-    if (parentItemId === null && slotIndex >= STABLE_SLOT_OFFSET) {
+    if (movingToStable) {
       if (movingHouseItem && movingHouseItem.type !== 'pet') {
         setError('Only animals can be placed in stable slots.');
         return;
       }
-      if (slotIndex >= STABLE_SLOT_OFFSET + stableSlots) {
+      const stableSlot = parentItemId === stableParentItemId ? slotIndex : slotIndex - STABLE_SLOT_OFFSET;
+      if (stableSlot < 0 || stableSlot >= stableSlots) {
         setError('That stable slot does not exist.');
         return;
       }
@@ -329,7 +428,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setTargetSlot(`${parentItemId ?? 'main'}:${slotIndex}`);
     const existingHouseItem = items.some((item) => item.id === itemId);
     if (existingHouseItem) {
-      await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemId}` : `/api/houses/items/${itemId}`, {
+      const existing = items.find((item) => item.id === itemId);
+      await requestHouseChange(existing && isMobileItem(existing) ? `/api/inventory/items/${itemId}` : `/api/houses/items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slotIndex, parentItemId })
@@ -348,7 +448,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   async function savePetDisplayName(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManageAny) return;
-    await requestHouseChange(isWagonHome ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
+    await requestHouseChange(isMobileItem(itemModal.item) ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName: itemDraft.displayName.trim() || null })
@@ -357,7 +457,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
 
   async function dropItem(item: InventoryItem) {
     if (!canManageAny) return;
-    await requestHouseChange(isWagonHome ? `/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}` : `/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
+    await requestHouseChange(isMobileItem(item) ? `/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}` : `/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function takeItem(item: InventoryItem) {
@@ -367,7 +467,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setError('Choose a character to receive this item.');
       return;
     }
-    const moved = await requestHouseChange(isWagonHome ? `/api/wagons/items/${item.id}/take` : `/api/houses/items/${item.id}/take`, {
+    const moved = await requestHouseChange(isMobileItem(item) ? `/api/wagons/items/${item.id}/take` : `/api/houses/items/${item.id}/take`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ characterId })
@@ -380,30 +480,18 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(isWagonHome && homeStorageItemId ? `/api/inventory/items/${homeStorageItemId}/permissions` : `/api/houses/${ownerUserId}/permissions`, {
+      const response = await fetch(`/api/houses/${ownerUserId}/permissions`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          permissions: Object.entries(permissions).map(([granteeUserId, access]) => isWagonHome
-            ? ({ granteeUserId, access: access.house || access.stable })
-            : ({ granteeUserId, ...access }))
+          permissions: Object.entries(permissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access }))
         })
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'House permissions could not be saved.');
-      if (isWagonHome) {
-        const source = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-        const rawPermissions = Array.isArray(source.permissions) ? source.permissions : [];
-        setPermissions(Object.fromEntries(rawPermissions.map((entry) => {
-          const record = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-          return [String(record.granteeUserId ?? ''), { house: Boolean(record.access), stable: false }];
-        }).filter(([granteeUserId]) => granteeUserId)));
-        await loadHouse(false);
-      } else {
-        const normalized = normalizeHousePayload(payload);
-        setHouseAccess(normalized.access);
-        setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
-      }
+      const normalized = normalizeHousePayload(payload);
+      setHouseAccess(normalized.access);
+      setPermissions(Object.fromEntries(normalized.permissions.map((entry) => [entry.granteeUserId, { house: entry.house, stable: entry.stable }])));
       setPermissionsOpen(false);
     } catch (permissionError) {
       setError(permissionError instanceof Error ? permissionError.message : 'House permissions could not be saved.');
@@ -444,13 +532,21 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <p className="eyebrow">{homeAvailable && !isWagonHome ? 'Calostrynn' : 'Mobile home'}</p>
-          <h3 className="mt-1 flex items-center gap-2 text-xl font-black"><Home size={19} className="text-[var(--brass)]" /> {homeAvailable && !isWagonHome ? 'House' : 'Wagon Home'}</h3>
+          <p className="eyebrow">{houseCityName}</p>
+          <h3 className="mt-1 flex items-center gap-2 text-xl font-black">
+            <Home size={19} className="text-[var(--brass)]" />
+            {homeKind === 'caged-wagon' ? stableName : houseName}
+          </h3>
           {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" className="p-3" onClick={() => void loadHouse()} aria-label="Refresh house"><RefreshCw size={16} /></Button>
-          {canAdd && !isWagonHome && (
+          {canCustomizeHouse && (
+            <Button variant="secondary" className="p-3" onClick={openHouseSettings} aria-label="Home and stable settings">
+              <Settings size={16} />
+            </Button>
+          )}
+          {canAdd && homeKind === 'house' && (
             <Button variant={houseLocked ? 'danger' : 'teal'} className="p-3" onClick={toggleHouseLock} aria-label={houseLocked ? 'Unlock house' : 'Lock house'}>
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
             </Button>
@@ -460,7 +556,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               <Users size={16} />
             </Button>
           )}
-          {canAdd && !isWagonHome && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
+          {canAdd && homeKind === 'house' && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
         </div>
       </div>
 
@@ -474,12 +570,13 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
         <div className="space-y-5">
           {!homeAvailable && (
             <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
-              No wagon home is available for this player.
+              No home or stable is available for this player.
             </div>
           )}
           {homeAvailable && (
           <section>
-            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{isWagonHome ? 'Wagon home inventory' : 'House inventory'}</h3></div>
+            {inventorySlots > 0 && <>
+            <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{houseName} inventory</h3></div>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
               {Array.from({ length: inventorySlots }, (_, slot) => {
                 const item = itemBySlot.get(slot);
@@ -497,17 +594,18 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                 );
               })}
             </div>
-            {!isWagonHome && <div className="mt-5">
+            </>}
+            {stableSlots > 0 && <div className="mt-5">
               <div className="rule-title mb-3">
                 <h3 className="flex items-center gap-2 text-sm font-black uppercase tracking-wider">
                   <PawPrint size={16} className="text-[var(--brass)]" />
-                  Stable
+                  {stableName}
                 </h3>
               </div>
               <p className="mb-3 text-xs font-black uppercase tracking-wide text-[var(--muted)]">{stableItems.length}/{stableSlots} animals housed</p>
               <div className="grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-5 lg:grid-cols-5">
                 {Array.from({ length: stableSlots }, (_, slot) => {
-                  const actualSlot = STABLE_SLOT_OFFSET + slot;
+                  const actualSlot = stableParentItemId ? slot : STABLE_SLOT_OFFSET + slot;
                   const item = stableItemBySlot.get(actualSlot);
                   return (
                     <InventorySlot
@@ -516,9 +614,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                       item={item}
                       canEdit={canManageStable}
                       canAdd={canAdd}
-                      target={targetSlot === `main:${actualSlot}`}
-                      onOpen={() => openItem(actualSlot, null, item)}
-                      onDropItem={(itemId) => moveItem(itemId, actualSlot, null)}
+                      target={targetSlot === `${stableParentItemId ?? 'main'}:${actualSlot}`}
+                      onOpen={() => openItem(actualSlot, stableParentItemId, item)}
+                      onDropItem={(itemId) => moveItem(itemId, actualSlot, stableParentItemId)}
                     />
                   );
                 })}
@@ -564,7 +662,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
           </section>
           )}
 
-          {!isWagonHome && <section>
+          {homeKind === 'house' && <section>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Property</h3></div>
             <div className="grid gap-2 sm:grid-cols-2">
               {properties.map((property) => (
@@ -670,21 +768,21 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     <p className="font-black">{entry.displayName || entry.username || 'Player'}</p>
                     {entry.username && <p className="text-xs text-[var(--muted)]">{entry.username}</p>}
                   </div>
-                  <label className="flex items-center gap-2 text-sm font-black">
+                  {inventorySlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.house}
                       onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), house: event.target.checked } }))}
                     />
-                    {isWagonHome ? 'Wagon Home' : 'House'}
-                  </label>
-                  {!isWagonHome && <label className="flex items-center gap-2 text-sm font-black">
+                    {houseName}
+                  </label>}
+                  {stableSlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.stable}
                       onChange={(event) => setPermissions((current) => ({ ...current, [entry.id]: { ...(current[entry.id] ?? access), stable: event.target.checked } }))}
                     />
-                    Stable
+                    {stableName}
                   </label>}
                 </div>
               );
@@ -700,6 +798,56 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {houseSettingsOpen && (
+        <Modal title="Home & stable settings" onClose={() => setHouseSettingsOpen(false)}>
+          <form onSubmit={saveHouseSettings} className="grid gap-3">
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Home name</span>
+              <TextField value={houseSettingsDraft.name} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, name: event.target.value })} />
+            </label>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable name</span>
+              <TextField value={houseSettingsDraft.stableName} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, stableName: event.target.value })} />
+            </label>
+            {canAdd && (
+              <>
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span>
+                  <SelectField value={houseSettingsDraft.cityName} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, cityName: event.target.value })}>
+                    {cityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
+                  </SelectField>
+                </label>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Home slots</span>
+                    <NumberInput min={0} max={500} value={houseSettingsDraft.inventorySlots} onValueChange={(inventorySlots) => setHouseSettingsDraft({ ...houseSettingsDraft, inventorySlots })} />
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable slots</span>
+                    <NumberInput min={0} max={200} value={houseSettingsDraft.stableSlots} onValueChange={(stableSlots) => setHouseSettingsDraft({ ...houseSettingsDraft, stableSlots })} />
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Property slots</span>
+                    <NumberInput min={0} max={200} value={houseSettingsDraft.propertySlots} onValueChange={(propertySlots) => setHouseSettingsDraft({ ...houseSettingsDraft, propertySlots })} />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                  <input type="checkbox" checked={houseSettingsDraft.locked} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, locked: event.target.checked })} />
+                  Locked by DM
+                </label>
+              </>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" type="button" onClick={() => setHouseSettingsOpen(false)}>Cancel</Button>
+              <Button variant="primary" disabled={!houseSettingsDraft.name.trim() || !houseSettingsDraft.stableName.trim() || saving}>
+                {saving && <Loader2 className="mr-2 inline animate-spin" size={15} />}
+                Save settings
+              </Button>
+            </div>
+          </form>
         </Modal>
       )}
 
