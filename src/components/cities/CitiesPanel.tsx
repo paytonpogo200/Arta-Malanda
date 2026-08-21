@@ -1353,8 +1353,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 '--city-primary': city.primaryColor,
                 '--city-secondary': city.secondaryColor,
                 '--city-accent': city.accentColor,
-                borderColor: active ? `${city.primaryColor}cc` : `${city.primaryColor}82`,
-                boxShadow: active ? `0 0 0 1px ${city.primaryColor}55, 0 22px 52px ${city.primaryColor}24` : `0 16px 36px ${city.primaryColor}18`
+                borderColor: active ? `${city.primaryColor}a8` : `${city.primaryColor}66`,
+                boxShadow: active ? `0 0 0 1px ${city.primaryColor}34, 0 22px 52px ${city.primaryColor}18` : `0 16px 36px ${city.secondaryColor}12`
               } as CSSProperties;
               return (
                 <button
@@ -1368,10 +1368,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   style={cardStyle}
                   className="group relative overflow-hidden rounded-2xl border bg-black/15 text-left transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(0,0,0,0.24)]"
                 >
-                  <span className="pointer-events-none absolute inset-0 opacity-95" style={{ background: `radial-gradient(circle at 8% 0%, ${city.primaryColor}5c, transparent 42%), linear-gradient(135deg, ${city.primaryColor}4f 0%, ${city.primaryColor}26 46%, ${city.secondaryColor}24 100%)` }} />
-                  <span className="pointer-events-none absolute inset-x-4 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${city.primaryColor}, ${city.accentColor}99, transparent)` }} />
-                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1.5" style={{ background: `linear-gradient(180deg, ${city.primaryColor}, ${city.primaryColor}, ${city.secondaryColor})` }} />
-                  <span className="pointer-events-none absolute inset-y-3 right-3 w-px opacity-70" style={{ background: `linear-gradient(180deg, transparent, ${city.accentColor}, transparent)` }} />
+                  <span className="pointer-events-none absolute inset-0 opacity-95" style={{ background: `radial-gradient(circle at 10% -12%, ${city.primaryColor}42, transparent 38%), radial-gradient(circle at 100% 100%, ${city.accentColor}1f, transparent 34%), linear-gradient(135deg, ${city.primaryColor}36 0%, rgba(14,14,14,0.58) 52%, ${city.secondaryColor}2b 100%)` }} />
+                  <span className="pointer-events-none absolute inset-x-5 top-0 h-px opacity-75" style={{ background: `linear-gradient(90deg, transparent, ${city.primaryColor}, ${city.secondaryColor}88, transparent)` }} />
                   <span className="relative block p-4 sm:p-5">
                     <span className="grid gap-4 lg:grid-cols-[1fr_minmax(16rem,28rem)] lg:items-stretch">
                       <span className="flex min-w-0 flex-col justify-between gap-5">
