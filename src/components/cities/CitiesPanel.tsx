@@ -1349,6 +1349,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               const active = city.key === selectedCity?.key;
               const vendorCount = payload.vendors.filter((vendor) => vendor.cityKey === city.key && activeCityVendor(vendor) && (isDm || !vendor.hidden)).length;
               const projectCount = payload.constructionProjects.filter((project) => project.cityKey === city.key && project.status === 'active').length;
+              const cardStyle = {
+                '--city-primary': city.primaryColor,
+                '--city-secondary': city.secondaryColor,
+                '--city-accent': city.accentColor,
+                borderColor: active ? `${city.accentColor}cc` : `${city.primaryColor}78`,
+                boxShadow: active ? `0 0 0 1px ${city.accentColor}55, 0 22px 52px ${city.primaryColor}22` : `0 16px 36px ${city.secondaryColor}16`
+              } as CSSProperties;
               return (
                 <button
                   key={city.key}
@@ -1358,34 +1365,40 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     setSelectedVendorId('');
                     setCityDetailOpen(true);
                   }}
-                  style={{
-                    '--city-primary': city.primaryColor,
-                    '--city-secondary': city.secondaryColor,
-                    '--city-accent': city.accentColor
-                  } as CSSProperties}
-                  className={`group relative overflow-hidden rounded-2xl border text-left transition hover:-translate-y-0.5 hover:border-[var(--brass)]/65 ${active ? 'border-[var(--brass)] bg-[#d1a85b14]' : 'border-[var(--line)] bg-black/10'}`}
+                  style={cardStyle}
+                  className="group relative overflow-hidden rounded-2xl border bg-black/15 text-left transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(0,0,0,0.24)]"
                 >
-                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[var(--city-primary)] via-[var(--city-accent)] to-[var(--city-secondary)]" />
-                  <span className="block p-4 sm:p-5" style={{ background: `linear-gradient(135deg, ${city.primaryColor}26, rgba(0,0,0,0.06), ${city.secondaryColor}24)` }}>
-                    <span className="grid gap-4 lg:grid-cols-[minmax(14rem,20rem)_1fr_auto] lg:items-stretch">
-                      <span className="flex min-w-0 flex-col justify-between gap-4">
-                        <span>
-                          <span className="flex flex-wrap items-center gap-2">
-                            {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border border-[var(--brass)]/60 bg-[var(--brass)]/15 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]"><Star size={12} fill="currentColor" /> Residence</span>}
-                            <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wider ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
+                  <span className="pointer-events-none absolute inset-0 opacity-95" style={{ background: `radial-gradient(circle at 8% 0%, ${city.accentColor}48, transparent 34%), linear-gradient(135deg, ${city.primaryColor}38 0%, rgba(8,10,12,0.42) 45%, ${city.secondaryColor}34 100%)` }} />
+                  <span className="pointer-events-none absolute inset-x-4 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${city.accentColor}, ${city.primaryColor}, transparent)` }} />
+                  <span className="pointer-events-none absolute inset-y-0 left-0 w-2" style={{ background: `linear-gradient(180deg, ${city.primaryColor}, ${city.accentColor}, ${city.secondaryColor})` }} />
+                  <span className="relative block p-4 sm:p-5">
+                    <span className="grid gap-4 lg:grid-cols-[1fr_minmax(14rem,24rem)_auto] lg:items-stretch">
+                      <span className="flex min-w-0 flex-col justify-between gap-5">
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
+                            {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1" style={{ borderColor: `${city.accentColor}aa`, backgroundColor: `${city.accentColor}22`, color: city.accentColor }}><Star size={12} fill="currentColor" /> Residence</span>}
+                            <span className={`rounded-full border px-2 py-1 ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
+                            {city.showUnderConstruction && <span className="rounded-full border border-[var(--line)] bg-black/25 px-2 py-1 text-[var(--muted)]">Building</span>}
                           </span>
-                          <span className="mt-3 block break-words text-3xl font-black leading-tight sm:text-4xl">{city.name}</span>
+                          <span className="mt-3 flex items-end gap-3">
+                            <span className="block min-w-0 flex-1 break-words text-3xl font-black leading-tight sm:text-5xl">{city.name}</span>
+                            <span className="hidden shrink-0 gap-1 sm:flex" aria-hidden="true">
+                              {[city.primaryColor, city.secondaryColor, city.accentColor].map((color) => (
+                                <span key={color} className="h-8 w-3 rounded-full border border-white/10 shadow-inner" style={{ backgroundColor: color }} />
+                              ))}
+                            </span>
+                          </span>
                         </span>
-                        <span className="flex flex-wrap gap-2 text-xs font-bold text-[var(--muted)]">
-                          <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
-                          {city.showUnderConstruction && <span className="rounded-lg border border-[var(--line)] bg-black/15 px-2 py-1">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
+                        <span className="flex flex-wrap gap-2 text-xs font-black uppercase tracking-wide">
+                          <span className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[var(--paper)]">{vendorCount} service{vendorCount === 1 ? '' : 's'}</span>
+                          {city.showUnderConstruction && <span className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[var(--paper)]">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
                         </span>
                       </span>
-                      <span className="rounded-2xl border border-[var(--line)] bg-black/20 p-4">
+                      <span className="rounded-2xl border bg-black/30 p-4 backdrop-blur-sm" style={{ borderColor: `${city.accentColor}55` }}>
                         <span className="eyebrow">City Notes</span>
                         <span className="mt-2 line-clamp-3 block min-h-[4.5rem] text-sm font-bold leading-6 text-[var(--muted)]">{city.description || 'No city notes yet.'}</span>
                       </span>
-                      <span className="hidden min-w-[9rem] place-items-center rounded-2xl border border-[var(--line)] bg-black/15 px-4 text-[var(--brass)] lg:grid">
+                      <span className="hidden min-w-[8rem] place-items-center rounded-2xl border bg-black/25 px-4 lg:grid" style={{ borderColor: `${city.primaryColor}70`, color: city.accentColor }}>
                         <ChevronRight size={28} />
                       </span>
                     </span>
@@ -1415,8 +1428,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         <div className="space-y-4">
           <Card className="overflow-hidden">
             <div
-              className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/40 px-4 py-8 text-center shadow-[0_0_42px_rgba(245,180,76,0.1)] sm:px-8 sm:py-10"
-              style={{ background: `radial-gradient(circle at top, ${selectedCity.accentColor}30, transparent 38%), linear-gradient(135deg, ${selectedCity.primaryColor}42, rgba(18,15,14,0.86), ${selectedCity.secondaryColor}38)` }}
+              className="relative overflow-hidden rounded-2xl border px-4 py-9 text-center shadow-[0_0_42px_rgba(0,0,0,0.2)] sm:px-8 sm:py-12"
+              style={{
+                borderColor: `${selectedCity.accentColor}88`,
+                background: `radial-gradient(circle at 50% -18%, ${selectedCity.accentColor}66, transparent 36%), radial-gradient(circle at 0% 80%, ${selectedCity.primaryColor}38, transparent 34%), linear-gradient(135deg, ${selectedCity.primaryColor}4d, rgba(14,14,14,0.9) 48%, ${selectedCity.secondaryColor}4a)`,
+                boxShadow: `0 0 0 1px ${selectedCity.primaryColor}22, 0 24px 70px ${selectedCity.secondaryColor}20`
+              }}
             >
               <div className="pointer-events-none absolute inset-x-8 top-5 h-px" style={{ background: `linear-gradient(90deg, transparent, ${selectedCity.primaryColor}, transparent)` }} />
               <div className="pointer-events-none absolute inset-x-16 bottom-5 h-px" style={{ background: `linear-gradient(90deg, transparent, ${selectedCity.secondaryColor}, transparent)` }} />
@@ -1433,7 +1450,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </Card>
 
           <section className="space-y-3">
-            <CitySectionHeading label="City Services" />
+            <CitySectionHeading label="City Services" city={selectedCity} />
             {cityVendors.length === 0 ? (
               <Card><p className="text-sm font-bold text-[var(--muted)]">No services are available here yet.</p></Card>
             ) : (
@@ -1458,6 +1475,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
           {selectedCity.showUnderConstruction && (
             <ConstructionSection
+              city={selectedCity}
               projects={cityProjects}
               isDm={isDm}
               saving={saving}
@@ -1947,16 +1965,28 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   );
 }
 
-function CitySectionHeading({ label }: { label: string }) {
+function CitySectionHeading({ label, city }: { label: string; city?: City }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-[var(--brass)]/30 bg-gradient-to-r from-[rgba(245,180,76,0.16)] via-black/20 to-[rgba(31,120,117,0.12)] px-4 py-3 shadow-[0_12px_28px_rgba(0,0,0,0.18)]">
-      <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-[var(--brass)]/70 to-transparent" />
-      <h3 className="text-center text-sm font-black uppercase tracking-[0.24em] text-[var(--brass)]">{label}</h3>
+    <div
+      className="relative overflow-hidden rounded-2xl border px-4 py-3 shadow-[0_12px_28px_rgba(0,0,0,0.18)]"
+      style={{
+        borderColor: city ? `${city.accentColor}66` : undefined,
+        background: city
+          ? `linear-gradient(90deg, ${city.primaryColor}34, rgba(0,0,0,0.24), ${city.secondaryColor}30)`
+          : undefined
+      }}
+    >
+      <div
+        className="pointer-events-none absolute inset-x-4 top-0 h-px"
+        style={{ background: city ? `linear-gradient(90deg, transparent, ${city.accentColor}, ${city.primaryColor}, transparent)` : undefined }}
+      />
+      <h3 className="text-center text-sm font-black uppercase tracking-[0.24em]" style={{ color: city?.accentColor ?? undefined }}>{label}</h3>
     </div>
   );
 }
 
-function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, onEdit, onEnd, onContribute }: {
+function ConstructionSection({ city, projects, isDm, saving, canContribute, onCreate, onEdit, onEnd, onContribute }: {
+  city: City;
   projects: CityConstructionProject[];
   isDm: boolean;
   saving: boolean;
@@ -1969,7 +1999,7 @@ function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, 
   return (
     <section className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-[14rem] flex-1"><CitySectionHeading label="Under Construction" /></div>
+        <div className="min-w-[14rem] flex-1"><CitySectionHeading label="Under Construction" city={city} /></div>
         {isDm && <Button variant="secondary" className="px-3 py-2 text-xs" onClick={onCreate} disabled={saving}><Plus className="mr-2 inline" size={13} /> New project</Button>}
       </div>
       {projects.length === 0 ? (
@@ -1978,7 +2008,15 @@ function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, 
         <div className="grid gap-4">
           {projects.map((project) => (
             <Card key={project.id} className="overflow-hidden">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div
+                className="relative -m-4 mb-4 overflow-hidden border-b p-4 sm:-m-5 sm:mb-5 sm:p-5"
+                style={{
+                  borderColor: `${city.primaryColor}42`,
+                  background: `linear-gradient(135deg, ${city.primaryColor}24, rgba(0,0,0,0.12), ${city.secondaryColor}20)`
+                }}
+              >
+                <div className="pointer-events-none absolute inset-x-5 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${city.accentColor}, transparent)` }} />
+                <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="eyebrow">Construction Project</p>
                   <h4 className="mt-1 text-2xl font-black">{project.name}</h4>
@@ -1988,16 +2026,26 @@ function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, 
                   {isDm && !project.complete && <Button variant="secondary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => onEdit(project)}><Pencil className="mr-2 inline" size={13} /> Edit</Button>}
                   {isDm && <Button variant={project.complete ? 'primary' : 'secondary'} className="px-3 py-2 text-xs" disabled={saving} onClick={() => onEnd(project)}>{project.complete ? <CheckCircle2 className="mr-2 inline" size={13} /> : null} End</Button>}
                 </div>
+                </div>
               </div>
-              <div className="mt-4 h-3 overflow-hidden rounded-full border border-[var(--line)] bg-black/30">
-                <div className="h-full rounded-full bg-gradient-to-r from-[var(--teal)] to-[var(--brass)]" style={{ width: `${Math.round(project.progress * 100)}%` }} />
+              <div className="h-4 overflow-hidden rounded-full border bg-black/35" style={{ borderColor: `${city.accentColor}55` }}>
+                <div
+                  className="h-full rounded-full shadow-[0_0_18px_rgba(245,180,76,0.18)]"
+                  style={{
+                    width: `${Math.round(project.progress * 100)}%`,
+                    background: `linear-gradient(90deg, ${city.secondaryColor}, ${city.primaryColor}, ${city.accentColor})`
+                  }}
+                />
               </div>
               {project.complete ? (
-                <div className="mt-5 rounded-2xl border border-[var(--teal)]/50 bg-[var(--teal)]/10 p-5 text-center text-2xl font-black text-[var(--teal)]">COMPLETED</div>
+                <div
+                  className="mt-5 rounded-2xl border p-5 text-center text-2xl font-black"
+                  style={{ borderColor: `${city.accentColor}70`, backgroundColor: `${city.secondaryColor}18`, color: city.accentColor }}
+                >COMPLETED</div>
               ) : (
                 <div className="mt-4 grid gap-2">
                   {project.requirements.map((requirement) => (
-                    <ConstructionRequirementRow key={requirement.id} requirement={requirement} />
+                    <ConstructionRequirementRow key={requirement.id} requirement={requirement} city={city} />
                   ))}
                 </div>
               )}
@@ -2009,9 +2057,12 @@ function ConstructionSection({ projects, isDm, saving, canContribute, onCreate, 
   );
 }
 
-function ConstructionRequirementRow({ requirement }: { requirement: CityConstructionRequirement }) {
+function ConstructionRequirementRow({ requirement, city }: { requirement: CityConstructionRequirement; city: City }) {
   return (
-    <div className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+    <div
+      className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl border bg-black/15 p-3"
+      style={{ borderColor: requirement.complete ? `${city.accentColor}70` : `${city.primaryColor}30` }}
+    >
       <div className="flex min-w-0 items-center gap-3">
         <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-black/20 ${rarityClass(requirement.item.rarity)}`}><ItemIcon type={requirement.item.type} size={20} /></span>
         <div className="min-w-0">
@@ -2019,7 +2070,7 @@ function ConstructionRequirementRow({ requirement }: { requirement: CityConstruc
           <p className="text-xs font-bold text-[var(--muted)]">{requirement.item.type}</p>
         </div>
       </div>
-      <div className={`text-right text-sm font-black ${requirement.complete ? 'text-[var(--teal)]' : 'text-[var(--paper)]'}`}>
+      <div className="text-right text-sm font-black" style={{ color: requirement.complete ? city.accentColor : undefined }}>
         {requirement.complete ? 'COMPLETE' : `${formatQuantity(requirement.contributedQuantity)} / ${formatQuantity(requirement.requiredQuantity)}`}
       </div>
     </div>
