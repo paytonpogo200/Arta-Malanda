@@ -1353,8 +1353,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 '--city-primary': city.primaryColor,
                 '--city-secondary': city.secondaryColor,
                 '--city-accent': city.accentColor,
-                borderColor: active ? `${city.accentColor}cc` : `${city.primaryColor}78`,
-                boxShadow: active ? `0 0 0 1px ${city.accentColor}55, 0 22px 52px ${city.primaryColor}22` : `0 16px 36px ${city.secondaryColor}16`
+                borderColor: active ? `${city.primaryColor}cc` : `${city.primaryColor}82`,
+                boxShadow: active ? `0 0 0 1px ${city.primaryColor}55, 0 22px 52px ${city.primaryColor}24` : `0 16px 36px ${city.primaryColor}18`
               } as CSSProperties;
               return (
                 <button
@@ -1368,24 +1368,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   style={cardStyle}
                   className="group relative overflow-hidden rounded-2xl border bg-black/15 text-left transition hover:-translate-y-0.5 hover:shadow-[0_24px_60px_rgba(0,0,0,0.24)]"
                 >
-                  <span className="pointer-events-none absolute inset-0 opacity-95" style={{ background: `radial-gradient(circle at 8% 0%, ${city.accentColor}48, transparent 34%), linear-gradient(135deg, ${city.primaryColor}38 0%, rgba(8,10,12,0.42) 45%, ${city.secondaryColor}34 100%)` }} />
-                  <span className="pointer-events-none absolute inset-x-4 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${city.accentColor}, ${city.primaryColor}, transparent)` }} />
-                  <span className="pointer-events-none absolute inset-y-0 left-0 w-2" style={{ background: `linear-gradient(180deg, ${city.primaryColor}, ${city.accentColor}, ${city.secondaryColor})` }} />
+                  <span className="pointer-events-none absolute inset-0 opacity-95" style={{ background: `radial-gradient(circle at 8% 0%, ${city.primaryColor}5c, transparent 42%), linear-gradient(135deg, ${city.primaryColor}4f 0%, ${city.primaryColor}26 46%, ${city.secondaryColor}24 100%)` }} />
+                  <span className="pointer-events-none absolute inset-x-4 top-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${city.primaryColor}, ${city.accentColor}99, transparent)` }} />
+                  <span className="pointer-events-none absolute inset-y-0 left-0 w-1.5" style={{ background: `linear-gradient(180deg, ${city.primaryColor}, ${city.primaryColor}, ${city.secondaryColor})` }} />
+                  <span className="pointer-events-none absolute inset-y-3 right-3 w-px opacity-70" style={{ background: `linear-gradient(180deg, transparent, ${city.accentColor}, transparent)` }} />
                   <span className="relative block p-4 sm:p-5">
-                    <span className="grid gap-4 lg:grid-cols-[1fr_minmax(14rem,24rem)_auto] lg:items-stretch">
+                    <span className="grid gap-4 lg:grid-cols-[1fr_minmax(16rem,28rem)] lg:items-stretch">
                       <span className="flex min-w-0 flex-col justify-between gap-5">
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
-                            {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1" style={{ borderColor: `${city.accentColor}aa`, backgroundColor: `${city.accentColor}22`, color: city.accentColor }}><Star size={12} fill="currentColor" /> Residence</span>}
+                            {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1" style={{ borderColor: `${city.primaryColor}aa`, backgroundColor: `${city.primaryColor}24`, color: city.primaryColor }}><Star size={12} fill="currentColor" /> Residence</span>}
                             <span className={`rounded-full border px-2 py-1 ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
                             {city.showUnderConstruction && <span className="rounded-full border border-[var(--line)] bg-black/25 px-2 py-1 text-[var(--muted)]">Building</span>}
                           </span>
-                          <span className="mt-3 flex items-end gap-3">
+                          <span className="mt-3 flex items-center gap-3">
                             <span className="block min-w-0 flex-1 break-words text-3xl font-black leading-tight sm:text-5xl">{city.name}</span>
-                            <span className="hidden shrink-0 gap-1 sm:flex" aria-hidden="true">
-                              {[city.primaryColor, city.secondaryColor, city.accentColor].map((color) => (
-                                <span key={color} className="h-8 w-3 rounded-full border border-white/10 shadow-inner" style={{ backgroundColor: color }} />
-                              ))}
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border bg-black/20 transition group-hover:translate-x-0.5" style={{ borderColor: `${city.accentColor}78`, color: city.accentColor }}>
+                              <ChevronRight size={21} />
                             </span>
                           </span>
                         </span>
@@ -1394,12 +1393,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                           {city.showUnderConstruction && <span className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[var(--paper)]">{projectCount} project{projectCount === 1 ? '' : 's'}</span>}
                         </span>
                       </span>
-                      <span className="rounded-2xl border bg-black/30 p-4 backdrop-blur-sm" style={{ borderColor: `${city.accentColor}55` }}>
+                      <span className="rounded-2xl border bg-black/30 p-4 backdrop-blur-sm" style={{ borderColor: `${city.primaryColor}55` }}>
                         <span className="eyebrow">City Notes</span>
                         <span className="mt-2 line-clamp-3 block min-h-[4.5rem] text-sm font-bold leading-6 text-[var(--muted)]">{city.description || 'No city notes yet.'}</span>
-                      </span>
-                      <span className="hidden min-w-[8rem] place-items-center rounded-2xl border bg-black/25 px-4 lg:grid" style={{ borderColor: `${city.primaryColor}70`, color: city.accentColor }}>
-                        <ChevronRight size={28} />
                       </span>
                     </span>
                   </span>
@@ -2033,7 +2029,7 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
                   className="h-full rounded-full shadow-[0_0_18px_rgba(245,180,76,0.18)]"
                   style={{
                     width: `${Math.round(project.progress * 100)}%`,
-                    background: `linear-gradient(90deg, ${city.secondaryColor}, ${city.primaryColor}, ${city.accentColor})`
+                    background: `linear-gradient(90deg, ${city.primaryColor} 0%, ${city.primaryColor} 58%, ${city.secondaryColor} 82%, ${city.accentColor} 100%)`
                   }}
                 />
               </div>
