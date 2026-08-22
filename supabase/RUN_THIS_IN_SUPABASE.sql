@@ -1941,6 +1941,13 @@ begin
 end;
 $$;
 
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], integer, boolean, jsonb, text, boolean, integer, text, boolean, integer);
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], numeric, boolean, jsonb, text, boolean, integer, text, boolean, integer);
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], integer, boolean, jsonb, text, boolean, integer, text, boolean, integer, boolean);
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], numeric, boolean, jsonb, text, boolean, integer, text, boolean, integer, boolean);
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], integer, boolean, jsonb, text, boolean, integer, text, boolean, integer, boolean, boolean);
+drop function if exists public.upsert_item_catalog_entry(text, text, text, text, text[], numeric, boolean, jsonb, text, boolean, integer, text, boolean, integer, boolean, boolean);
+
 create or replace function public.upsert_item_catalog_entry(
   p_item_name text,
   p_item_type text,
