@@ -89,7 +89,7 @@ function EnchantedSpellCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate font-black">{spell.name}</p>
-          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Weapon enchantment; {spellManaText(spell)}</p>
+          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Item enchantment; {spellManaText(spell)}</p>
           <p className="mt-1 truncate text-xs font-black text-[var(--brass)]">{item.displayName || item.name}</p>
         </div>
         <Sparkles size={16} className="shrink-0 text-[var(--brass)]" />
@@ -175,7 +175,7 @@ export function SpellsPanel({
   const unplacedActiveSpells = useMemo(() => activeSpells.filter((entry) => entry.slotIndex === null), [activeSpells]);
   const canActivateInactive = activeSpells.length < activeSlotCount;
   const enchantedSpells = useMemo(() => enchantedItems
-    .filter((item) => item.type === 'weapon' && Boolean(item.enchantment?.trim()))
+    .filter((item) => Boolean(item.enchantment?.trim()))
     .map((item) => ({ item, spell: spellForEnchantment(payload.catalog, item.enchantment) }))
     .filter((entry): entry is { item: InventoryItem; spell: Spell } => Boolean(entry.spell))
     .sort((a, b) => a.spell.name.localeCompare(b.spell.name) || (a.item.displayName || a.item.name).localeCompare(b.item.displayName || b.item.name)), [enchantedItems, payload.catalog]);

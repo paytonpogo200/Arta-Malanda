@@ -212,6 +212,8 @@ export function parseLootWorkbook(buffer: Buffer) {
     const convertScaleNumber = optionalNumber(getColumn(row, lootHeaders, ['Convert Scale Number', 'Convert Scale Quantity', 'Scale Quantity'], 13), inferred.scaleQuantity);
     const isConvertible = booleanValue(getColumn(row, lootHeaders, ['Convertible'], 11));
     const canForgeDragonscaleScale = booleanValue(getColumn(row, lootHeaders, ['Can be crafted into Dragonscale Scales', 'Dragon Scale Fragment', 'Dragonscale Fragment'], 14));
+    const canBeEnhanced = booleanValue(getColumn(row, lootHeaders, ['Can Be Enhanced', 'Can be enhanced', 'Enhanceable'], 15));
+    const canBeEnchanted = booleanValue(getColumn(row, lootHeaders, ['Can Be Enchanted', 'Can be enchanted', 'Enchantable'], 16));
     return {
       pool,
       poolKey: `catalog-${slug(type)}`,
@@ -230,7 +232,9 @@ export function parseLootWorkbook(buffer: Buffer) {
       convertScaleItem,
       convertScaleNumber,
       canForgeDragonscaleScale,
-      notes: text(getColumn(row, lootHeaders, ['Notes', 'Description'], 15))
+      canBeEnhanced,
+      canBeEnchanted,
+      notes: text(getColumn(row, lootHeaders, ['Notes', 'Description'], -1))
     };
   }).filter(Boolean);
 

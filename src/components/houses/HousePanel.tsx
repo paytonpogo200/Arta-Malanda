@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Settings, Unlock, Users } from 'lucide-react';
+import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Settings, Trash2, Unlock, Users } from 'lucide-react';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
@@ -361,6 +361,12 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setHouseSettingsOpen(false);
   }
 
+  async function deleteHouse() {
+    if (!ownerUserId || !canAdd || homeKind !== 'house' || !homeAvailable) return;
+    if (!window.confirm('Delete this house, stable, property, and stored house items? Wagon Homes and Caged Wagons will not be deleted.')) return;
+    await requestHouseChange(`/api/houses/${ownerUserId}`, { method: 'DELETE' });
+  }
+
   async function updateItem(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || !itemDraft.name.trim() || !canAdd) return;
@@ -551,7 +557,12 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
             </Button>
           )}
-          {canEditPermissions && (
+          {canAdd && homeKind === 'house' && homeAvailable && (
+            <Button variant="danger" className="p-3" onClick={() => void deleteHouse()} aria-label="Delete house">
+              <Trash2 size={16} />
+            </Button>
+          )}
+          {canEditPermissions && homeAvailable && (
             <Button variant="secondary" className="p-3" onClick={() => setPermissionsOpen(true)} aria-label="House permissions">
               <Users size={16} />
             </Button>
@@ -569,8 +580,13 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       ) : (
         <div className="space-y-5">
           {!homeAvailable && (
-            <div className="rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
-              No home or stable is available for this player.
+            <div className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
+              <p>No home or stable is available for this player.</p>
+              {canAdd && (
+                <Button variant="primary" className="w-fit px-3 py-2 text-xs" onClick={openHouseSettings}>
+                  <Plus className="mr-2 inline" size={14} /> Create home
+                </Button>
+              )}
             </div>
           )}
           {homeAvailable && (
@@ -768,7 +784,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     <p className="font-black">{entry.displayName || entry.username || 'Player'}</p>
                     {entry.username && <p className="text-xs text-[var(--muted)]">{entry.username}</p>}
                   </div>
-                  {inventorySlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
+                  {homeAvailable && inventorySlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.house}
@@ -776,7 +792,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     />
                     {houseName}
                   </label>}
-                  {stableSlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
+                  {homeAvailable && stableSlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.stable}

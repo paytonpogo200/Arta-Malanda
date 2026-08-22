@@ -366,6 +366,8 @@ export function InventoryPanel({
           material: '',
           isTwoHanded: false,
           storageCapacity: entry.type === 'storage' ? inferStorageCapacity(entry.name) : 0,
+          canBeEnhanced: false,
+          canBeEnchanted: false,
           notes: entry.notes,
           active: true,
           order: 0

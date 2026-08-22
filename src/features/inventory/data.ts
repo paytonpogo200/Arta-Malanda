@@ -80,7 +80,9 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     isTwoHanded: Boolean(source.isTwoHanded),
     potionStrength: source.potionStrength ? String(source.potionStrength) : undefined,
     potionProperty: source.potionProperty ? String(source.potionProperty) : undefined,
-    potionQuality: source.potionQuality ? String(source.potionQuality) : undefined
+    potionQuality: source.potionQuality ? String(source.potionQuality) : undefined,
+    canBeEnhanced: Boolean(source.canBeEnhanced),
+    canBeEnchanted: Boolean(source.canBeEnchanted)
   };
 }
 

@@ -50,6 +50,8 @@ function normalizeItemCatalogEntry(value: unknown): ItemCatalogEntry {
     isTwoHanded: Boolean(source.isTwoHanded),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
     notes: String(source.notes ?? ''),
+    canBeEnhanced: Boolean(source.canBeEnhanced),
+    canBeEnchanted: Boolean(source.canBeEnchanted),
     active: source.active === undefined ? true : Boolean(source.active),
     order: numberFrom(source.order, 0)
   };

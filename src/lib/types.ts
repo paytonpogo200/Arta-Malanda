@@ -103,6 +103,8 @@ export type ItemCatalogEntry = {
   isTwoHanded: boolean;
   storageCapacity: number;
   notes: string;
+  canBeEnhanced: boolean;
+  canBeEnchanted: boolean;
   active: boolean;
   order: number;
 };
@@ -190,6 +192,8 @@ export type InventoryItem = {
   potionStrength?: string;
   potionProperty?: string;
   potionQuality?: string;
+  canBeEnhanced: boolean;
+  canBeEnchanted: boolean;
 };
 
 export type CurrencyUnit = {
@@ -372,6 +376,8 @@ export type LootItem = {
   weight: number;
   towerBaseOnly: boolean;
   stackable: boolean;
+  canBeEnhanced: boolean;
+  canBeEnchanted: boolean;
   notes: string;
 };
 

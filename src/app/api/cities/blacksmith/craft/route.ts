@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
       p_rune_product_id: body.runeProductId ? String(body.runeProductId) : null,
       p_modifier_key: body.modifierKey ? String(body.modifierKey) : null,
       p_rune_quantity: Number.isFinite(requestedRuneQuantity) ? Math.max(1, Math.floor(requestedRuneQuantity)) : null,
-      p_dragon_scale_selections: Array.isArray(body.dragonScaleSelections) ? body.dragonScaleSelections : null
+      p_dragon_scale_selections: Array.isArray(body.dragonScaleSelections) ? body.dragonScaleSelections : null,
+      p_rune_name: body.runeName ? String(body.runeName) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

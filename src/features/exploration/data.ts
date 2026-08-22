@@ -179,6 +179,8 @@ export function normalizeLootItem(value: unknown): LootItem {
     weight: Math.max(0, numberFrom(source.weight, 1)),
     towerBaseOnly: Boolean(source.towerBaseOnly),
     stackable: source.stackable === undefined ? true : Boolean(source.stackable),
+    canBeEnhanced: Boolean(source.canBeEnhanced),
+    canBeEnchanted: Boolean(source.canBeEnchanted),
     notes: String(source.notes ?? '')
   };
 }

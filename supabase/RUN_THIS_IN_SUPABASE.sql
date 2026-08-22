@@ -1732,6 +1732,8 @@ create table if not exists public.item_catalog (
   is_two_handed boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   notes text not null default '',
+  can_be_enhanced boolean not null default false,
+  can_be_enchanted boolean not null default false,
   is_active boolean not null default true,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -1745,6 +1747,10 @@ drop trigger if exists item_catalog_touch_updated_at on public.item_catalog;
 create trigger item_catalog_touch_updated_at
 before update on public.item_catalog
 for each row execute function public.touch_updated_at();
+
+alter table public.item_catalog
+  add column if not exists can_be_enhanced boolean not null default false,
+  add column if not exists can_be_enchanted boolean not null default false;
 
 create or replace function public.catalog_key_for_name(p_name text)
 returns text
@@ -1804,6 +1810,8 @@ as $$
     'isTwoHanded', p_item.is_two_handed,
     'storageCapacity', p_item.storage_capacity,
     'notes', p_item.notes,
+    'canBeEnhanced', p_item.can_be_enhanced,
+    'canBeEnchanted', p_item.can_be_enchanted,
     'active', p_item.is_active,
     'order', p_item.display_order
   )
@@ -1843,6 +1851,36 @@ as $$
       limit 1
     ), true)
   end
+$$;
+
+create or replace function public.item_catalog_can_be_enhanced(p_item_name text, p_item_type text, p_material text default null)
+returns boolean
+language sql
+stable
+as $$
+  select coalesce((
+    select c.can_be_enhanced
+    from public.item_catalog c
+    where c.item_key = public.catalog_key_for_name(p_item_name)
+      and c.is_active = true
+    limit 1
+  ), lower(concat_ws(' ', coalesce(p_material, ''), coalesce(p_item_name, ''))) like '%mythril%'
+      and public.normalize_item_type(p_item_type) in ('weapon', 'shield', 'armor', 'tool'))
+$$;
+
+create or replace function public.item_catalog_can_be_enchanted(p_item_name text, p_item_type text, p_material text default null)
+returns boolean
+language sql
+stable
+as $$
+  select coalesce((
+    select c.can_be_enchanted
+    from public.item_catalog c
+    where c.item_key = public.catalog_key_for_name(p_item_name)
+      and c.is_active = true
+    limit 1
+  ), lower(concat_ws(' ', coalesce(p_material, ''), coalesce(p_item_name, ''))) like '%mythril%'
+      and public.normalize_item_type(p_item_type) in ('weapon', 'shield', 'tool'))
 $$;
 
 create or replace function public.format_item_quantity(p_quantity numeric)
@@ -1917,7 +1955,9 @@ create or replace function public.upsert_item_catalog_entry(
   p_storage_capacity int default 0,
   p_notes text default '',
   p_is_active boolean default true,
-  p_display_order int default 0
+  p_display_order int default 0,
+  p_can_be_enhanced boolean default false,
+  p_can_be_enchanted boolean default false
 )
 returns uuid
 language plpgsql
@@ -1946,6 +1986,8 @@ begin
     is_two_handed,
     storage_capacity,
     notes,
+    can_be_enhanced,
+    can_be_enchanted,
     is_active,
     display_order
   )
@@ -1963,6 +2005,8 @@ begin
     coalesce(p_is_two_handed, false),
     greatest(0, coalesce(p_storage_capacity, 0)),
     coalesce(p_notes, ''),
+    coalesce(p_can_be_enhanced, false),
+    coalesce(p_can_be_enchanted, false),
     coalesce(p_is_active, true),
     coalesce(p_display_order, 0)
   )
@@ -1986,6 +2030,8 @@ begin
       is_two_handed = excluded.is_two_handed,
       storage_capacity = greatest(public.item_catalog.storage_capacity, excluded.storage_capacity),
       notes = case when excluded.notes = '' then public.item_catalog.notes else excluded.notes end,
+      can_be_enhanced = case when excluded.can_be_enhanced then true else public.item_catalog.can_be_enhanced end,
+      can_be_enchanted = case when excluded.can_be_enchanted then true else public.item_catalog.can_be_enchanted end,
       is_active = excluded.is_active,
       display_order = excluded.display_order
   returning id into v_id;
@@ -2057,6 +2103,38 @@ begin
     else storage_capacity
   end
   where item_key in ('waist-pouch', 'back-bag', 'light-duffle', 'heavy-duffle', 'bag-of-holding', 'light-wagon', 'heavy-wagon', 'caged-wagon', 'wagon-home');
+
+  update public.item_catalog
+  set can_be_enhanced = item_key in (
+        'mythril-pickaxe',
+        'mythril-sword',
+        'mythril-dagger',
+        'mythril-axe',
+        'mythril-battleaxe',
+        'mythril-mace',
+        'mythril-shield',
+        'mythril-armor',
+        'vaylium-armor'
+      ),
+      can_be_enchanted = item_key in (
+        'mythril-sword',
+        'mythril-dagger',
+        'mythril-axe',
+        'mythril-battleaxe',
+        'mythril-mace',
+        'mythril-shield'
+      )
+  where item_key in (
+    'mythril-pickaxe',
+    'mythril-sword',
+    'mythril-dagger',
+    'mythril-axe',
+    'mythril-battleaxe',
+    'mythril-mace',
+    'mythril-shield',
+    'mythril-armor',
+    'vaylium-armor'
+  );
 
   delete from public.item_catalog
   where item_key in ('basic-meal', 'tavern-meal', 'inn-room', 'fine-inn')
@@ -2455,7 +2533,9 @@ as $$
     'isTwoHanded', p_item.is_two_handed,
     'potionStrength', p_item.potion_strength,
     'potionProperty', p_item.potion_property,
-    'potionQuality', p_item.potion_quality
+    'potionQuality', p_item.potion_quality,
+    'canBeEnhanced', public.item_catalog_can_be_enhanced(p_item.item_name, p_item.item_type, p_item.material),
+    'canBeEnchanted', public.item_catalog_can_be_enchanted(p_item.item_name, p_item.item_type, p_item.material)
   )
 $$;
 
@@ -2887,6 +2967,10 @@ begin
     and p_parent_item_id is null;
 
   if v_make_storage_container then
+    if public.character_storage_container_exists(p_character_id, v_item_name) then
+      raise exception 'Only one % can be equipped as additional storage.', v_item_name;
+    end if;
+
     insert into public.inventory_items (
       character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
       item_description, is_accessory, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
@@ -3151,6 +3235,24 @@ begin
     v_original_slot_index := v_item.slot_index;
     v_parent_item_id := case when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid else v_item.parent_item_id end;
     v_slot_index := case when v_patch ? 'slotIndex' then (v_patch->>'slotIndex')::int else v_item.slot_index end;
+
+    if v_item.is_storage
+      and public.normalize_item_type(v_item.item_type) = 'storage'
+      and v_parent_item_id is null
+      and exists (
+        select 1
+        from public.inventory_items i
+        where i.character_id = v_item.character_id
+          and i.id <> v_item.id
+          and i.parent_item_id is null
+          and i.loadout_slot is null
+          and i.is_storage = true
+          and public.normalize_item_type(i.item_type) = 'storage'
+          and lower(i.item_name) = lower(v_item.item_name)
+      )
+    then
+      raise exception 'Only one % can be equipped as additional storage.', v_item.item_name;
+    end if;
 
     if v_item.item_type = 'pet' then
       if v_parent_item_id is null then
@@ -3574,6 +3676,8 @@ $$;
 
 grant execute on function public.loadout_slot_accepts_item(text, text, boolean) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
+grant execute on function public.item_catalog_can_be_enhanced(text, text, text) to anon, authenticated;
+grant execute on function public.item_catalog_can_be_enchanted(text, text, text) to anon, authenticated;
 grant execute on function public.format_item_quantity(numeric) to anon, authenticated;
 grant execute on function public.inventory_item_record_to_json(public.inventory_items) to anon, authenticated;
 grant execute on function public.wallet_balances_for_character(uuid) to anon, authenticated;
@@ -4018,7 +4122,9 @@ as $$
     'isTwoHanded', p_item.is_two_handed,
     'potionStrength', p_item.potion_strength,
     'potionProperty', p_item.potion_property,
-    'potionQuality', p_item.potion_quality
+    'potionQuality', p_item.potion_quality,
+    'canBeEnhanced', public.item_catalog_can_be_enhanced(p_item.item_name, p_item.item_type, p_item.material),
+    'canBeEnchanted', public.item_catalog_can_be_enchanted(p_item.item_name, p_item.item_type, p_item.material)
   )
 $$;
 
@@ -8681,6 +8787,41 @@ begin
 end;
 $$;
 
+create or replace function public.delete_player_house(
+  p_session_token text,
+  p_owner_user_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    raise exception 'Only the Dungeon Master can delete houses.';
+  end if;
+
+  delete from public.house_inventory_items
+  where owner_user_id = p_owner_user_id;
+
+  delete from public.campaign_properties
+  where owner_user_id = p_owner_user_id;
+
+  delete from public.house_access_permissions
+  where owner_user_id = p_owner_user_id;
+
+  delete from public.player_houses
+  where owner_user_id = p_owner_user_id;
+
+  return public.get_player_house(p_session_token, p_owner_user_id);
+end;
+$$;
+
 create or replace function public.set_player_house_permissions(
   p_session_token text,
   p_owner_user_id uuid,
@@ -9744,7 +9885,9 @@ begin
     when 'frost' then 'Frost'
     when 'lightning' then 'Lightning'
     when 'earth' then 'Earth'
+    when 'mountain' then 'Earth'
     when 'wind' then 'Wind'
+    when 'void' then 'Utility'
     when 'energy' then 'Energy'
     when 'defensive support' then 'Defensive Support'
     when 'offensive support' then 'Offensive Support'
@@ -9790,6 +9933,7 @@ $$;
 
 drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text);
 drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int);
+drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb);
 
 create or replace function public.run_blacksmith_action(
   p_session_token text,
@@ -9801,7 +9945,8 @@ create or replace function public.run_blacksmith_action(
   p_rune_product_id uuid default null,
   p_modifier_key text default null,
   p_rune_quantity int default null,
-  p_dragon_scale_selections jsonb default null
+  p_dragon_scale_selections jsonb default null,
+  p_rune_name text default null
 )
 returns jsonb
 language plpgsql
@@ -9827,9 +9972,9 @@ declare
   v_slot int;
   v_modifiers jsonb := '{}'::jsonb;
   v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
-  v_catalyst text;
   v_required_runes int;
   v_rune_quantity int;
+  v_rune_name text := '';
   v_spell_name text;
   v_city public.cities%rowtype;
 begin
@@ -9941,40 +10086,27 @@ begin
   where id = p_target_item_id
     and character_id = v_character.id;
 
-  if v_target.id is null then raise exception 'Choose an eligible Mythril item.'; end if;
-  if lower(coalesce(v_target.material, '') || ' ' || v_target.item_name) not like '%mythril%' then
-    raise exception 'Only Mythril items can use that service.';
+  if v_target.id is null then raise exception 'Choose an eligible item.'; end if;
+
+  if p_rune_product_id is not null then
+    select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available;
+  end if;
+  v_rune_name := public.normalize_item_name(coalesce(nullif(trim(p_rune_name), ''), v_rune_product.item_name, ''));
+  if v_rune_name = '' then raise exception 'Choose a rune.'; end if;
+  if lower(v_rune_name) not in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'void rune') then
+    raise exception 'Choose an Ember, Frost, Lightning, Earth, Wind, Mountain, or Void rune.';
   end if;
 
-  select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available and price_coin > 0;
-  if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
-
   if lower(coalesce(p_action, '')) = 'enhance' then
-    if v_target.item_type not in ('weapon', 'shield') then raise exception 'Blacksmith enhancement is for Mythril weapons and shields.'; end if;
+    if v_target.item_type = 'armor' then raise exception 'Armor enhancement belongs at the armory.'; end if;
+    if not public.item_catalog_can_be_enhanced(v_target.item_name, v_target.item_type, v_target.material) then raise exception 'That item is not marked enhanceable.'; end if;
     if v_target.enchantment is not null then raise exception 'An enchanted item cannot be enhanced.'; end if;
     if v_target.enhancement_count >= 3 then raise exception 'That item already has three enhancements.'; end if;
-    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < 1 then raise exception 'Not enough rune stock.'; end if;
-
-    v_catalyst := case v_key
-      when 'strength' then 'Titanvine Root'
-      when 'accuracy' then 'Hawkeye Blossom'
-      when 'intelligence' then 'Star Sage Orchid'
-      when 'vitality' then 'Heartwood Sprout'
-      when 'magic_resist' then 'Null Fern'
-      when 'stealth' then 'Shade Moss'
-      else null
-    end;
-    if v_catalyst is null then raise exception 'Unsupported enhancement.'; end if;
-
-    v_cost := 1000 + v_rune_product.price_coin;
-    v_wallet := public.wallet_total_coin(v_character.id);
-    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
-
-    perform public.consume_crafting_item_by_name(v_character.id, v_catalyst, 20, v_city.name);
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
-    if v_rune_product.stock_quantity is not null then
-      update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
+    if v_key not in ('strength', 'accuracy', 'intelligence', 'vitality', 'recovery', 'mana_regen', 'charisma', 'wisdom_cunning', 'perception', 'alchemy', 'stealth', 'agility') then
+      raise exception 'Choose an attribute or skill to enhance.';
     end if;
+
+    perform public.consume_crafting_item_by_name(v_character.id, v_rune_name, 1, v_city.name);
 
     v_modifiers := coalesce(v_target.modifiers, '{}'::jsonb) || jsonb_build_object(v_key, coalesce((v_target.modifiers->>v_key)::int, 0) + 1);
     update public.inventory_items
@@ -9986,21 +10118,14 @@ begin
   end if;
 
   if lower(coalesce(p_action, '')) = 'enchant' then
-    if v_target.item_type <> 'weapon' then raise exception 'Only Mythril weapons can be enchanted.'; end if;
+    if not public.item_catalog_can_be_enchanted(v_target.item_name, v_target.item_type, v_target.material) then raise exception 'That item is not marked enchantable.'; end if;
     if v_target.enchantment is not null then raise exception 'That weapon is already enchanted.'; end if;
     if v_target.enhancement_count > 0 then raise exception 'An enhanced weapon cannot be enchanted.'; end if;
     v_required_runes := case when lower(v_character.class_key) = 'talismanist' or lower(v_character.class_name) = 'talismanist' then 3 else 5 end;
     v_rune_quantity := greatest(v_required_runes, coalesce(p_rune_quantity, v_required_runes));
-    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < v_rune_quantity then raise exception 'Not enough rune stock.'; end if;
 
-    v_spell_name := public.enchantment_spell_for_rune(v_rune_product.item_name, v_rune_quantity, v_required_runes);
-    v_cost := 1000 + (v_rune_product.price_coin * v_rune_quantity);
-    v_wallet := public.wallet_total_coin(v_character.id);
-    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
-    if v_rune_product.stock_quantity is not null then
-      update public.market_products set stock_quantity = greatest(0, stock_quantity - v_rune_quantity) where id = v_rune_product.id;
-    end if;
+    v_spell_name := public.enchantment_spell_for_rune(v_rune_name, v_rune_quantity, v_required_runes);
+    perform public.consume_crafting_item_by_name(v_character.id, v_rune_name, v_rune_quantity, v_city.name);
 
     update public.inventory_items
     set enchantment = v_spell_name
@@ -10014,6 +10139,7 @@ end;
 $$;
 
 drop function if exists public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text);
+drop function if exists public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb);
 
 create or replace function public.run_armory_action(
   p_session_token text,
@@ -10024,7 +10150,8 @@ create or replace function public.run_armory_action(
   p_target_item_id uuid default null,
   p_rune_product_id uuid default null,
   p_modifier_key text default null,
-  p_dragon_scale_selections jsonb default null
+  p_dragon_scale_selections jsonb default null,
+  p_rune_name text default null
 )
 returns jsonb
 language plpgsql
@@ -10049,7 +10176,7 @@ declare
   v_slot int;
   v_modifiers jsonb := '{}'::jsonb;
   v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
-  v_catalyst text;
+  v_rune_name text := '';
   v_city public.cities%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
@@ -10141,39 +10268,25 @@ begin
     where id = p_target_item_id
       and character_id = v_character.id;
 
-    if v_target.id is null then raise exception 'Choose an eligible Mythril armor.'; end if;
-    if v_target.item_type <> 'armor' then raise exception 'Armory enhancement is for Mythril armor.'; end if;
-    if lower(coalesce(v_target.material, '') || ' ' || v_target.item_name) not like '%mythril%' then
-      raise exception 'Only Mythril armor can use that service.';
-    end if;
+    if v_target.id is null then raise exception 'Choose an eligible armor.'; end if;
+    if v_target.item_type <> 'armor' then raise exception 'Armory enhancement is for armor.'; end if;
+    if not public.item_catalog_can_be_enhanced(v_target.item_name, v_target.item_type, v_target.material) then raise exception 'That armor is not marked enhanceable.'; end if;
     if v_target.enchantment is not null then raise exception 'An enchanted item cannot be enhanced.'; end if;
     if v_target.enhancement_count >= 3 then raise exception 'That armor already has three enhancements.'; end if;
 
-    select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available and price_coin > 0;
-    if v_rune_product.id is null then raise exception 'Choose a rune.'; end if;
-    if v_rune_product.stock_quantity is not null and v_rune_product.stock_quantity < 1 then raise exception 'Not enough rune stock.'; end if;
-
-    v_catalyst := case v_key
-      when 'strength' then 'Titanvine Root'
-      when 'accuracy' then 'Hawkeye Blossom'
-      when 'intelligence' then 'Star Sage Orchid'
-      when 'vitality' then 'Heartwood Sprout'
-      when 'magic_resist' then 'Null Fern'
-      when 'stealth' then 'Shade Moss'
-      else null
-    end;
-    if v_catalyst is null then raise exception 'Unsupported enhancement.'; end if;
-
-    v_labor := case when lower(v_character.class_key) = 'armor-clad' or lower(v_character.class_name) = 'armor-clad' then 0 else 1000 end;
-    v_cost := v_labor + v_rune_product.price_coin;
-    v_wallet := public.wallet_total_coin(v_character.id);
-    if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
-
-    perform public.consume_crafting_item_by_name(v_character.id, v_catalyst, 20, v_city.name);
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
-    if v_rune_product.stock_quantity is not null then
-      update public.market_products set stock_quantity = greatest(0, stock_quantity - 1) where id = v_rune_product.id;
+    if p_rune_product_id is not null then
+      select * into v_rune_product from public.market_products where id = p_rune_product_id and item_type = 'rune' and is_available;
     end if;
+    v_rune_name := public.normalize_item_name(coalesce(nullif(trim(p_rune_name), ''), v_rune_product.item_name, ''));
+    if v_rune_name = '' then raise exception 'Choose a rune.'; end if;
+    if lower(v_rune_name) not in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune', 'void rune') then
+      raise exception 'Choose an Ember, Frost, Lightning, Earth, Wind, Mountain, or Void rune.';
+    end if;
+    if v_key not in ('strength', 'accuracy', 'intelligence', 'vitality', 'recovery', 'mana_regen', 'charisma', 'wisdom_cunning', 'perception', 'alchemy', 'stealth', 'agility') then
+      raise exception 'Choose an attribute or skill to enhance.';
+    end if;
+
+    perform public.consume_crafting_item_by_name(v_character.id, v_rune_name, 1, v_city.name);
 
     v_modifiers := coalesce(v_target.modifiers, '{}'::jsonb) || jsonb_build_object(v_key, coalesce((v_target.modifiers->>v_key)::int, 0) + 1);
     update public.inventory_items
@@ -10815,10 +10928,11 @@ grant execute on function public.house_item_quantity_by_name(uuid, text, text) t
 grant execute on function public.accessible_item_quantity_by_name(uuid, text, text) to anon, authenticated;
 grant execute on function public.consume_crafting_item_by_name(uuid, text, numeric, text) to anon, authenticated;
 grant execute on function public.update_player_house(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.delete_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.set_player_house_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.consume_forge_materials(uuid, uuid, numeric, int, text, text) to anon, authenticated;
-grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb) to anon, authenticated;
-grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb) to anon, authenticated;
+grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb, text) to anon, authenticated;
+grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb, text) to anon, authenticated;
 grant execute on function public.crafting_selection_item(uuid, text, uuid, text) to anon, authenticated;
 grant execute on function public.consume_crafting_selection(uuid, text, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.brewery_available_items(uuid, text) to anon, authenticated;
@@ -11335,7 +11449,18 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
-  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  select * into v_character
+  from public.characters
+  where id = p_character_id;
+
+  if v_character.id is null then
+    raise exception 'Character not found.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role
+     and v_character.kind <> 'player'::public.character_kind then
+    raise exception 'You do not have access to this character''s spells.';
+  end if;
 
   return jsonb_build_object(
     'catalog', (
@@ -11613,16 +11738,15 @@ begin
   where id = p_item_id
     and character_id = v_character.id;
 
-  if v_item.id is null then raise exception 'Enchanted weapon not found.'; end if;
-  if v_item.item_type <> 'weapon' then raise exception 'Only enchanted weapons can cast this way.'; end if;
-  if nullif(trim(coalesce(v_item.enchantment, '')), '') is null then raise exception 'That weapon has no spell enchantment.'; end if;
+  if v_item.id is null then raise exception 'Enchanted item not found.'; end if;
+  if nullif(trim(coalesce(v_item.enchantment, '')), '') is null then raise exception 'That item has no spell enchantment.'; end if;
 
   select * into v_spell from public.spell_catalog where id = p_spell_id;
   if v_spell.id is null then raise exception 'Spell not found.'; end if;
 
   if lower(regexp_replace(v_item.enchantment, '[^a-z0-9]+', ' ', 'g')) <> lower(regexp_replace(v_spell.name, '[^a-z0-9]+', ' ', 'g'))
      and lower(regexp_replace(v_item.enchantment, '[^a-z0-9]+', ' ', 'g')) <> lower(regexp_replace(v_spell.spell_key, '[^a-z0-9]+', ' ', 'g')) then
-    raise exception 'That spell does not match this weapon enchantment.';
+    raise exception 'That spell does not match this item enchantment.';
   end if;
 
   select cb.* into v_combatant
@@ -12435,6 +12559,20 @@ begin
   if v_storage.id is null then raise exception 'Storage container is no longer available.'; end if;
   if not v_storage.is_storage then raise exception 'That item is not a storage container.'; end if;
   if v_storage.loadout_slot is not null then raise exception 'Unequip that storage container before moving it.'; end if;
+
+  if exists (
+    select 1
+    from public.inventory_items i
+    where i.character_id = p_to_character_id
+      and i.id <> v_storage.id
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.is_storage = true
+      and public.normalize_item_type(i.item_type) = 'storage'
+      and lower(i.item_name) = lower(v_storage.item_name)
+  ) then
+    raise exception 'Only one % can be equipped as additional storage.', v_storage.item_name;
+  end if;
 
   v_slot_index := public.next_storage_container_slot(p_to_character_id);
 
@@ -13879,6 +14017,8 @@ declare
   v_convert_scale_quantity numeric;
   v_conversion_material text;
   v_dragon_scale_fragment boolean;
+  v_can_be_enhanced boolean;
+  v_can_be_enchanted boolean;
   v_notes text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
@@ -13987,6 +14127,18 @@ begin
       when '1' then true
       else false
     end;
+    v_can_be_enhanced := case lower(trim(coalesce(v_row->>'canBeEnhanced', v_row->>'can_be_enhanced', v_row->>'enhanceable', '')))
+      when 'true' then true
+      when 'yes' then true
+      when '1' then true
+      else false
+    end;
+    v_can_be_enchanted := case lower(trim(coalesce(v_row->>'canBeEnchanted', v_row->>'can_be_enchanted', v_row->>'enchantable', '')))
+      when 'true' then true
+      when 'yes' then true
+      when '1' then true
+      else false
+    end;
     v_notes := coalesce(v_row->>'notes', '');
 
     insert into public.loot_pools (pool_key, name, description, display_order)
@@ -14043,8 +14195,15 @@ begin
       case when v_type_text = 'storage' then public.catalog_storage_capacity(v_name) else 0 end,
       v_notes,
       true,
-      100
+      100,
+      v_can_be_enhanced,
+      v_can_be_enchanted
     );
+
+    update public.item_catalog
+    set can_be_enhanced = v_can_be_enhanced,
+        can_be_enchanted = v_can_be_enchanted
+    where item_key = public.catalog_key_for_name(v_name);
 
     if v_convertible and v_convert_scale_item_name <> '' and v_convert_scale_quantity > 0 then
       v_conversion_material := regexp_replace(v_convert_scale_item_name, '\s+Scale$', '', 'i');
@@ -14388,6 +14547,10 @@ begin
   v_inventory_quantity := v_quantity;
 
   if v_item_type = 'storage'::text then
+    if public.character_storage_container_exists(v_character.id, v_item_name) then
+      raise exception 'Only one % can be equipped as additional storage.', v_item_name;
+    end if;
+
     insert into public.inventory_items (
       character_id,
       parent_item_id,
@@ -15080,6 +15243,8 @@ declare
   v_has_house boolean := false;
   v_has_home boolean := false;
   v_has_caged boolean := false;
+  v_can_view_house boolean := false;
+  v_can_view_stable boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -15097,6 +15262,40 @@ begin
   from public.caged_wagon_storage_for_owner(p_owner_user_id);
   v_has_caged := found;
 
+  v_can_view_house := v_profile.role = 'dm'::public.user_role
+    or p_owner_user_id is not distinct from v_profile.id
+    or (v_has_house and exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = p_owner_user_id
+        and a.grantee_user_id = v_profile.id
+        and a.can_access_house
+    ))
+    or (v_has_home and exists (
+      select 1
+      from public.mobile_storage_access_permissions a
+      where a.storage_item_id = (v_home.storage).id
+        and a.owner_user_id = p_owner_user_id
+        and a.grantee_user_id = v_profile.id
+    ));
+
+  v_can_view_stable := v_profile.role = 'dm'::public.user_role
+    or p_owner_user_id is not distinct from v_profile.id
+    or (v_has_house and exists (
+      select 1
+      from public.house_access_permissions a
+      where a.owner_user_id = p_owner_user_id
+        and a.grantee_user_id = v_profile.id
+        and a.can_access_stable
+    ))
+    or (v_has_caged and exists (
+      select 1
+      from public.mobile_storage_access_permissions a
+      where a.storage_item_id = (v_caged.storage).id
+        and a.owner_user_id = p_owner_user_id
+        and a.grantee_user_id = v_profile.id
+    ));
+
   if not v_has_house and not v_has_home and not v_has_caged then
     return jsonb_build_object(
       'house', null,
@@ -15112,26 +15311,7 @@ begin
     );
   end if;
 
-  if not v_has_house
-    and v_profile.role <> 'dm'::public.user_role
-    and p_owner_user_id is distinct from v_profile.id
-    and not (
-      (v_has_home and exists (
-      select 1
-      from public.mobile_storage_access_permissions a
-      where a.storage_item_id = (v_home.storage).id
-        and a.owner_user_id = p_owner_user_id
-        and a.grantee_user_id = v_profile.id
-      ))
-      or (v_has_caged and exists (
-        select 1
-        from public.mobile_storage_access_permissions a
-        where a.storage_item_id = (v_caged.storage).id
-          and a.owner_user_id = p_owner_user_id
-          and a.grantee_user_id = v_profile.id
-      ))
-    )
-  then
+  if not v_can_view_house and not v_can_view_stable then
     raise exception 'You do not have access to this home or stable.';
   end if;
 
@@ -15160,26 +15340,8 @@ begin
     'access', jsonb_build_object(
       'owner', p_owner_user_id is not distinct from v_profile.id,
       'dm', v_profile.role = 'dm'::public.user_role,
-      'house', v_profile.role = 'dm'::public.user_role
-        or p_owner_user_id is not distinct from v_profile.id
-        or (v_has_house and exists (
-          select 1 from public.house_access_permissions a
-          where a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id and a.can_access_house
-        ))
-        or (v_has_home and exists (
-          select 1 from public.mobile_storage_access_permissions a
-          where a.storage_item_id = (v_home.storage).id and a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id
-        )),
-      'stable', v_profile.role = 'dm'::public.user_role
-        or p_owner_user_id is not distinct from v_profile.id
-        or (v_has_house and exists (
-          select 1 from public.house_access_permissions a
-          where a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id and a.can_access_stable
-        ))
-        or (v_has_caged and exists (
-          select 1 from public.mobile_storage_access_permissions a
-          where a.storage_item_id = (v_caged.storage).id and a.owner_user_id = p_owner_user_id and a.grantee_user_id = v_profile.id
-        ))
+      'house', v_can_view_house,
+      'stable', v_can_view_stable
     ),
     'permissions', case
       when v_profile.role = 'dm'::public.user_role or p_owner_user_id is not distinct from v_profile.id
@@ -15218,8 +15380,8 @@ begin
       with recursive mobile_contained as (
         select i.*
         from public.inventory_items i
-        where (v_has_home and i.parent_item_id = (v_home.storage).id)
-           or (v_has_caged and i.parent_item_id = (v_caged.storage).id)
+        where (v_has_home and v_can_view_house and i.parent_item_id = (v_home.storage).id)
+           or (v_has_caged and v_can_view_stable and i.parent_item_id = (v_caged.storage).id)
         union all
         select child.*
         from public.inventory_items child
@@ -15232,6 +15394,10 @@ begin
           h.item_name
         from public.house_inventory_items h
         where v_has_house and h.owner_user_id = p_owner_user_id
+          and (
+            (public.normalize_item_type(h.item_type) = 'pet' and v_can_view_stable)
+            or (public.normalize_item_type(h.item_type) <> 'pet' and v_can_view_house)
+          )
         union all
         select public.inventory_item_record_to_json(i),
           coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid),
@@ -15245,7 +15411,7 @@ begin
     'properties', (
       select coalesce(jsonb_agg(public.property_record_to_json(p) order by p.property_location, p.slot_index, p.property_name), '[]'::jsonb)
       from public.campaign_properties p
-      where v_has_house and p.owner_user_id = p_owner_user_id
+      where v_has_house and p.owner_user_id = p_owner_user_id and (v_can_view_house or v_can_view_stable)
     )
   );
 end;
@@ -15709,6 +15875,7 @@ grant execute on function public.mobile_home_house_access_to_json(public.profile
 grant execute on function public.mobile_home_house_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_home_wagon(text, uuid, int, uuid) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
+grant execute on function public.delete_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.set_player_house_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
