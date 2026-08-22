@@ -4019,7 +4019,7 @@ create trigger campaign_properties_touch_updated_at
 before update on public.campaign_properties
 for each row execute function public.touch_updated_at();
 
-create or replace function public.ensure_player_house(p_owner_user_id uuid)
+create or replace function public.get_required_player_house(p_owner_user_id uuid)
 returns public.player_houses
 language plpgsql
 security definer
@@ -4079,7 +4079,7 @@ begin
     raise exception 'You do not have access to this house.';
   end if;
 
-  v_house := public.ensure_player_house(p_owner_user_id);
+  v_house := public.get_required_player_house(p_owner_user_id);
   return v_house;
 end;
 $$;
@@ -4598,7 +4598,7 @@ begin
     return v_caged_pet;
   end if;
 
-  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_house := public.get_required_player_house(v_character.owner_user_id);
   v_slot := public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house);
   if v_slot is null then
     raise exception 'No open active pet or stable slot.';
@@ -4715,7 +4715,7 @@ begin
     return v_caged_pet;
   end if;
 
-  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_house := public.get_required_player_house(v_character.owner_user_id);
   v_slot := public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house);
   if v_slot is null then
     raise exception 'No open stable slot.';
@@ -5373,7 +5373,7 @@ begin
     raise exception 'Empty this storage item before sending it to the house.';
   end if;
 
-  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_house := public.get_required_player_house(v_character.owner_user_id);
 
   select * into v_target
   from public.house_inventory_items h
@@ -5511,7 +5511,7 @@ begin
     raise exception 'Empty this storage item before sending it to the house.';
   end if;
 
-  v_house := public.ensure_player_house(v_character.owner_user_id);
+  v_house := public.get_required_player_house(v_character.owner_user_id);
   perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, p_slot_index, v_item.item_type);
 
   select * into v_target
@@ -5675,7 +5675,7 @@ begin
         raise exception 'Active pet slot is occupied and that character has no player stable.';
       end if;
 
-      v_target_house := public.ensure_player_house(v_character.owner_user_id);
+      v_target_house := public.get_required_player_house(v_character.owner_user_id);
       v_active_pet_stable_slot := case
         when v_house.owner_user_id = v_character.owner_user_id
           and v_house_item.parent_item_id is null
@@ -6470,7 +6470,8 @@ begin
 end;
 $$;
 
-grant execute on function public.ensure_player_house(uuid) to anon, authenticated;
+grant execute on function public.get_required_player_house(uuid) to anon, authenticated;
+drop function if exists public.ensure_player_house(uuid);
 grant execute on function public.assert_house_access(public.profiles, uuid, boolean) to anon, authenticated;
 grant execute on function public.house_record_to_json(public.player_houses) to anon, authenticated;
 grant execute on function public.house_item_record_to_json(public.house_inventory_items) to anon, authenticated;
@@ -11367,10 +11368,7 @@ alter table public.character_spells
   add column if not exists custom_details text,
   add column if not exists custom_mana_cost int check (custom_mana_cost is null or custom_mana_cost >= 0);
 
-create table if not exists public.app_checkpoints (
-  checkpoint_key text primary key,
-  applied_at timestamptz not null default now()
-);
+drop table if exists public.app_checkpoints;
 
 do $$
 begin
@@ -11385,10 +11383,6 @@ begin
     delete from public.spell_catalog where spell_key = 'defibulate';
   end if;
 
-  if not exists (select 1 from public.app_checkpoints where checkpoint_key = 'clear-owned-spells-official-catalog-2026-07-25') then
-    delete from public.character_spells;
-    insert into public.app_checkpoints (checkpoint_key) values ('clear-owned-spells-official-catalog-2026-07-25');
-  end if;
 end;
 $$;
 
@@ -15765,7 +15759,7 @@ declare
   v_caged record;
   v_inserted int;
 begin
-  create temp table if not exists house_mobile_migration_map (
+  create temp table house_mobile_migration_map (
     old_id uuid primary key,
     new_id uuid not null
   ) on commit drop;
