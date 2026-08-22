@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "validate:sql": "node scripts/validate-sql.mjs",
+    "check:unused": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

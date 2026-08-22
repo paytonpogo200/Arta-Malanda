@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAuthDatabaseClient } from '@/lib/auth/database';
 import { readSessionToken } from '@/lib/auth/session';
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const token = await readSessionToken();
     if (!token) return NextResponse.json({ error: 'Log in to update notifications.' }, { status: 401 });

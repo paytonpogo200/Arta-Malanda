@@ -4032,11 +4032,13 @@ begin
     raise exception 'House owner not found.';
   end if;
 
-  insert into public.player_houses (owner_user_id)
-  values (p_owner_user_id)
-  on conflict (owner_user_id) do update
-  set owner_user_id = excluded.owner_user_id
-  returning * into v_house;
+  select * into v_house
+  from public.player_houses
+  where owner_user_id = p_owner_user_id;
+
+  if v_house.id is null then
+    raise exception 'House not found. The Dungeon Master must create it first.';
+  end if;
 
   return v_house;
 end;
@@ -4367,6 +4369,116 @@ begin
 end;
 $$;
 
+create or replace function public.place_pet_item_in_caged_wagon_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_caged record;
+  v_slot int;
+  v_pet public.inventory_items%rowtype;
+  v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then
+    raise exception 'Receiving character was not found.';
+  end if;
+
+  if v_character.owner_user_id is null then
+    return null;
+  end if;
+
+  if v_quantity <> 1 then
+    raise exception 'Pets must be moved one at a time.';
+  end if;
+
+  select * into v_caged
+  from public.caged_wagon_storage_for_owner(v_character.owner_user_id);
+
+  if not found then
+    return null;
+  end if;
+
+  v_slot := public.find_first_free_inventory_slot(
+    (v_caged.storage).character_id,
+    (v_caged.storage).id,
+    greatest(0, (v_caged.storage).storage_capacity)
+  );
+  if v_slot is null then
+    return null;
+  end if;
+
+  insert into public.inventory_items (
+    character_id,
+    parent_item_id,
+    slot_index,
+    loadout_slot,
+    item_name,
+    display_name,
+    item_description,
+    item_type,
+    rarity,
+    quantity,
+    is_accessory,
+    is_storage,
+    storage_capacity,
+    modifiers,
+    enchantment,
+    rune_name,
+    material,
+    enhancement_count,
+    is_two_handed,
+    potion_strength,
+    potion_property,
+    potion_quality
+  )
+  values (
+    (v_caged.storage).character_id,
+    (v_caged.storage).id,
+    v_slot,
+    null,
+    public.normalize_item_name(p_item_name),
+    nullif(left(trim(coalesce(p_display_name, '')), 80), ''),
+    left(trim(coalesce(p_item_description, '')), 1500),
+    'pet',
+    p_rarity,
+    1,
+    coalesce(p_is_accessory, false),
+    false,
+    0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    nullif(trim(coalesce(p_enchantment, '')), ''),
+    nullif(trim(coalesce(p_rune_name, '')), ''),
+    trim(coalesce(p_material, '')),
+    least(3, greatest(0, coalesce(p_enhancement_count, 0))),
+    coalesce(p_is_two_handed, false),
+    null,
+    null,
+    null
+  )
+  returning * into v_pet;
+
+  return public.inventory_item_record_to_json(v_pet);
+end;
+$$;
+
 create or replace function public.place_pet_item_for_character(
   p_character_id uuid,
   p_item_name text,
@@ -4392,6 +4504,7 @@ declare
   v_house public.player_houses%rowtype;
   v_slot int;
   v_pet public.inventory_items%rowtype;
+  v_caged_pet jsonb;
   v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
 begin
   select * into v_character from public.characters where id = p_character_id;
@@ -4464,6 +4577,25 @@ begin
 
   if v_character.owner_user_id is null then
     raise exception 'Active pet slot is occupied and that character has no player stable.';
+  end if;
+
+  v_caged_pet := public.place_pet_item_in_caged_wagon_for_character(
+    p_character_id,
+    p_item_name,
+    p_display_name,
+    p_item_description,
+    p_rarity,
+    p_quantity,
+    p_is_accessory,
+    p_modifiers,
+    p_enchantment,
+    p_rune_name,
+    p_material,
+    p_enhancement_count,
+    p_is_two_handed
+  );
+  if v_caged_pet is not null then
+    return v_caged_pet;
   end if;
 
   v_house := public.ensure_player_house(v_character.owner_user_id);
@@ -4547,6 +4679,7 @@ declare
   v_character public.characters%rowtype;
   v_house public.player_houses%rowtype;
   v_house_item public.house_inventory_items%rowtype;
+  v_caged_pet jsonb;
   v_slot int;
   v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
 begin
@@ -4561,6 +4694,25 @@ begin
 
   if v_quantity <> 1 then
     raise exception 'Pets must be moved one at a time.';
+  end if;
+
+  v_caged_pet := public.place_pet_item_in_caged_wagon_for_character(
+    p_character_id,
+    p_item_name,
+    p_display_name,
+    p_item_description,
+    p_rarity,
+    p_quantity,
+    p_is_accessory,
+    p_modifiers,
+    p_enchantment,
+    p_rune_name,
+    p_material,
+    p_enhancement_count,
+    p_is_two_handed
+  );
+  if v_caged_pet is not null then
+    return v_caged_pet;
   end if;
 
   v_house := public.ensure_player_house(v_character.owner_user_id);
@@ -6343,6 +6495,7 @@ grant execute on function public.drop_house_inventory_item_quantity(text, uuid, 
 grant execute on function public.move_inventory_item_to_house(text, uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_house_slot(text, uuid, int, uuid) to anon, authenticated;
 grant execute on function public.move_house_item_to_inventory(text, uuid, uuid) to anon, authenticated;
+grant execute on function public.place_pet_item_in_caged_wagon_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.place_pet_item_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.place_pet_item_in_stable_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, int, boolean) to anon, authenticated;
 grant execute on function public.get_location_wagon_storage(text, uuid) to anon, authenticated;
@@ -7346,8 +7499,8 @@ returns boolean
 language sql
 immutable
 as $$
-  select length(trim(coalesce(p_left, ''))) > 0
-    and lower(trim(coalesce(p_left, ''))) = lower(trim(coalesce(p_right, '')))
+  select length(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) > 0
+    and lower(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) = lower(trim(regexp_replace(coalesce(p_right, ''), '\*+$', '')))
 $$;
 
 create or replace function public.assert_valid_character_location(p_location_name text)
@@ -8703,15 +8856,40 @@ begin
   from public.caged_wagon_storage_for_owner(p_owner_user_id);
   v_has_caged := found;
 
-  if not v_has_house and not v_has_home and not v_has_caged then
-    v_house := public.ensure_player_house(p_owner_user_id);
-    v_has_house := true;
-  end if;
-
   v_name := nullif(trim(coalesce(v_patch->>'name', '')), '');
   v_stable_name := nullif(trim(coalesce(v_patch->>'stableName', '')), '');
   if v_profile.role = 'dm'::public.user_role and v_patch ? 'cityName' then
     v_city_name := public.assert_valid_character_location(v_patch->>'cityName');
+  end if;
+
+  if not v_has_house and not v_has_home and not v_has_caged then
+    if v_profile.role <> 'dm'::public.user_role then
+      raise exception 'Only the Dungeon Master can create a home.';
+    end if;
+
+    insert into public.player_houses (
+      owner_user_id,
+      house_name,
+      stable_name,
+      city_name,
+      inventory_slots,
+      stable_slots,
+      property_slots,
+      is_locked
+    )
+    values (
+      p_owner_user_id,
+      coalesce(v_name, 'House'),
+      coalesce(v_stable_name, 'Stable'),
+      coalesce(v_city_name, 'Wild'),
+      case when v_patch ? 'inventorySlots' then greatest(0, least(500, (v_patch->>'inventorySlots')::int)) else 45 end,
+      case when v_patch ? 'stableSlots' then greatest(0, least(200, (v_patch->>'stableSlots')::int)) else 5 end,
+      case when v_patch ? 'propertySlots' then greatest(0, least(200, (v_patch->>'propertySlots')::int)) else 10 end,
+      case when v_patch ? 'locked' then (v_patch->>'locked')::boolean else false end
+    )
+    returning * into v_house;
+
+    v_has_house := true;
   end if;
 
   if v_has_home and v_name is not null then
@@ -8848,8 +9026,6 @@ declare
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
-
-  perform public.ensure_player_house(p_owner_user_id);
 
   if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
     raise exception 'Only the house owner or Dungeon Master can change house permissions.';
@@ -14263,146 +14439,7 @@ begin
   end loop;
 end $$;
 
-create or replace function public.cleanup_existing_unstackable_item_stacks()
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, extensions
-as $$
-declare
-  v_item public.inventory_items%rowtype;
-  v_house_item public.house_inventory_items%rowtype;
-  v_character public.characters%rowtype;
-  v_house public.player_houses%rowtype;
-  v_capacity int;
-  v_slot int;
-  v_remaining int;
-  v_inventory_split int := 0;
-  v_house_split int := 0;
-  v_unresolved int := 0;
-begin
-  for v_item in
-    select *
-    from public.inventory_items i
-    where i.quantity > 1
-      and i.loadout_slot is null
-      and i.quantity = floor(i.quantity)
-      and not public.item_catalog_stackable(i.item_name, i.item_type)
-    order by i.created_at, i.id
-  loop
-    select * into v_character from public.characters where id = v_item.character_id;
-    if v_character.id is null then
-      continue;
-    end if;
-
-    v_remaining := floor(v_item.quantity)::int - 1;
-    update public.inventory_items set quantity = 1 where id = v_item.id;
-
-    while v_remaining > 0 loop
-      if v_item.is_storage and v_item.parent_item_id is null then
-        v_slot := public.next_storage_container_slot(v_item.character_id);
-      else
-        if v_item.parent_item_id is null then
-          v_capacity := v_character.inventory_slots;
-        else
-          select storage_capacity into v_capacity
-          from public.inventory_items
-          where id = v_item.parent_item_id
-            and character_id = v_item.character_id
-            and is_storage = true;
-        end if;
-
-        v_slot := public.find_first_free_inventory_slot(v_item.character_id, v_item.parent_item_id, coalesce(v_capacity, 0));
-      end if;
-
-      if v_slot is null then
-        update public.inventory_items
-        set quantity = quantity + v_remaining
-        where id = v_item.id;
-        v_unresolved := v_unresolved + 1;
-        exit;
-      end if;
-
-      insert into public.inventory_items (
-        character_id, parent_item_id, item_name, display_name, item_description, item_type, rarity, quantity, slot_index,
-        loadout_slot, is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material,
-        enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
-      )
-      values (
-        v_item.character_id, v_item.parent_item_id, v_item.item_name, v_item.display_name, v_item.item_description, v_item.item_type, v_item.rarity, 1, v_slot,
-        null, v_item.is_accessory, v_item.is_storage, v_item.storage_capacity, v_item.modifiers, v_item.enchantment, v_item.rune_name, v_item.material,
-        v_item.enhancement_count, v_item.is_two_handed, v_item.potion_strength, v_item.potion_property, v_item.potion_quality
-      );
-
-      v_inventory_split := v_inventory_split + 1;
-      v_remaining := v_remaining - 1;
-    end loop;
-  end loop;
-
-  for v_house_item in
-    select *
-    from public.house_inventory_items h
-    where h.quantity > 1
-      and h.quantity = floor(h.quantity)
-      and not public.item_catalog_stackable(h.item_name, h.item_type)
-    order by h.created_at, h.id
-  loop
-    select * into v_house from public.player_houses where owner_user_id = v_house_item.owner_user_id limit 1;
-    if v_house.id is null then
-      continue;
-    end if;
-
-    v_remaining := floor(v_house_item.quantity)::int - 1;
-    update public.house_inventory_items set quantity = 1 where id = v_house_item.id;
-
-    while v_remaining > 0 loop
-      if v_house_item.parent_item_id is null and public.normalize_item_type(v_house_item.item_type) = 'pet' then
-        v_slot := public.find_first_free_house_stable_slot(v_house_item.owner_user_id, v_house);
-      else
-        if v_house_item.parent_item_id is null then
-          v_capacity := v_house.inventory_slots;
-        else
-          select storage_capacity into v_capacity
-          from public.house_inventory_items
-          where id = v_house_item.parent_item_id
-            and owner_user_id = v_house_item.owner_user_id
-            and is_storage = true;
-        end if;
-
-        v_slot := public.find_first_free_house_slot(v_house_item.owner_user_id, v_house_item.parent_item_id, coalesce(v_capacity, 0));
-      end if;
-
-      if v_slot is null then
-        update public.house_inventory_items
-        set quantity = quantity + v_remaining
-        where id = v_house_item.id;
-        v_unresolved := v_unresolved + 1;
-        exit;
-      end if;
-
-      insert into public.house_inventory_items (
-        owner_user_id, parent_item_id, item_name, display_name, item_description, item_type, rarity, quantity, slot_index,
-        is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material,
-        enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
-      )
-      values (
-        v_house_item.owner_user_id, v_house_item.parent_item_id, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description, v_house_item.item_type, v_house_item.rarity, 1, v_slot,
-        v_house_item.is_accessory, v_house_item.is_storage, v_house_item.storage_capacity, v_house_item.modifiers, v_house_item.enchantment, v_house_item.rune_name, v_house_item.material,
-        v_house_item.enhancement_count, v_house_item.is_two_handed, v_house_item.potion_strength, v_house_item.potion_property, v_house_item.potion_quality
-      );
-
-      v_house_split := v_house_split + 1;
-      v_remaining := v_remaining - 1;
-    end loop;
-  end loop;
-
-  return jsonb_build_object(
-    'inventorySplitCopies', v_inventory_split,
-    'houseSplitCopies', v_house_split,
-    'stacksStillNeedingSlots', v_unresolved
-  );
-end;
-$$;
+drop function if exists public.cleanup_existing_unstackable_item_stacks();
 
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, int);
 drop function if exists public.award_exploration_loot_item(text, uuid, uuid, integer);
@@ -14938,7 +14975,6 @@ grant execute on function public.import_loot_items(text, jsonb) to anon, authent
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
-grant execute on function public.cleanup_existing_unstackable_item_stacks() to anon, authenticated;
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.world_map_record_to_json(public.world_map_uploads) to anon, authenticated;
@@ -15307,7 +15343,7 @@ begin
     return jsonb_build_object(
       'house', null,
       'access', jsonb_build_object(
-        'owner', p_owner_user_id is not distinct from v_profile.id,
+        'owner', false,
         'dm', v_profile.role = 'dm'::public.user_role,
         'house', false,
         'stable', false
@@ -16483,14 +16519,5 @@ grant execute on function public.construction_source_item_accessible(public.prof
 grant execute on function public.create_city_construction_project(text, text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_city_construction_project(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.contribute_city_construction_project(text, uuid, uuid, jsonb) to anon, authenticated;
-
-create or replace function public.city_names_match(p_left text, p_right text)
-returns boolean
-language sql
-immutable
-as $$
-  select length(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) > 0
-    and lower(trim(regexp_replace(coalesce(p_left, ''), '\*+$', ''))) = lower(trim(regexp_replace(coalesce(p_right, ''), '\*+$', '')))
-$$;
 
 grant execute on function public.city_names_match(text, text) to anon, authenticated;
