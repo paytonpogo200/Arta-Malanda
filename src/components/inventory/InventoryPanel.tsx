@@ -22,10 +22,13 @@ import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import {
   canApplyRune,
   cleanModifiers,
+  isPeacefulRestorationBook,
   itemHasEnhancementVisual,
   modifierEntries,
   modifierText,
   modifierToneClass,
+  peacefulRestorationForm,
+  spellBookVisualClass,
   spellForEnchantment
 } from '@/features/inventory/itemDetails';
 import { rarityClass } from '@/lib/utils/rarity';
@@ -53,6 +56,20 @@ type TradeSelectionSide = 'request' | 'offer';
 type StoragePermissionTarget = {
   itemId: string;
   label: 'Wagon Home' | 'Caged Wagon';
+};
+
+type SpellBookUseResult = {
+  characterId: string;
+  targetCharacterId: string;
+  currentMana: number;
+  targetCurrentHp: number;
+  targetCurrentMana: number;
+  manaSpent: number;
+  spellName: string;
+  form: number;
+  healedHp: number;
+  restoredMana: number;
+  casterOnFire: boolean;
 };
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
@@ -178,7 +195,9 @@ export function InventoryPanel({
   showBattleStats = false,
   classTemplate,
   onItemsChanged,
-  onResourceChanged
+  onResourceChanged,
+  spellBookTargets = [],
+  onSpellBookUsed
 }: {
   character: Character;
   canManage: boolean;
@@ -191,6 +210,8 @@ export function InventoryPanel({
   classTemplate?: ClassTemplate;
   onItemsChanged?: (items: InventoryItem[]) => void;
   onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
+  spellBookTargets?: Character[];
+  onSpellBookUsed?: (result: SpellBookUseResult) => void;
 }) {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [wallet, setWallet] = useState<WalletBalance[]>([]);
@@ -238,6 +259,7 @@ export function InventoryPanel({
   const [storagePermissionTarget, setStoragePermissionTarget] = useState<StoragePermissionTarget | null>(null);
   const [storagePermissions, setStoragePermissions] = useState<Record<string, boolean>>({});
   const [storagePermissionsLoading, setStoragePermissionsLoading] = useState(false);
+  const [spellBookCastModal, setSpellBookCastModal] = useState<{ item: InventoryItem; targetCharacterId: string; casterOnFire: boolean } | null>(null);
   const inventoryLoadedRef = useRef(false);
   const loadedCharacterIdRef = useRef(character.id);
   useDragAutoScroll();
@@ -423,6 +445,9 @@ export function InventoryPanel({
     .filter((item) => (!item.loadoutSlot || item.type === 'pet') && item.quantity > 0)
     .sort((a, b) => (a.slotIndex - b.slotIndex) || a.name.localeCompare(b.name)), [items]);
   const battleStats = useMemo(() => calculateCharacterSheetStats(character, items, classTemplate), [character, classTemplate, items]);
+  const peacefulRestorationTargets = useMemo(() => spellBookTargets
+    .filter((entry) => entry.id !== character.id && entry.kind === 'player')
+    .sort((a, b) => a.name.localeCompare(b.name)), [character.id, spellBookTargets]);
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
     label: ATTRIBUTE_LABELS[key],
@@ -586,6 +611,53 @@ export function InventoryPanel({
     const optimisticItems = items.map((item) => item.id === modal.item!.id ? { ...item, displayName: displayName || undefined } : item);
     setDraft({ ...draft, displayName });
     await patchItemState(modal.item.id, { displayName: displayName || null }, optimisticItems);
+  }
+
+  async function changeSpellBookForm(item: InventoryItem) {
+    if (!canManage || !isPeacefulRestorationBook(item)) return;
+    const nextForm: 1 | 2 = peacefulRestorationForm(item) === 1 ? 2 : 1;
+    const optimisticItems = items.map((entry) => entry.id === item.id ? { ...entry, spellBookForm: nextForm } : entry);
+    await patchItemState(item.id, { spellBookForm: nextForm }, optimisticItems);
+  }
+
+  function openSpellBookCast(item: InventoryItem) {
+    if (!isPeacefulRestorationBook(item)) return;
+    setSpellBookCastModal({
+      item,
+      targetCharacterId: peacefulRestorationTargets[0]?.id ?? '',
+      casterOnFire: false
+    });
+  }
+
+  async function useSpellBook() {
+    if (!canManage || !spellBookCastModal) return;
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/spells/spell-book/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: spellBookCastModal.item.id,
+          targetCharacterId: spellBookCastModal.targetCharacterId,
+          casterOnFire: spellBookCastModal.casterOnFire
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Spell book could not be used.');
+      const result = payload as SpellBookUseResult;
+      onResourceChanged?.({ currentMana: result.currentMana });
+      onSpellBookUsed?.(result);
+      setNotice(`Peaceful Restoration form ${result.form} restored ${result.healedHp} HP and ${result.restoredMana} Mana.`);
+      setSpellBookCastModal(null);
+      setModal(null);
+      await loadInventory(false);
+    } catch (useError) {
+      setError(useError instanceof Error ? useError.message : 'Spell book could not be used.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function applyRune(source: AvailableRune) {
@@ -1719,12 +1791,29 @@ export function InventoryPanel({
         }}>
           {modal.item ? (
             <div className="space-y-3">
-              <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(modal.item.rarity)} ${modal.item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(modal.item) ? 'inventory-enhanced' : ''}`}>
+              <div className={`rarity-card rounded-2xl border p-3 ${rarityClass(modal.item.rarity)} ${spellBookVisualClass(modal.item)} ${modal.item.enchantment ? 'inventory-enchanted' : ''} ${itemHasEnhancementVisual(modal.item) ? 'inventory-enhanced' : ''}`}>
                 <div className="relative z-10 flex items-start gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-black/25 text-[var(--brass)]"><ItemIcon type={modal.item.type} size={22} /></span>
                   <div className="min-w-0 flex-1">
                     <p className="text-lg font-black leading-5">{modal.item.displayName || modal.item.name}</p>
                     <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
+                    {isPeacefulRestorationBook(modal.item) && (
+                      <div className="mt-3 grid gap-3">
+                        <p className="rounded-xl border border-black/25 bg-black/20 p-3 text-xs font-black uppercase tracking-wider text-[var(--paper)]">
+                          Current form: Form {peacefulRestorationForm(modal.item)} - 40 Mana - inventory item
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="spell-book-form-one rounded-xl border p-3 text-sm leading-6">
+                            <p className="font-black">Form 1</p>
+                            <p>Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.</p>
+                          </div>
+                          <div className="spell-book-form-two rounded-xl border p-3 text-sm leading-6">
+                            <p className="font-black">Form 2</p>
+                            <p>Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {modal.item.itemDescription && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
                     {modalPotionEffect && (
                       <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3 text-sm leading-6 text-[var(--paper)]">
@@ -1765,6 +1854,16 @@ export function InventoryPanel({
                   </div>
                 </div>
               </div>
+              {modal.source !== 'wagon' && canManage && isPeacefulRestorationBook(modal.item) && (
+                <div className="grid gap-2 rounded-2xl border border-[#55f2e8]/35 bg-black/15 p-3 sm:grid-cols-2">
+                  <Button variant="secondary" disabled={saving} onClick={() => changeSpellBookForm(modal.item!)}>
+                    Change to form {peacefulRestorationForm(modal.item) === 1 ? 2 : 1}
+                  </Button>
+                  <Button variant="teal" disabled={saving || peacefulRestorationTargets.length === 0} onClick={() => openSpellBookCast(modal.item!)}>
+                    {peacefulRestorationTargets.length ? 'Use Peaceful Restoration' : 'No ally target'}
+                  </Button>
+                </div>
+              )}
               {modal.source === 'wagon' && canManage && (
                 <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">
                   <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Shared wagon storage</p>
@@ -1927,6 +2026,52 @@ export function InventoryPanel({
               <Button variant="primary" className="sticky bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-20 shadow-[0_-14px_28px_rgba(10,4,1,.55)] sm:bottom-0" disabled={!draft.name.trim() || saving}>Add item</Button>
             </form>
           )}
+        </Modal>
+      )}
+      {spellBookCastModal && (
+        <Modal title="Use Peaceful Restoration" onClose={() => setSpellBookCastModal(null)}>
+          <div className="grid gap-3">
+            <div className={`rounded-2xl border p-4 ${spellBookVisualClass(spellBookCastModal.item)}`}>
+              <p className="eyebrow">Peaceful Restoration</p>
+              <h3 className="mt-1 text-xl font-black">Form {peacefulRestorationForm(spellBookCastModal.item)}</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--paper)]">
+                {peacefulRestorationForm(spellBookCastModal.item) === 1
+                  ? 'Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.'
+                  : 'Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.'}
+              </p>
+            </div>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Target ally</span>
+              <SelectField value={spellBookCastModal.targetCharacterId} onChange={(event) => setSpellBookCastModal({ ...spellBookCastModal, targetCharacterId: event.target.value })}>
+                <option value="">{peacefulRestorationTargets.length ? 'Choose ally' : 'No ally targets available'}</option>
+                {peacefulRestorationTargets.map((target) => (
+                  <option key={target.id} value={target.id}>{target.name} - HP {target.currentHp}/{target.maxHp} - Mana {target.currentMana}/{target.maxMana}</option>
+                ))}
+              </SelectField>
+            </label>
+            <label className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+              <input
+                type="checkbox"
+                checked={spellBookCastModal.casterOnFire}
+                onChange={(event) => setSpellBookCastModal({ ...spellBookCastModal, casterOnFire: event.target.checked })}
+              />
+              Caster is on fire
+            </label>
+            {peacefulRestorationForm(spellBookCastModal.item) === 2 && spellBookCastModal.casterOnFire && (
+              <div className="rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm font-black text-[var(--red)]">Form 2 is not usable while on fire.</div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" type="button" onClick={() => setSpellBookCastModal(null)}>Cancel</Button>
+              <Button
+                variant="teal"
+                type="button"
+                disabled={saving || !spellBookCastModal.targetCharacterId || (peacefulRestorationForm(spellBookCastModal.item) === 2 && spellBookCastModal.casterOnFire)}
+                onClick={useSpellBook}
+              >
+                Cast
+              </Button>
+            </div>
+          </div>
         </Modal>
       )}
       {storagePermissionsOpen && (

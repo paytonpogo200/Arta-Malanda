@@ -252,21 +252,25 @@ h3,
 .spell-type-utility { border-color: #c084fc; background: linear-gradient(145deg, rgba(147, 51, 234, .36), rgba(48, 20, 78, .94)); }
 
 .spell-book-card {
-  border-color: #56e2c2;
+  border-color: #55f2e8;
   background:
-    radial-gradient(circle at 18% 18%, rgba(156, 175, 121, .28), transparent 32%),
-    radial-gradient(circle at 88% 78%, rgba(86, 226, 194, .22), transparent 34%),
-    linear-gradient(145deg, rgba(18, 55, 35, .78), rgba(8, 35, 42, .94));
+    radial-gradient(circle at 18% 18%, rgba(163, 230, 53, .28), transparent 32%),
+    radial-gradient(circle at 88% 78%, rgba(85, 242, 232, .22), transparent 34%),
+    linear-gradient(145deg, rgba(15, 118, 110, .62), rgba(24, 83, 33, .68), rgba(8, 35, 42, .94));
 }
 
 .spell-book-form-one {
-  border-color: #9caf79;
-  background: linear-gradient(145deg, rgba(156, 175, 121, .34), rgba(18, 48, 29, .94));
+  border-color: #a3e635;
+  background:
+    radial-gradient(circle at 16% 16%, rgba(244, 255, 143, .32), transparent 30%),
+    linear-gradient(145deg, rgba(63, 98, 18, .82), rgba(132, 204, 22, .36), rgba(20, 50, 18, .96));
 }
 
 .spell-book-form-two {
-  border-color: #56e2c2;
-  background: linear-gradient(145deg, rgba(86, 226, 194, .34), rgba(8, 47, 57, .94));
+  border-color: #55f2e8;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(85, 242, 232, .34), transparent 30%),
+    linear-gradient(145deg, rgba(15, 118, 110, .8), rgba(34, 211, 238, .32), rgba(8, 47, 57, .96));
 }
 
 .spell-card-inactive {

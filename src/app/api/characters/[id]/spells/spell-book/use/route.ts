@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       p_character_id: id,
       p_item_id: String(body.itemId ?? ''),
       p_target_character_id: String(body.targetCharacterId ?? ''),
-      p_form: Number(body.form ?? 1),
+      p_form: 0,
       p_caster_on_fire: Boolean(body.casterOnFire)
     });
 

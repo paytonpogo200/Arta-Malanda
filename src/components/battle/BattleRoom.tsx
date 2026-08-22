@@ -545,14 +545,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             combatLocked
             activeOnly
             enchantedItems={inventoryItemsByCharacterId.get(viewedCharacter.id) ?? []}
-            spellBookTargets={spellBookTargets}
             onManaChanged={(currentMana) => updateLocalCombatant(viewedCombatant.id, { currentMana })}
-            onSpellBookUsed={(result) => {
-              const caster = room.combatants.find((entry) => entry.characterId === result.characterId);
-              if (caster) updateLocalCombatant(caster.id, { currentMana: result.currentMana });
-              const target = room.combatants.find((entry) => entry.characterId === result.targetCharacterId);
-              if (target) updateLocalCombatant(target.id, { currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
-            }}
           />
           <InventoryPanel
             character={{ ...viewedCharacter, currentHp: viewedCombatant.currentHp, currentMana: viewedCombatant.currentMana }}
@@ -562,6 +555,13 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             showBattleStats
             classTemplate={classByKey.get(viewedCharacter.classKey)}
             onResourceChanged={(patch) => updateLocalCombatant(viewedCombatant.id, patch)}
+            spellBookTargets={spellBookTargets}
+            onSpellBookUsed={(result) => {
+              const caster = room.combatants.find((entry) => entry.characterId === result.characterId);
+              if (caster) updateLocalCombatant(caster.id, { currentMana: result.currentMana });
+              const target = room.combatants.find((entry) => entry.characterId === result.targetCharacterId);
+              if (target) updateLocalCombatant(target.id, { currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
+            }}
           />
         </div>
       )}

@@ -102,3 +102,16 @@ export function spellForEnchantment(spells: Spell[], enchantment?: string) {
 export function itemHasEnhancementVisual(item: Pick<InventoryItem, 'enhancementCount'>) {
   return item.enhancementCount > 0;
 }
+
+export function isPeacefulRestorationBook(item: Pick<InventoryItem, 'name' | 'type'>) {
+  return item.type === 'spell book' && item.name.trim().toLowerCase() === 'peaceful restoration spell book';
+}
+
+export function peacefulRestorationForm(item: Pick<InventoryItem, 'spellBookForm'>): 1 | 2 {
+  return item.spellBookForm === 2 ? 2 : 1;
+}
+
+export function spellBookVisualClass(item: Pick<InventoryItem, 'name' | 'type' | 'spellBookForm'>) {
+  if (!isPeacefulRestorationBook(item)) return '';
+  return peacefulRestorationForm(item) === 2 ? 'spell-book-form-two' : 'spell-book-form-one';
+}

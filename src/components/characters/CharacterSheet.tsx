@@ -325,12 +325,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             canManage={isDm || owned}
             canGrant={isDm}
             enchantedItems={inventoryItems}
-            spellBookTargets={characters}
             onManaChanged={(currentMana) => onSaved({ ...character, currentMana })}
-            onSpellBookUsed={(result) => {
-              if (result.characterId === character.id) onSaved({ ...character, currentMana: result.currentMana });
-              if (result.targetCharacterId === character.id) onSaved({ ...character, currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
-            }}
           />
           <InventoryPanel
             character={character}
@@ -342,6 +337,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             viewerUserId={profile.id}
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
+            spellBookTargets={characters}
+            onSpellBookUsed={(result) => {
+              if (result.characterId === character.id) onSaved({ ...character, currentMana: result.currentMana });
+              if (result.targetCharacterId === character.id) onSaved({ ...character, currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
+            }}
           />
           {showJurshConversions && (
             <JurshConversionPanel

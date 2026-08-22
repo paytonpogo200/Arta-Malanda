@@ -193,6 +193,7 @@ export type InventoryItem = {
   potionStrength?: string;
   potionProperty?: string;
   potionQuality?: string;
+  spellBookForm?: 1 | 2;
   canBeEnhanced: boolean;
   canBeEnchanted: boolean;
 };

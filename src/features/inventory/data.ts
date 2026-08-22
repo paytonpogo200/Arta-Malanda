@@ -81,6 +81,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     potionStrength: source.potionStrength ? String(source.potionStrength) : undefined,
     potionProperty: source.potionProperty ? String(source.potionProperty) : undefined,
     potionQuality: source.potionQuality ? String(source.potionQuality) : undefined,
+    spellBookForm: source.spellBookForm === 2 ? 2 : source.spellBookForm === 1 ? 1 : undefined,
     canBeEnhanced: Boolean(source.canBeEnhanced),
     canBeEnchanted: Boolean(source.canBeEnchanted)
   };

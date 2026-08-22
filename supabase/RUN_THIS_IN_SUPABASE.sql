@@ -133,6 +133,7 @@ create table if not exists public.inventory_items (
   potion_strength text,
   potion_property text,
   potion_quality text,
+  spell_book_form int not null default 1 check (spell_book_form in (1, 2)),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -141,6 +142,9 @@ alter table public.inventory_items drop constraint if exists inventory_items_slo
 alter table public.inventory_items drop constraint if exists inventory_items_visible_or_storage_slot_check;
 alter table public.inventory_items drop constraint if exists inventory_item_type_valid;
 alter table public.inventory_items drop constraint if exists inventory_items_item_type_valid;
+alter table public.inventory_items add column if not exists spell_book_form int not null default 1;
+alter table public.inventory_items drop constraint if exists inventory_items_spell_book_form_check;
+alter table public.inventory_items add constraint inventory_items_spell_book_form_check check (spell_book_form in (1, 2));
 alter table public.inventory_items add constraint inventory_items_visible_or_storage_slot_check
   check (
     slot_index >= 0
@@ -2558,6 +2562,7 @@ as $$
     'potionStrength', p_item.potion_strength,
     'potionProperty', p_item.potion_property,
     'potionQuality', p_item.potion_quality,
+    'spellBookForm', p_item.spell_book_form,
     'canBeEnhanced', public.item_catalog_can_be_enhanced(p_item.item_name, p_item.item_type, p_item.material),
     'canBeEnchanted', public.item_catalog_can_be_enchanted(p_item.item_name, p_item.item_type, p_item.material)
   )
@@ -3105,6 +3110,15 @@ begin
     raise exception 'Only the Dungeon Master can edit item details.';
   end if;
 
+  if v_patch ? 'spellBookForm'
+    and (
+      public.normalize_item_type(v_item.item_type) <> 'spell book'
+      or lower(public.normalize_item_name(v_item.item_name)) <> lower(public.normalize_item_name('Peaceful Restoration Spell Book'))
+    )
+  then
+    raise exception 'Only Peaceful Restoration spell books can change form.';
+  end if;
+
   if v_item.item_type = 'pet' and coalesce(v_item.loadout_slot, '') <> 'active-pet' then
     raise exception 'Pets can only occupy active pet slots or house stable slots.';
   end if;
@@ -3156,7 +3170,8 @@ begin
         when v_patch ? 'potionQuality' then nullif(trim(coalesce(v_patch->>'potionQuality', '')), '')
         when v_patch ? 'name' then public.potion_quality_from_name(v_patch->>'name')
         else potion_quality
-      end
+      end,
+      spell_book_form = case when v_patch ? 'spellBookForm' then least(2, greatest(1, (v_patch->>'spellBookForm')::int)) else spell_book_form end
     where id = p_item_id
     returning * into v_item;
 
@@ -6575,7 +6590,8 @@ begin
       is_two_handed,
       potion_strength,
       potion_property,
-      potion_quality
+      potion_quality,
+      spell_book_form
     )
     values (
       v_sparkle.id,
@@ -6602,7 +6618,8 @@ Form 2: Restores 75 Mana and heals 25 HP. This form cannot be used while the cas
       false,
       null,
       null,
-      null
+      null,
+      1
     );
   end if;
 end $$;
@@ -6714,7 +6731,6 @@ begin
       where (
           i.loadout_slot is not null
           or (i.item_type = 'weapon' and i.enchantment is not null)
-          or public.normalize_item_type(i.item_type) = 'spell book'
         )
         and exists (
           select 1
@@ -12087,6 +12103,7 @@ declare
   v_restore_mana int;
   v_target_hp int;
   v_target_mana int;
+  v_form int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -12101,6 +12118,7 @@ begin
     and lower(public.normalize_item_name(item_name)) = lower(public.normalize_item_name('Peaceful Restoration Spell Book'));
 
   if v_item.id is null then raise exception 'Peaceful Restoration spell book not found.'; end if;
+  v_form := coalesce(v_item.spell_book_form, 1);
 
   select * into v_target
   from public.characters
@@ -12109,8 +12127,8 @@ begin
 
   if v_target.id is null then raise exception 'Target ally not found.'; end if;
   if v_target.id = v_character.id then raise exception 'Peaceful Restoration must target an ally, not the caster.'; end if;
-  if p_form not in (1, 2) then raise exception 'Choose Peaceful Restoration form 1 or form 2.'; end if;
-  if p_form = 2 and coalesce(p_caster_on_fire, false) then raise exception 'Form 2 cannot be used while the caster is on fire.'; end if;
+  if v_form not in (1, 2) then raise exception 'Choose Peaceful Restoration form 1 or form 2.'; end if;
+  if v_form = 2 and coalesce(p_caster_on_fire, false) then raise exception 'Form 2 cannot be used while the caster is on fire.'; end if;
 
   select cb.* into v_caster_combatant
   from public.combatants cb
@@ -12135,7 +12153,7 @@ begin
   v_current_mana := coalesce(v_caster_combatant.current_mana, v_character.current_mana);
   if v_current_mana < v_mana_cost then raise exception 'Not enough mana.'; end if;
 
-  if p_form = 1 then
+  if v_form = 1 then
     if coalesce(p_caster_on_fire, false) then
       v_heal_amount := 20;
       v_restore_mana := 10;
@@ -12180,7 +12198,7 @@ begin
     'targetCurrentMana', v_target_mana,
     'manaSpent', v_mana_cost,
     'spellName', 'Peaceful Restoration',
-    'form', p_form,
+    'form', v_form,
     'healedHp', v_heal_amount,
     'restoredMana', v_restore_mana,
     'casterOnFire', coalesce(p_caster_on_fire, false)
