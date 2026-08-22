@@ -8,7 +8,7 @@ import { Card, SoftCard } from '@/components/ui/Card';
 import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { formatCoinValue, normalizeCitiesPayload, type CitiesPayload } from '@/features/cities/data';
+import { composeCurrencyValue, currencyUnitsForSystem, decomposeCurrencyValue, formatCoinValue, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey, type CitiesPayload } from '@/features/cities/data';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
@@ -27,6 +27,7 @@ type ProductDraft = {
   type: ItemType;
   rarity: ItemRarity;
   priceCoin: number;
+  currencySystemKey: 'common' | 'calostrynn';
   stockQuantity: number;
   available: boolean;
   section: string;
@@ -197,6 +198,7 @@ function productToDraft(product: MarketProduct): ProductDraft {
     type: product.type,
     rarity: product.rarity,
     priceCoin: product.priceCoin,
+    currencySystemKey: normalizeCurrencySystemKey(product.currencySystemKey),
     stockQuantity: product.stockQuantity ?? 0,
     available: product.available,
     section: product.section || '',
@@ -439,9 +441,19 @@ function isTalismanistClass(character: Character | null) {
   return character.classKey.toLowerCase() === 'talismanist' || character.className.toLowerCase() === 'talismanist';
 }
 
+function walletTotalCurrency(wallet: WalletBalance[], systemKey = 'calostrynn') {
+  const key = normalizeCurrencySystemKey(systemKey);
+  return wallet
+    .filter((entry) => normalizeCurrencySystemKey(entry.unit.systemKey) === key)
+    .reduce((total, entry) => total + entry.amount * (currencyUnitsForSystem(key).find((unit) => unit.key === entry.unit.key.toLowerCase())?.value ?? 0), 0);
+}
+
 function walletTotalCoin(wallet: WalletBalance[]) {
-  const values: Record<string, number> = { coin: 1, callis: 10, callor: 100, cal: 10000 };
-  return wallet.reduce((total, entry) => total + entry.amount * (values[entry.unit.key.toLowerCase()] ?? 0), 0);
+  return walletTotalCurrency(wallet, 'calostrynn');
+}
+
+function formatProductPrice(product: Pick<MarketProduct, 'priceCoin' | 'currencySystemKey'>, quantity = 1) {
+  return formatCurrencyValue(product.priceCoin * quantity, product.currencySystemKey);
 }
 
 function carriedQuantity(items: InventoryItem[], itemName: string) {
@@ -507,7 +519,7 @@ function MaterialRequirementCard({ plan }: { plan: MaterialPlan }) {
           </div>
         </div>
         <div className="shrink-0 text-right text-xs font-black text-[var(--brass)]">
-          <p>{formatCoinValue(product.priceCoin)} each</p>
+          <p>{formatProductPrice(product)} each</p>
           <p className="mt-1 text-[var(--muted)]">stock {product.stockQuantity ?? 'unlimited'}</p>
         </div>
       </div>
@@ -1586,11 +1598,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               )}
             </div>
             {isSinglePurchaseProduct(selectedProduct) ? (
-              <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin)}</div>
+              <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatProductPrice(selectedProduct)}</div>
             ) : (
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <NumberInput min={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} step={selectedProduct.quantityStep || quantityStepForItem(selectedProduct)} max={selectedProduct.stockQuantity ?? 999999} value={quantity} onValueChange={setQuantity} />
-                <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatCoinValue(selectedProduct.priceCoin * quantity)}</div>
+                <div className="rounded-xl border border-[var(--line)] bg-black/15 px-4 py-3 text-sm font-black text-[var(--brass)]">{formatProductPrice(selectedProduct, quantity)}</div>
               </div>
             )}
             {isMagicalResearchProduct(selectedProduct) && (
@@ -2017,12 +2029,34 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             <TextField value={productDraft.name} onChange={(event) => setProductDraft({ ...productDraft, name: event.target.value })} />
             <TextAreaField rows={3} value={productDraft.description} onChange={(event) => setProductDraft({ ...productDraft, description: event.target.value })} />
             <div className="grid gap-2 sm:grid-cols-2">
-              <SelectField value={productDraft.type} onChange={(event) => setProductDraft({ ...productDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
-              <SelectField value={productDraft.rarity} onChange={(event) => setProductDraft({ ...productDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
-              <NumberInput min={0} value={productDraft.priceCoin} onValueChange={(priceCoin) => setProductDraft({ ...productDraft, priceCoin })} />
-              <NumberInput min={0} step={productDraft.quantityStep || 1} value={productDraft.stockQuantity} onValueChange={(stockQuantity) => setProductDraft({ ...productDraft, stockQuantity })} />
-              <TextField value={productDraft.section} onChange={(event) => setProductDraft({ ...productDraft, section: event.target.value })} placeholder="Shop section" />
-              <NumberInput min={0.5} step={0.5} value={productDraft.quantityStep} onValueChange={(quantityStep) => setProductDraft({ ...productDraft, quantityStep })} />
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Item type</span>
+                <SelectField value={productDraft.type} onChange={(event) => setProductDraft({ ...productDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Rarity</span>
+                <SelectField value={productDraft.rarity} onChange={(event) => setProductDraft({ ...productDraft, rarity: event.target.value as ItemRarity })}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
+              </label>
+              <div className="sm:col-span-2">
+                <CurrencyPriceEditor
+                  systemKey={productDraft.currencySystemKey}
+                  value={productDraft.priceCoin}
+                  onSystemChange={(currencySystemKey) => setProductDraft({ ...productDraft, currencySystemKey, priceCoin: 0 })}
+                  onValueChange={(priceCoin) => setProductDraft({ ...productDraft, priceCoin })}
+                />
+              </div>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Stock quantity</span>
+                <NumberInput min={0} step={productDraft.quantityStep || 1} value={productDraft.stockQuantity} onValueChange={(stockQuantity) => setProductDraft({ ...productDraft, stockQuantity })} />
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop section</span>
+                <TextField value={productDraft.section} onChange={(event) => setProductDraft({ ...productDraft, section: event.target.value })} placeholder="Shop section" />
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Quantity step</span>
+                <NumberInput min={0.5} step={0.5} value={productDraft.quantityStep} onValueChange={(quantityStep) => setProductDraft({ ...productDraft, quantityStep })} />
+              </label>
             </div>
             <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
               <input type="checkbox" checked={productDraft.available} onChange={(event) => setProductDraft({ ...productDraft, available: event.target.checked })} />
@@ -2032,6 +2066,50 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </form>
         </Modal>
       )}
+    </div>
+  );
+}
+
+function CurrencyPriceEditor({
+  systemKey,
+  value,
+  onSystemChange,
+  onValueChange
+}: {
+  systemKey: 'common' | 'calostrynn';
+  value: number;
+  onSystemChange: (systemKey: 'common' | 'calostrynn') => void;
+  onValueChange: (value: number) => void;
+}) {
+  const parts = decomposeCurrencyValue(value, systemKey);
+  const units = currencyUnitsForSystem(systemKey);
+
+  function updatePart(unitKey: string, amount: number) {
+    onValueChange(composeCurrencyValue({ ...parts, [unitKey]: amount }, systemKey));
+  }
+
+  return (
+    <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+      <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+        <label>
+          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Price currency</span>
+          <SelectField value={systemKey} onChange={(event) => onSystemChange(normalizeCurrencySystemKey(event.target.value))}>
+            <option value="common">Bits / Shillings / Marks / Crown / Sovereign</option>
+            <option value="calostrynn">Coin / Callis / Callor / Cal</option>
+          </SelectField>
+        </label>
+        <span className="rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-3 py-2 text-sm font-black text-[var(--brass)]">
+          {formatCurrencyValue(value, systemKey)}
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {units.map((unit) => (
+          <label key={unit.key}>
+            <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{unit.name}</span>
+            <NumberInput min={0} step={1} value={parts[unit.key] ?? 0} onValueChange={(amount) => updatePart(unit.key, amount)} />
+          </label>
+        ))}
+      </div>
     </div>
   );
 }
@@ -2103,8 +2181,10 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
                 <div
                   className="h-full rounded-full shadow-[0_0_18px_rgba(245,180,76,0.18)]"
                   style={{
-                    width: `${Math.round(project.progress * 100)}%`,
-                    background: `linear-gradient(90deg, ${city.primaryColor} 0%, ${city.primaryColor} 58%, ${city.secondaryColor} 82%, ${city.accentColor} 100%)`
+                    width: '100%',
+                    transform: `scaleX(${Math.max(0, Math.min(1, project.progress))})`,
+                    transformOrigin: 'left center',
+                    background: `linear-gradient(90deg, ${city.primaryColor} 0%, ${city.primaryColor} 68%, ${city.secondaryColor} 88%, ${city.accentColor} 100%)`
                   }}
                 />
               </div>
@@ -2878,7 +2958,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               </span>
             )}
             <span className="mt-3 flex items-center justify-between gap-2 text-xs font-black">
-              <span className="text-[var(--brass)]">{formatCoinValue(product.priceCoin)}</span>
+              <span className="text-[var(--brass)]">{formatProductPrice(product)}</span>
               <span className="text-[var(--muted)]">{product.stockQuantity === null ? 'Stock ∞' : `Stock ${product.stockQuantity}`}</span>
             </span>
             {disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">{unavailableReason(product)}</span>}
@@ -3011,7 +3091,7 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
           <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Material</span>
           <SelectField value={materialProductId} onChange={(event) => setMaterialProductId(event.target.value)}>
             <option value="">Choose material scale</option>
-            {materials.map((product) => <option key={product.id} value={product.id}>{product.name} · {formatCoinValue(product.priceCoin)} each · stock {product.stockQuantity ?? '∞'}</option>)}
+            {materials.map((product) => <option key={product.id} value={product.id}>{product.name} · {formatProductPrice(product)} each · stock {product.stockQuantity ?? '∞'}</option>)}
           </SelectField>
         </label>
       )}

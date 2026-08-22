@@ -200,6 +200,7 @@ export type InventoryItem = {
 
 export type CurrencyUnit = {
   id: string;
+  systemKey: string;
   key: string;
   name: string;
   symbol: string;
@@ -310,6 +311,7 @@ export type MarketProduct = {
   type: ItemType;
   rarity: ItemRarity;
   priceCoin: number;
+  currencySystemKey: string;
   stockQuantity: number | null;
   available: boolean;
   catalogItemKey: string;

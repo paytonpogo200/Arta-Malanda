@@ -1694,6 +1694,11 @@ create table if not exists public.character_wallet_balances (
 
 insert into public.currency_units (currency_system_key, unit_key, name, symbol, unit_order)
 values
+  ('common', 'bit', 'Bit', 'Bit', 10),
+  ('common', 'shilling', 'Shilling', 'Shilling', 20),
+  ('common', 'mark', 'Mark', 'Mark', 30),
+  ('common', 'crown', 'Crown', 'Crown', 40),
+  ('common', 'sovereign', 'Sovereign', 'Sovereign', 50),
   ('calostrynn', 'coin', 'Coin', 'coin', 10),
   ('calostrynn', 'callis', 'Callis', 'Callis', 20),
   ('calostrynn', 'callor', 'Callor', 'Callor', 30),
@@ -2577,6 +2582,7 @@ as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'unit', jsonb_build_object(
       'id', u.id,
+      'systemKey', u.currency_system_key,
       'key', u.unit_key,
       'name', u.name,
       'symbol', u.symbol,
@@ -7232,6 +7238,7 @@ create table if not exists public.market_products (
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
   price_coin int not null default 0 check (price_coin >= 0),
+  currency_system_key text not null default 'calostrynn' check (currency_system_key in ('calostrynn', 'common')),
   stock_quantity numeric(12,1) check (stock_quantity is null or stock_quantity >= 0),
   catalog_item_key text,
   shop_section text not null default 'Wares',
@@ -7256,7 +7263,12 @@ alter table public.market_products
 alter table public.market_products
   add column if not exists catalog_item_key text,
   add column if not exists shop_section text not null default 'Wares',
+  add column if not exists currency_system_key text not null default 'calostrynn',
   add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1));
+
+alter table public.market_products
+  drop constraint if exists market_products_currency_system_key_check,
+  add constraint market_products_currency_system_key_check check (currency_system_key in ('calostrynn', 'common'));
 
 delete from public.market_products
 where product_key = 'blacksmith-mountian-rune'
@@ -7668,6 +7680,7 @@ as $$
     'type', p_product.item_type,
     'rarity', p_product.rarity,
     'priceCoin', p_product.price_coin,
+    'currencySystemKey', p_product.currency_system_key,
     'stockQuantity', p_product.stock_quantity,
     'catalogItemKey', p_product.catalog_item_key,
     'section', p_product.shop_section,
@@ -7691,6 +7704,24 @@ as $$
   end
 $$;
 
+create or replace function public.currency_unit_value(p_currency_system_key text, p_unit_key text)
+returns int
+language sql
+immutable
+as $$
+  select case coalesce(p_currency_system_key, 'calostrynn')
+    when 'common' then case p_unit_key
+      when 'bit' then 1
+      when 'shilling' then 10
+      when 'mark' then 100
+      when 'crown' then 1000
+      when 'sovereign' then 10000
+      else 0
+    end
+    else public.currency_coin_value(p_unit_key)
+  end
+$$;
+
 create or replace function public.wallet_total_coin(p_character_id uuid)
 returns int
 language sql
@@ -7701,6 +7732,19 @@ as $$
   from public.character_wallet_balances b
   join public.currency_units u on u.id = b.currency_unit_id
   where b.character_id = p_character_id
+$$;
+
+create or replace function public.wallet_total_currency(p_character_id uuid, p_currency_system_key text)
+returns int
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce(sum(b.amount * public.currency_unit_value(u.currency_system_key, u.unit_key)), 0)::int
+  from public.character_wallet_balances b
+  join public.currency_units u on u.id = b.currency_unit_id
+  where b.character_id = p_character_id
+    and u.currency_system_key = coalesce(nullif(trim(p_currency_system_key), ''), 'calostrynn')
 $$;
 
 create or replace function public.set_wallet_from_coin_value(p_character_id uuid, p_coin_value int)
@@ -7737,6 +7781,39 @@ begin
   where u.unit_key in ('coin', 'callis', 'callor', 'cal')
   on conflict (character_id, currency_unit_id) do update
   set amount = excluded.amount;
+end;
+$$;
+
+create or replace function public.set_wallet_from_currency_value(
+  p_character_id uuid,
+  p_currency_system_key text,
+  p_value int
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_system text := case when p_currency_system_key = 'common' then 'common' else 'calostrynn' end;
+  v_remaining int := greatest(0, coalesce(p_value, 0));
+  v_amount int;
+  v_unit record;
+begin
+  for v_unit in
+    select unit_key, id, public.currency_unit_value(currency_system_key, unit_key) as value
+    from public.currency_units
+    where currency_system_key = v_system
+    order by public.currency_unit_value(currency_system_key, unit_key) desc
+  loop
+    v_amount := case when v_unit.value > 0 then floor(v_remaining / v_unit.value) else 0 end;
+    v_remaining := v_remaining - v_amount * v_unit.value;
+
+    insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
+    values (p_character_id, v_unit.id, v_amount)
+    on conflict (character_id, currency_unit_id) do update
+    set amount = excluded.amount;
+  end loop;
 end;
 $$;
 
@@ -7915,12 +7992,12 @@ begin
     end if;
 
     v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
-    v_wallet := public.wallet_total_coin(v_character.id);
+    v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
     if v_wallet < v_cost then
       raise exception 'Not enough currency.';
     end if;
 
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -7949,7 +8026,7 @@ begin
     end if;
 
     v_cost := v_product.price_coin;
-    v_wallet := public.wallet_total_coin(v_character.id);
+    v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
     if v_wallet < v_cost then
       raise exception 'Not enough currency.';
     end if;
@@ -7959,7 +8036,7 @@ begin
     insert into public.character_spells (character_id, spell_id, is_active, slot_index)
     values (v_character.id, v_spell.id, v_slot is not null, v_slot);
 
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -8020,13 +8097,13 @@ begin
   end if;
 
   v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
-  v_wallet := public.wallet_total_coin(v_character.id);
+  v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
   if v_wallet < v_cost then
     raise exception 'Not enough currency.';
   end if;
 
   if public.normalize_item_type(v_product.item_type) = 'pet' then
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
     perform public.place_pet_item_in_stable_for_character(
       v_character.id,
       v_item_name,
@@ -8178,7 +8255,7 @@ begin
 
   end if;
 
-  perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+  perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
 
   if v_product.stock_quantity is not null then
     update public.market_products
@@ -8251,6 +8328,11 @@ begin
     item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     price_coin = case when v_patch ? 'priceCoin' then greatest(0, (v_patch->>'priceCoin')::int) else price_coin end,
+    currency_system_key = case
+      when v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'common' then 'common'
+      when v_patch ? 'currencySystemKey' then 'calostrynn'
+      else currency_system_key
+    end,
     stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
     catalog_item_key = case when v_patch ? 'catalogItemKey' then nullif(trim(coalesce(v_patch->>'catalogItemKey', '')), '') else catalog_item_key end,
     shop_section = case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares') else shop_section end,
@@ -11200,8 +11282,11 @@ grant execute on function public.city_record_to_json(public.cities) to anon, aut
 grant execute on function public.assert_valid_character_location(text) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products) to anon, authenticated;
 grant execute on function public.currency_coin_value(text) to anon, authenticated;
+grant execute on function public.currency_unit_value(text, text) to anon, authenticated;
 grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
+grant execute on function public.wallet_total_currency(uuid, text) to anon, authenticated;
 grant execute on function public.set_wallet_from_coin_value(uuid, int) to anon, authenticated;
+grant execute on function public.set_wallet_from_currency_value(uuid, text, int) to anon, authenticated;
 grant execute on function public.get_discovered_cities(text) to anon, authenticated;
 grant execute on function public.purchase_market_product(text, uuid, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;

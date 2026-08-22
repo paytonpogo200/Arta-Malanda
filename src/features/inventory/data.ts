@@ -38,6 +38,7 @@ function normalizeCurrencyUnit(value: unknown): CurrencyUnit {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     id: String(source.id ?? ''),
+    systemKey: String(source.systemKey ?? source.currencySystemKey ?? 'calostrynn'),
     key: String(source.key ?? ''),
     name: String(source.name ?? 'Currency'),
     symbol: String(source.symbol ?? ''),

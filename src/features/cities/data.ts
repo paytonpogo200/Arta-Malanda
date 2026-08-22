@@ -57,21 +57,65 @@ function normalizeItemCatalogEntry(value: unknown): ItemCatalogEntry {
   };
 }
 
-export function formatCoinValue(value: number) {
+export const CURRENCY_SYSTEMS = {
+  common: {
+    label: 'Wallet',
+    units: [
+      { key: 'sovereign', name: 'Sovereign', value: 10000 },
+      { key: 'crown', name: 'Crown', value: 1000 },
+      { key: 'mark', name: 'Mark', value: 100 },
+      { key: 'shilling', name: 'Shilling', value: 10 },
+      { key: 'bit', name: 'Bit', value: 1 }
+    ]
+  },
+  calostrynn: {
+    label: 'Calostrynn Money',
+    units: [
+      { key: 'cal', name: 'Cal', value: 10000 },
+      { key: 'callor', name: 'Callor', value: 100 },
+      { key: 'callis', name: 'Callis', value: 10 },
+      { key: 'coin', name: 'Coin', value: 1 }
+    ]
+  }
+} as const;
+
+export type CurrencySystemKey = keyof typeof CURRENCY_SYSTEMS;
+
+export function normalizeCurrencySystemKey(value: unknown): CurrencySystemKey {
+  return value === 'common' ? 'common' : 'calostrynn';
+}
+
+export function currencyUnitsForSystem(systemKey: string) {
+  return CURRENCY_SYSTEMS[normalizeCurrencySystemKey(systemKey)].units;
+}
+
+export function composeCurrencyValue(parts: Record<string, number>, systemKey: string) {
+  return currencyUnitsForSystem(systemKey).reduce((total, unit) => total + Math.max(0, Math.floor(parts[unit.key] ?? 0)) * unit.value, 0);
+}
+
+export function decomposeCurrencyValue(value: number, systemKey: string) {
   let remaining = Math.max(0, Math.floor(value));
-  const cal = Math.floor(remaining / 10000);
-  remaining -= cal * 10000;
-  const callor = Math.floor(remaining / 100);
-  remaining -= callor * 100;
-  const callis = Math.floor(remaining / 10);
-  remaining -= callis * 10;
-  const parts = [
-    cal ? `${cal} Cal` : '',
-    callor ? `${callor} Callor` : '',
-    callis ? `${callis} Callis` : '',
-    remaining ? `${remaining} coin` : ''
-  ].filter(Boolean);
-  return parts.length ? parts.join(' ') : '0 coin';
+  return Object.fromEntries(currencyUnitsForSystem(systemKey).map((unit) => {
+    const amount = Math.floor(remaining / unit.value);
+    remaining -= amount * unit.value;
+    return [unit.key, amount];
+  }));
+}
+
+export function formatCurrencyValue(value: number, systemKey = 'calostrynn') {
+  let remaining = Math.max(0, Math.floor(value));
+  const units = currencyUnitsForSystem(systemKey);
+  const parts = units.map((unit) => {
+    const amount = Math.floor(remaining / unit.value);
+    remaining -= amount * unit.value;
+    if (!amount) return '';
+    return `${amount} ${amount === 1 ? unit.name : `${unit.name}s`}`;
+  }).filter(Boolean);
+  return parts.length ? parts.join(' ') : `0 ${units[units.length - 1].name}s`;
+}
+
+export function formatCoinValue(value: number) {
+  return formatCurrencyValue(value, 'calostrynn');
 }
 
 export function normalizeCity(value: unknown): City {
@@ -133,6 +177,7 @@ export function normalizeProduct(value: unknown): MarketProduct {
     type: normalizeItemType(source.type),
     rarity: normalizeRarity(source.rarity),
     priceCoin: Math.max(0, numberFrom(source.priceCoin, 0)),
+    currencySystemKey: normalizeCurrencySystemKey(source.currencySystemKey ?? source.currency_system_key),
     stockQuantity: source.stockQuantity === null || source.stockQuantity === undefined ? null : Math.max(0, numberFrom(source.stockQuantity, 0)),
     available: Boolean(source.available),
     catalogItemKey: String(source.catalogItemKey ?? ''),

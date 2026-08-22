@@ -12,6 +12,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import { CURRENCY_SYSTEMS, formatCurrencyValue, normalizeCurrencySystemKey } from '@/features/cities/data';
 import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeHousePayload } from '@/features/houses/data';
@@ -448,6 +449,20 @@ export function InventoryPanel({
   const peacefulRestorationTargets = useMemo(() => spellBookTargets
     .filter((entry) => entry.id !== character.id && entry.kind === 'player')
     .sort((a, b) => a.name.localeCompare(b.name)), [character.id, spellBookTargets]);
+  const walletGroups = useMemo(() => {
+    const grouped = {
+      common: wallet.filter((entry) => normalizeCurrencySystemKey(entry.unit.systemKey) === 'common'),
+      calostrynn: wallet.filter((entry) => normalizeCurrencySystemKey(entry.unit.systemKey) === 'calostrynn')
+    };
+    return (['common', 'calostrynn'] as const)
+      .map((key) => ({
+        key,
+        label: CURRENCY_SYSTEMS[key].label,
+        entries: grouped[key],
+        total: grouped[key].reduce((sum, entry) => sum + entry.amount * (CURRENCY_SYSTEMS[key].units.find((unit) => unit.key === entry.unit.key)?.value ?? 0), 0)
+      }))
+      .filter((group) => group.entries.length);
+  }, [wallet]);
   const attributeRows = useMemo(() => ATTRIBUTE_KEYS.map((key) => ({
     key,
     label: ATTRIBUTE_LABELS[key],
@@ -1610,16 +1625,34 @@ export function InventoryPanel({
           ) : (
             <section className="mb-5">
               <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Wallet</h3></div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {wallet.map((entry) => (
-                  <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
-                    <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.unit.name}</span>
-                    {canAdd ? (
-                      <NumberInput min={0} value={walletDraft[entry.unit.id] ?? 0} onValueChange={(amount) => setWalletDraft({ ...walletDraft, [entry.unit.id]: amount })} className="mt-2" />
-                    ) : (
-                      <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.amount}</span>
-                    )}
-                  </label>
+              <div className="grid gap-3">
+                {walletGroups.map((group) => (
+                  <div
+                    key={group.key}
+                    className={`rounded-2xl border bg-black/15 p-3 ${group.key === 'common' ? 'border-[var(--brass)]/45 shadow-[0_16px_34px_rgba(209,168,91,0.12)]' : 'border-[var(--line)] opacity-90'}`}
+                  >
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[var(--muted)]">{group.key === 'common' ? 'Primary Currency' : 'Legacy City Currency'}</p>
+                        <h4 className="font-black text-[var(--paper)]">{group.label}</h4>
+                      </div>
+                      <span className="rounded-full border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-3 py-1 text-xs font-black text-[var(--brass)]">
+                        {formatCurrencyValue(group.total, group.key)}
+                      </span>
+                    </div>
+                    <div className={`grid grid-cols-2 gap-2 ${group.key === 'common' ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
+                      {group.entries.map((entry) => (
+                        <label key={entry.unit.id} className="rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                          <span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">{entry.unit.name}</span>
+                          {canAdd ? (
+                            <NumberInput min={0} value={walletDraft[entry.unit.id] ?? 0} onValueChange={(amount) => setWalletDraft({ ...walletDraft, [entry.unit.id]: amount })} className="mt-2" />
+                          ) : (
+                            <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.amount}</span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
               {canAdd && <Button variant="teal" className="mt-2" onClick={saveWallet} disabled={saving}>Save wallet</Button>}
