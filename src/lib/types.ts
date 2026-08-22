@@ -19,6 +19,7 @@ export type ItemType =
   | 'fabric'
   | 'tool'
   | 'quest'
+  | 'spell book'
   | 'currency'
   | 'misc';
 

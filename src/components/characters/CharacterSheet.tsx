@@ -320,7 +320,18 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             </div>
           </Card>
 
-          <SpellsPanel character={character} canManage={isDm || owned} canGrant={isDm} onManaChanged={(currentMana) => onSaved({ ...character, currentMana })} />
+          <SpellsPanel
+            character={character}
+            canManage={isDm || owned}
+            canGrant={isDm}
+            enchantedItems={inventoryItems}
+            spellBookTargets={characters}
+            onManaChanged={(currentMana) => onSaved({ ...character, currentMana })}
+            onSpellBookUsed={(result) => {
+              if (result.characterId === character.id) onSaved({ ...character, currentMana: result.currentMana });
+              if (result.targetCharacterId === character.id) onSaved({ ...character, currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
+            }}
+          />
           <InventoryPanel
             character={character}
             canManage={isDm || owned}

@@ -1,4 +1,4 @@
-import { Box, Coins, FlaskConical, Gem, Leaf, PackageOpen, PawPrint, ScrollText, Shield, Shirt, Sparkles, Sword, Wrench } from 'lucide-react';
+import { BookOpen, Box, Coins, FlaskConical, Gem, Leaf, PackageOpen, PawPrint, ScrollText, Shield, Shirt, Sparkles, Sword, Wrench } from 'lucide-react';
 import type { ItemType } from '@/lib/types';
 
 function IngotIcon({ size }: { size: number }) {
@@ -51,6 +51,7 @@ export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number })
     plant: Leaf,
     tool: Wrench,
     quest: ScrollText,
+    'spell book': BookOpen,
     currency: Coins,
     misc: Box
   }[type] ?? Box;

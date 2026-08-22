@@ -1783,6 +1783,7 @@ as $$
       'fabric',
       'tool',
       'quest',
+      'spell book',
       'currency',
       'misc'
     ]) then lower(trim(coalesce(p_item_type, '')))
@@ -1842,7 +1843,7 @@ language sql
 stable
 as $$
   select case
-    when lower(trim(coalesce(p_item_type, ''))) in ('pet', 'storage') then false
+    when lower(trim(coalesce(p_item_type, ''))) in ('pet', 'storage', 'spell book') then false
     else coalesce((
       select c.is_stackable
       from public.item_catalog c
@@ -2055,6 +2056,22 @@ begin
   perform public.upsert_item_catalog_entry('Alchemy Book', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'An alchemical study text. Resolve its contents at the table.', true, 7);
   perform public.upsert_item_catalog_entry('Bestiary', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A creature reference volume. Resolve its contents at the table.', true, 8);
   perform public.upsert_item_catalog_entry('Magical Research', 'quest', 'Rare', 'Books', array['Research voucher']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Choose a spell category at purchase to receive a rare magic spell book.', true, 9);
+  perform public.upsert_item_catalog_entry(
+    'Peaceful Restoration Spell Book',
+    'spell book',
+    'Legendary',
+    'Unique Spell Books',
+    array['Open book', 'Peaceful Restoration', 'Two forms', 'Does not take a spell slot']::text[],
+    1,
+    false,
+    '{}'::jsonb,
+    '',
+    false,
+    0,
+    $am$A unique spell book containing Peaceful Restoration. Form 1: 40 Mana, heals an ally for 75 HP and restores 25 Mana; if the caster is on fire, heals 20 HP and restores 10 Mana instead. Form 2: 40 Mana, restores 75 Mana and heals 25 HP; this form cannot be used while the caster is on fire.$am$,
+    true,
+    9
+  );
   perform public.upsert_item_catalog_entry('Ember Magic Spell Book', 'quest', 'Rare', 'Books', array['Ember research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Ember magic spell book from library research.', true, 10);
   perform public.upsert_item_catalog_entry('Frost Magic Spell Book', 'quest', 'Rare', 'Books', array['Frost research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Frost magic spell book from library research.', true, 11);
   perform public.upsert_item_catalog_entry('Lightning Magic Spell Book', 'quest', 'Rare', 'Books', array['Lightning research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Lightning magic spell book from library research.', true, 12);
@@ -3704,7 +3721,6 @@ grant execute on function public.drop_inventory_item_quantity(text, uuid, numeri
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.set_character_wallet_balances(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.gift_character_currency(text, uuid, uuid, jsonb) to anon, authenticated;
-
 
 -- ============================================================
 -- ============================================================
@@ -6506,6 +6522,91 @@ grant execute on function public.apply_inventory_item_rune(text, uuid, uuid, tex
 grant execute on function public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, int, int) to anon, authenticated;
 grant execute on function public.update_campaign_property(text, uuid, jsonb) to anon, authenticated;
 
+do $$
+declare
+  v_sparkle public.characters%rowtype;
+  v_slot int;
+begin
+  select * into v_sparkle
+  from public.characters
+  where lower(trim(name)) = 'sparkle'
+    and kind = 'player'::public.character_kind
+  order by created_at
+  limit 1;
+
+  if v_sparkle.id is not null and not exists (
+    select 1
+    from public.inventory_items i
+    where lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name('Peaceful Restoration Spell Book'))
+      and public.normalize_item_type(i.item_type) = 'spell book'
+  ) and not exists (
+    select 1
+    from public.house_inventory_items h
+    where lower(public.normalize_item_name(h.item_name)) = lower(public.normalize_item_name('Peaceful Restoration Spell Book'))
+      and public.normalize_item_type(h.item_type) = 'spell book'
+  ) then
+    v_slot := public.find_first_free_inventory_slot(v_sparkle.id, null, v_sparkle.inventory_slots);
+    if v_slot is null then
+      v_slot := greatest(0, v_sparkle.inventory_slots);
+      update public.characters
+      set inventory_slots = inventory_slots + 1
+      where id = v_sparkle.id
+      returning * into v_sparkle;
+    end if;
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      display_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_accessory,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      rune_name,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_sparkle.id,
+      null,
+      v_slot,
+      'Peaceful Restoration Spell Book',
+      null,
+      $am$Peaceful Restoration - 40 Mana
+
+Form 1: Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.
+
+Form 2: Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.$am$,
+      'spell book',
+      'Legendary'::public.item_rarity,
+      1,
+      false,
+      false,
+      0,
+      '{}'::jsonb,
+      null,
+      null,
+      '',
+      0,
+      false,
+      null,
+      null,
+      null
+    );
+  end if;
+end $$;
+
 
 -- ============================================================
 -- ============================================================
@@ -6610,7 +6711,11 @@ begin
     'inventoryItems', (
       select coalesce(jsonb_agg(public.inventory_item_record_to_json(i) order by i.character_id, i.loadout_slot, i.item_name), '[]'::jsonb)
       from public.inventory_items i
-      where (i.loadout_slot is not null or (i.item_type = 'weapon' and i.enchantment is not null))
+      where (
+          i.loadout_slot is not null
+          or (i.item_type = 'weapon' and i.enchantment is not null)
+          or public.normalize_item_type(i.item_type) = 'spell book'
+        )
         and exists (
           select 1
           from public.combatants c
@@ -11955,6 +12060,134 @@ begin
 end;
 $$;
 
+create or replace function public.use_spell_book_item(
+  p_session_token text,
+  p_character_id uuid,
+  p_item_id uuid,
+  p_target_character_id uuid,
+  p_form int,
+  p_caster_on_fire boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_target public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_caster_combatant public.combatants%rowtype;
+  v_target_combatant public.combatants%rowtype;
+  v_mana_cost int := 40;
+  v_current_mana int;
+  v_remaining_mana int;
+  v_heal_amount int;
+  v_restore_mana int;
+  v_target_hp int;
+  v_target_mana int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  select * into v_item
+  from public.inventory_items
+  where id = p_item_id
+    and character_id = v_character.id
+    and public.normalize_item_type(item_type) = 'spell book'
+    and lower(public.normalize_item_name(item_name)) = lower(public.normalize_item_name('Peaceful Restoration Spell Book'));
+
+  if v_item.id is null then raise exception 'Peaceful Restoration spell book not found.'; end if;
+
+  select * into v_target
+  from public.characters
+  where id = p_target_character_id
+    and kind = 'player'::public.character_kind;
+
+  if v_target.id is null then raise exception 'Target ally not found.'; end if;
+  if v_target.id = v_character.id then raise exception 'Peaceful Restoration must target an ally, not the caster.'; end if;
+  if p_form not in (1, 2) then raise exception 'Choose Peaceful Restoration form 1 or form 2.'; end if;
+  if p_form = 2 and coalesce(p_caster_on_fire, false) then raise exception 'Form 2 cannot be used while the caster is on fire.'; end if;
+
+  select cb.* into v_caster_combatant
+  from public.combatants cb
+  join public.battles b on b.id = cb.battle_id
+  where cb.character_id = v_character.id
+    and b.status = 'active'::public.battle_status
+  order by cb.created_at desc
+  limit 1;
+
+  if v_caster_combatant.id is not null then
+    select cb.* into v_target_combatant
+    from public.combatants cb
+    where cb.battle_id = v_caster_combatant.battle_id
+      and cb.character_id = v_target.id
+    limit 1;
+
+    if v_target_combatant.id is null then
+      raise exception 'Peaceful Restoration can only target an ally in the same active battle.';
+    end if;
+  end if;
+
+  v_current_mana := coalesce(v_caster_combatant.current_mana, v_character.current_mana);
+  if v_current_mana < v_mana_cost then raise exception 'Not enough mana.'; end if;
+
+  if p_form = 1 then
+    if coalesce(p_caster_on_fire, false) then
+      v_heal_amount := 20;
+      v_restore_mana := 10;
+    else
+      v_heal_amount := 75;
+      v_restore_mana := 25;
+    end if;
+  else
+    v_heal_amount := 25;
+    v_restore_mana := 75;
+  end if;
+
+  v_remaining_mana := v_current_mana - v_mana_cost;
+  v_target_hp := least(v_target.max_hp, coalesce(v_target_combatant.current_hp, v_target.current_hp) + v_heal_amount);
+  v_target_mana := least(v_target.max_mana, coalesce(v_target_combatant.current_mana, v_target.current_mana) + v_restore_mana);
+
+  if v_caster_combatant.id is not null then
+    update public.combatants
+    set current_mana = v_remaining_mana
+    where id = v_caster_combatant.id;
+
+    update public.combatants
+    set current_hp = v_target_hp,
+        current_mana = v_target_mana
+    where id = v_target_combatant.id;
+  end if;
+
+  update public.characters
+  set current_mana = v_remaining_mana
+  where id = v_character.id;
+
+  update public.characters
+  set current_hp = v_target_hp,
+      current_mana = v_target_mana
+  where id = v_target.id;
+
+  return jsonb_build_object(
+    'characterId', v_character.id,
+    'targetCharacterId', v_target.id,
+    'currentMana', v_remaining_mana,
+    'targetCurrentHp', v_target_hp,
+    'targetCurrentMana', v_target_mana,
+    'manaSpent', v_mana_cost,
+    'spellName', 'Peaceful Restoration',
+    'form', p_form,
+    'healedHp', v_heal_amount,
+    'restoredMana', v_restore_mana,
+    'casterOnFire', coalesce(p_caster_on_fire, false)
+  );
+end;
+$$;
+
 grant execute on function public.spell_record_to_json(public.spell_catalog) to anon, authenticated;
 grant execute on function public.character_spell_record_to_json(public.character_spells) to anon, authenticated;
 grant execute on function public.character_has_active_battle(uuid) to anon, authenticated;
@@ -11965,6 +12198,7 @@ grant execute on function public.update_character_spell_details(text, uuid, json
 grant execute on function public.update_character_spell_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.use_character_spell(text, uuid) to anon, authenticated;
 grant execute on function public.use_inventory_enchantment_spell(text, uuid, uuid, uuid) to anon, authenticated;
+grant execute on function public.use_spell_book_item(text, uuid, uuid, uuid, int, boolean) to anon, authenticated;
 
 
 -- ============================================================

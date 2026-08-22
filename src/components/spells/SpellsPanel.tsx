@@ -19,6 +19,26 @@ const EMPTY_SPELLS: CharacterSpellsPayload = {
   activeBattle: false
 };
 
+type SpellBookTarget = Pick<Character, 'id' | 'name' | 'currentHp' | 'maxHp' | 'currentMana' | 'maxMana'>;
+
+type SpellBookUseResult = {
+  characterId: string;
+  targetCharacterId: string;
+  currentMana: number;
+  targetCurrentHp: number;
+  targetCurrentMana: number;
+  manaSpent: number;
+  spellName: string;
+  form: number;
+  healedHp: number;
+  restoredMana: number;
+  casterOnFire: boolean;
+};
+
+function isPeacefulRestorationBook(item: InventoryItem) {
+  return item.type === 'spell book' && item.name.trim().toLowerCase() === 'peaceful restoration spell book';
+}
+
 function SpellCard({
   entry,
   canManage,
@@ -103,6 +123,38 @@ function EnchantedSpellCard({
   );
 }
 
+function PeacefulRestorationBookCard({
+  item,
+  canManage,
+  targetCount,
+  onUse,
+  onInspect
+}: {
+  item: InventoryItem;
+  canManage: boolean;
+  targetCount: number;
+  onUse: (item: InventoryItem) => void;
+  onInspect: (item: InventoryItem) => void;
+}) {
+  return (
+    <article className="spell-book-card rounded-2xl border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-black">Peaceful Restoration</p>
+          <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">Spell book; 40 mana; no spell slot</p>
+          <p className="mt-1 truncate text-xs font-black text-[var(--brass)]">{item.displayName || item.name}</p>
+        </div>
+        <BookOpen size={17} className="shrink-0 text-[var(--brass)]" />
+      </div>
+      <p className="mt-2 text-sm leading-5 text-[var(--muted)]">Two-form restoration magic bound into an open book.</p>
+      <div className="mt-3 grid gap-2">
+        <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onInspect(item)}><Eye className="mr-2 inline" size={14} /> Inspect</Button>
+        {canManage && <Button variant="primary" className="px-3 py-2 text-xs" disabled={targetCount === 0} onClick={() => onUse(item)}>{targetCount ? 'Use spell book' : 'No ally target'}</Button>}
+      </div>
+    </article>
+  );
+}
+
 function GrantSpellButton({
   spell,
   selected,
@@ -131,7 +183,9 @@ export function SpellsPanel({
   combatLocked = false,
   activeOnly = false,
   enchantedItems = [],
-  onManaChanged
+  spellBookTargets = [],
+  onManaChanged,
+  onSpellBookUsed
 }: {
   character: Character;
   canManage: boolean;
@@ -139,7 +193,9 @@ export function SpellsPanel({
   combatLocked?: boolean;
   activeOnly?: boolean;
   enchantedItems?: InventoryItem[];
+  spellBookTargets?: SpellBookTarget[];
   onManaChanged?: (currentMana: number) => void;
+  onSpellBookUsed?: (result: SpellBookUseResult) => void;
 }) {
   const [payload, setPayload] = useState<CharacterSpellsPayload>(EMPTY_SPELLS);
   const [grantSpellId, setGrantSpellId] = useState('');
@@ -151,6 +207,8 @@ export function SpellsPanel({
   const [error, setError] = useState('');
   const [inspectedOwnedSpell, setInspectedOwnedSpell] = useState<CharacterSpell | null>(null);
   const [inspectedSpell, setInspectedSpell] = useState<Spell | null>(null);
+  const [inspectedSpellBook, setInspectedSpellBook] = useState<InventoryItem | null>(null);
+  const [spellBookModal, setSpellBookModal] = useState<{ item: InventoryItem; form: 1 | 2; targetCharacterId: string; casterOnFire: boolean } | null>(null);
   const [editingSpell, setEditingSpell] = useState(false);
   const [spellDraft, setSpellDraft] = useState({ name: '', details: '', manaCost: 0 });
 
@@ -179,6 +237,10 @@ export function SpellsPanel({
     .map((item) => ({ item, spell: spellForEnchantment(payload.catalog, item.enchantment) }))
     .filter((entry): entry is { item: InventoryItem; spell: Spell } => Boolean(entry.spell))
     .sort((a, b) => a.spell.name.localeCompare(b.spell.name) || (a.item.displayName || a.item.name).localeCompare(b.item.displayName || b.item.name)), [enchantedItems, payload.catalog]);
+  const peacefulRestorationBooks = useMemo(() => enchantedItems.filter(isPeacefulRestorationBook), [enchantedItems]);
+  const availableSpellBookTargets = useMemo(() => spellBookTargets
+    .filter((target) => target.id !== character.id)
+    .sort((a, b) => a.name.localeCompare(b.name)), [character.id, spellBookTargets]);
 
   const loadSpells = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -336,6 +398,42 @@ export function SpellsPanel({
     }
   }
 
+  function openSpellBook(item: InventoryItem) {
+    setSpellBookModal({
+      item,
+      form: 1,
+      targetCharacterId: availableSpellBookTargets[0]?.id ?? '',
+      casterOnFire: false
+    });
+  }
+
+  async function useSpellBook() {
+    if (!canManage || !spellBookModal) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${character.id}/spells/spell-book/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: spellBookModal.item.id,
+          targetCharacterId: spellBookModal.targetCharacterId,
+          form: spellBookModal.form,
+          casterOnFire: spellBookModal.casterOnFire
+        })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? 'Spell book could not be used.');
+      if (typeof body.currentMana === 'number') onManaChanged?.(body.currentMana);
+      onSpellBookUsed?.(body as SpellBookUseResult);
+      setSpellBookModal(null);
+    } catch (useError) {
+      setError(useError instanceof Error ? useError.message : 'Spell book could not be used.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function dragOverSpell(event: DragEvent<HTMLElement>) {
     if (!canManage || activeBattle || !Array.from(event.dataTransfer.types).includes('application/x-arta-spell')) return;
     event.preventDefault();
@@ -391,7 +489,8 @@ export function SpellsPanel({
               <div className="grid gap-2 sm:grid-cols-2">
                 {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
                 {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} onInspect={(spellValue) => { setInspectedSpell(spellValue); setInspectedOwnedSpell(null); setEditingSpell(false); }} />)}
-                {!activeSpells.length && !enchantedSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
+                {peacefulRestorationBooks.map((item) => <PeacefulRestorationBookCard key={item.id} item={item} canManage={canManage} targetCount={availableSpellBookTargets.length} onUse={openSpellBook} onInspect={(book) => { setInspectedSpellBook(book); setInspectedSpell(null); setInspectedOwnedSpell(null); setEditingSpell(false); }} />)}
+                {!activeSpells.length && !enchantedSpells.length && !peacefulRestorationBooks.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
               </div>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2">
@@ -405,6 +504,7 @@ export function SpellsPanel({
                     <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
                   );
                 })}
+                {peacefulRestorationBooks.map((item) => <PeacefulRestorationBookCard key={item.id} item={item} canManage={canManage} targetCount={availableSpellBookTargets.length} onUse={openSpellBook} onInspect={(book) => { setInspectedSpellBook(book); setInspectedSpell(null); setInspectedOwnedSpell(null); setEditingSpell(false); }} />)}
               </div>
             )}
           </section>
@@ -529,6 +629,87 @@ export function SpellsPanel({
             </div>
             <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
               {inspectedSpell.details || inspectedSpell.summary || 'No spell description entered yet.'}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {inspectedSpellBook && (
+        <Modal title="Peaceful Restoration Spell Book" onClose={() => setInspectedSpellBook(null)}>
+          <div className="grid gap-3 rounded-2xl border border-[#56e2c2]/60 bg-[linear-gradient(145deg,rgba(156,175,121,.28),rgba(9,50,55,.9))] p-4">
+            <div>
+              <p className="eyebrow">Spell Book</p>
+              <h3 className="mt-1 text-2xl font-black">Peaceful Restoration</h3>
+              <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">40 mana - does not take a spell slot - giftable inventory item</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="spell-book-form-one rounded-xl border p-3 text-sm leading-6">
+                <p className="font-black">Form 1</p>
+                <p>Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.</p>
+              </div>
+              <div className="spell-book-form-two rounded-xl border p-3 text-sm leading-6">
+                <p className="font-black">Form 2</p>
+                <p>Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.</p>
+              </div>
+            </div>
+            {inspectedSpellBook.itemDescription && <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)] whitespace-pre-line">{inspectedSpellBook.itemDescription}</div>}
+          </div>
+        </Modal>
+      )}
+
+      {spellBookModal && (
+        <Modal title="Use Peaceful Restoration" onClose={() => setSpellBookModal(null)}>
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setSpellBookModal({ ...spellBookModal, form: 1 })}
+                className={`spell-book-form-one rounded-2xl border p-4 text-left transition ${spellBookModal.form === 1 ? 'ring-2 ring-[#9caf79] ring-offset-2 ring-offset-[#100907]' : ''}`}
+              >
+                <p className="font-black">Form 1</p>
+                <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">75 HP + 25 Mana</p>
+                <p className="mt-2 text-sm leading-5">While on fire: 20 HP + 10 Mana.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSpellBookModal({ ...spellBookModal, form: 2 })}
+                className={`spell-book-form-two rounded-2xl border p-4 text-left transition ${spellBookModal.form === 2 ? 'ring-2 ring-[#56e2c2] ring-offset-2 ring-offset-[#100907]' : ''}`}
+              >
+                <p className="font-black">Form 2</p>
+                <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--muted)]">75 Mana + 25 HP</p>
+                <p className="mt-2 text-sm leading-5">Cannot be used while on fire.</p>
+              </button>
+            </div>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Target ally</span>
+              <SelectField value={spellBookModal.targetCharacterId} onChange={(event) => setSpellBookModal({ ...spellBookModal, targetCharacterId: event.target.value })}>
+                <option value="">{availableSpellBookTargets.length ? 'Choose ally' : 'No ally targets available'}</option>
+                {availableSpellBookTargets.map((target) => (
+                  <option key={target.id} value={target.id}>{target.name} - HP {target.currentHp}/{target.maxHp} - Mana {target.currentMana}/{target.maxMana}</option>
+                ))}
+              </SelectField>
+            </label>
+            <label className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+              <input
+                type="checkbox"
+                checked={spellBookModal.casterOnFire}
+                onChange={(event) => setSpellBookModal({ ...spellBookModal, casterOnFire: event.target.checked })}
+              />
+              Caster is on fire
+            </label>
+            {spellBookModal.form === 2 && spellBookModal.casterOnFire && (
+              <div className="rounded-xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm font-black text-[var(--red)]">Form 2 is not usable while on fire.</div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" type="button" onClick={() => setSpellBookModal(null)}>Cancel</Button>
+              <Button
+                variant="teal"
+                type="button"
+                disabled={saving || !spellBookModal.targetCharacterId || (spellBookModal.form === 2 && spellBookModal.casterOnFire)}
+                onClick={useSpellBook}
+              >
+                Cast Peaceful Restoration
+              </Button>
             </div>
           </div>
         </Modal>

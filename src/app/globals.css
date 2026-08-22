@@ -251,6 +251,24 @@ h3,
 .spell-type-enhancement { border-color: #f9a8d4; background: linear-gradient(145deg, rgba(244, 114, 182, .35), rgba(70, 18, 48, .94)); }
 .spell-type-utility { border-color: #c084fc; background: linear-gradient(145deg, rgba(147, 51, 234, .36), rgba(48, 20, 78, .94)); }
 
+.spell-book-card {
+  border-color: #56e2c2;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(156, 175, 121, .28), transparent 32%),
+    radial-gradient(circle at 88% 78%, rgba(86, 226, 194, .22), transparent 34%),
+    linear-gradient(145deg, rgba(18, 55, 35, .78), rgba(8, 35, 42, .94));
+}
+
+.spell-book-form-one {
+  border-color: #9caf79;
+  background: linear-gradient(145deg, rgba(156, 175, 121, .34), rgba(18, 48, 29, .94));
+}
+
+.spell-book-form-two {
+  border-color: #56e2c2;
+  background: linear-gradient(145deg, rgba(86, 226, 194, .34), rgba(8, 47, 57, .94));
+}
+
 .spell-card-inactive {
   filter: grayscale(.85);
   opacity: .55;

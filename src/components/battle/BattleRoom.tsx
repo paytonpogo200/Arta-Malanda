@@ -136,6 +136,13 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   }, [isDm, myCombatants, playerViewTokens]);
   const viewedCombatant = orderedTokens.find((entry) => entry.id === viewingAs) ?? null;
   const viewedCharacter = viewedCombatant?.character ?? null;
+  const spellBookTargets = useMemo(() => orderedTokens
+    .filter((entry) => entry.character?.kind === 'player')
+    .map((entry) => ({
+      ...entry.character!,
+      currentHp: entry.currentHp,
+      currentMana: entry.currentMana
+    })), [orderedTokens]);
   const canUseDmTools = isDm && viewingAs === DM_VIEW;
   const isSpectator = !isDm && myCombatants.length === 0;
   const bestiaryOptions = useMemo(() => room.bestiary.filter((entry) => entry.unlocked || isDm).sort((a, b) => a.name.localeCompare(b.name)), [isDm, room.bestiary]);
@@ -538,7 +545,14 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             combatLocked
             activeOnly
             enchantedItems={inventoryItemsByCharacterId.get(viewedCharacter.id) ?? []}
+            spellBookTargets={spellBookTargets}
             onManaChanged={(currentMana) => updateLocalCombatant(viewedCombatant.id, { currentMana })}
+            onSpellBookUsed={(result) => {
+              const caster = room.combatants.find((entry) => entry.characterId === result.characterId);
+              if (caster) updateLocalCombatant(caster.id, { currentMana: result.currentMana });
+              const target = room.combatants.find((entry) => entry.characterId === result.targetCharacterId);
+              if (target) updateLocalCombatant(target.id, { currentHp: result.targetCurrentHp, currentMana: result.targetCurrentMana });
+            }}
           />
           <InventoryPanel
             character={{ ...viewedCharacter, currentHp: viewedCombatant.currentHp, currentMana: viewedCombatant.currentMana }}
