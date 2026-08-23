@@ -32,6 +32,11 @@ type ProductDraft = {
   available: boolean;
   section: string;
   quantityStep: number;
+  kind: 'item' | 'spell' | 'document' | 'service';
+  documentAuthor: string;
+  documentContent: string;
+  manaCost: number;
+  catalogItemKey: string;
 };
 
 type VendorDraft = {
@@ -39,6 +44,8 @@ type VendorDraft = {
   npcName: string;
   facility: string;
   category: string;
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library';
+  payoutCharacterId: string;
   hidden: boolean;
   order: number;
 };
@@ -202,7 +209,12 @@ function productToDraft(product: MarketProduct): ProductDraft {
     stockQuantity: product.stockQuantity ?? 0,
     available: product.available,
     section: product.section || '',
-    quantityStep: product.quantityStep || quantityStepForItem(product)
+    quantityStep: product.quantityStep || quantityStepForItem(product),
+    kind: product.kind,
+    documentAuthor: product.documentAuthor,
+    documentContent: product.documentContent,
+    manaCost: product.manaCost,
+    catalogItemKey: product.catalogItemKey
   };
 }
 
@@ -212,8 +224,49 @@ function vendorToDraft(vendor: ShopVendor): VendorDraft {
     npcName: vendor.npcName,
     facility: vendor.facility,
     category: vendor.category,
+    blueprintType: vendor.blueprintType,
+    payoutCharacterId: vendor.payoutCharacterId ?? '',
     hidden: vendor.hidden,
     order: vendor.order
+  };
+}
+
+function defaultVendorDraft(): VendorDraft {
+  return {
+    name: 'New Shop',
+    npcName: 'Shopkeeper',
+    facility: 'Market',
+    category: 'General',
+    blueprintType: 'market',
+    payoutCharacterId: '',
+    hidden: false,
+    order: 0
+  };
+}
+
+function defaultProductDraft(vendor: ShopVendor, city?: City | null): ProductDraft {
+  const currencySystemKey = city?.key === 'calostrynn' ? 'calostrynn' : 'common';
+  const kind = vendor.blueprintType === 'spell_registrar'
+    ? 'spell'
+    : vendor.blueprintType === 'library'
+      ? 'document'
+      : 'item';
+  return {
+    name: kind === 'spell' ? 'New Spell' : kind === 'document' ? 'New Document' : 'New Item',
+    description: '',
+    type: 'misc',
+    rarity: 'Common',
+    priceCoin: 0,
+    currencySystemKey,
+    stockQuantity: 0,
+    available: true,
+    section: vendor.blueprintType === 'library' ? 'Government' : kind === 'spell' ? 'Utility Spells' : 'Wares',
+    quantityStep: 1,
+    kind,
+    documentAuthor: '',
+    documentContent: '',
+    manaCost: 0,
+    catalogItemKey: ''
   };
 }
 
@@ -312,7 +365,7 @@ function isLibraryVendor(vendor: ShopVendor) {
 }
 
 function isSpellProduct(product: MarketProduct) {
-  return Boolean(spellTypeFromProductSection(product.section));
+  return product.kind === 'spell' || Boolean(spellTypeFromProductSection(product.section));
 }
 
 function isMagicalResearchProduct(product: MarketProduct) {
@@ -338,6 +391,8 @@ function productEffectText(product: MarketProduct) {
 
 function spellManaBadgeText(product: MarketProduct) {
   if (!isSpellProduct(product)) return '';
+  if (product.manaLabel) return product.manaLabel;
+  if (product.manaCost > 0) return `${product.manaCost} mana`;
   const match = product.description.match(/^(.{1,48}?)\s+-\s+/);
   if (!match) return '';
   const label = match[1].trim();
@@ -387,7 +442,7 @@ function uniqueProductsByName(products: MarketProduct[]) {
 }
 
 function activeCityVendor(vendor: ShopVendor) {
-  return vendor.cityKey !== 'calostrynn' || CALOSTRYNN_ACTIVE_VENDOR_KEYS.has(vendor.key);
+  return vendor.custom || vendor.cityKey !== 'calostrynn' || CALOSTRYNN_ACTIVE_VENDOR_KEYS.has(vendor.key);
 }
 
 function sameCityName(left: string | null | undefined, right: string | null | undefined) {
@@ -664,8 +719,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [selectedProduct, setSelectedProduct] = useState<MarketProduct | null>(null);
   const [editProduct, setEditProduct] = useState<MarketProduct | null>(null);
   const [editVendor, setEditVendor] = useState<ShopVendor | null>(null);
+  const [creatingVendor, setCreatingVendor] = useState(false);
+  const [creatingProductForVendor, setCreatingProductForVendor] = useState<ShopVendor | null>(null);
   const [productDraft, setProductDraft] = useState<ProductDraft | null>(null);
   const [vendorDraft, setVendorDraft] = useState<VendorDraft | null>(null);
+  const [productCatalogPickerOpen, setProductCatalogPickerOpen] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [researchType, setResearchType] = useState(MAGICAL_RESEARCH_TYPES[0]);
   const [craftModal, setCraftModal] = useState<CraftModalState | null>(null);
@@ -717,6 +775,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       item.properties.join(' ')
     ].join(' ').toLowerCase().includes(query));
   }, [catalogSearch, constructionCatalogItems]);
+  const filteredProductCatalog = useMemo(() => {
+    const source = [...itemCatalog].sort((a, b) => a.name.localeCompare(b.name));
+    const query = catalogSearch.trim().toLowerCase();
+    if (!query) return source;
+    return source.filter((item) => [
+      item.name,
+      item.type,
+      item.rarity,
+      item.category,
+      item.notes,
+      item.properties.join(' ')
+    ].join(' ').toLowerCase().includes(query));
+  }, [catalogSearch, itemCatalog]);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
   const craftMaterials = craftModal?.service === 'armory' ? armoryMaterials : blacksmithMaterials;
@@ -1138,12 +1209,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             action: 'craft',
             characterId: selectedShopper.id,
             recipeKey: craftModal.recipe.key,
-            materialProductId: craftMaterialProductId || null
+            materialProductId: craftMaterialProductId || null,
+            vendorKey: selectedVendor?.key ?? null
           }
         : craftModal.mode === 'dragon-scales'
           ? {
               action: 'dragon-scales',
               characterId: selectedShopper.id,
+              vendorKey: selectedVendor?.key ?? null,
               dragonScaleSelections: selectedDragonScaleItems.map((entry) => ({
                 source: entry.source,
                 itemId: entry.item.id,
@@ -1157,6 +1230,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             runeProductId: null,
             runeName: selectedCraftRuneItem?.item.name ?? null,
             modifierKey: craftModifier,
+            vendorKey: selectedVendor?.key ?? null,
             runeQuantity: craftModal.mode === 'enchant'
               ? normalizedRuneQuantity(craftModal.mode, selectedShopper, craftRuneQuantity)
               : null
@@ -1190,31 +1264,85 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   function openProductEdit(product: MarketProduct) {
     setEditProduct(product);
+    setCreatingProductForVendor(null);
     setProductDraft(productToDraft(product));
   }
 
   function openVendorEdit(vendor: ShopVendor) {
     setEditVendor(vendor);
+    setCreatingVendor(false);
     setVendorDraft(vendorToDraft(vendor));
+  }
+
+  function openVendorCreate() {
+    setEditVendor(null);
+    setCreatingVendor(true);
+    setVendorDraft(defaultVendorDraft());
+  }
+
+  function openProductCreate(vendor: ShopVendor) {
+    setEditProduct(null);
+    setCreatingProductForVendor(vendor);
+    setProductDraft(defaultProductDraft(vendor, selectedCity));
   }
 
   async function saveProduct(event: FormEvent) {
     event.preventDefault();
-    if (!editProduct || !productDraft) return;
-    const saved = await patchProduct(editProduct, productDraft);
-    if (saved) {
-      setEditProduct(null);
-      setProductDraft(null);
+    if (!productDraft) return;
+    if (creatingProductForVendor) {
+      setSaving(true);
+      setError('');
+      try {
+        await replaceFromResponse(await fetch('/api/cities/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...productDraft, vendorId: creatingProductForVendor.id })
+        }), 'Shop item could not be added.');
+        setCreatingProductForVendor(null);
+        setProductDraft(null);
+      } catch (createError) {
+        setError(createError instanceof Error ? createError.message : 'Shop item could not be added.');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (editProduct) {
+      const saved = await patchProduct(editProduct, productDraft);
+      if (saved) {
+        setEditProduct(null);
+        setProductDraft(null);
+      }
     }
   }
 
   async function saveVendor(event: FormEvent) {
     event.preventDefault();
-    if (!editVendor || !vendorDraft) return;
-    const saved = await patchVendor(editVendor, vendorDraft);
-    if (saved) {
-      setEditVendor(null);
-      setVendorDraft(null);
+    if (!vendorDraft || !selectedCity) return;
+    if (creatingVendor) {
+      setSaving(true);
+      setError('');
+      try {
+        await replaceFromResponse(await fetch('/api/cities/vendors', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...vendorDraft, cityKey: selectedCity.key })
+        }), 'Shop could not be created.');
+        setCreatingVendor(false);
+        setVendorDraft(null);
+      } catch (createError) {
+        setError(createError instanceof Error ? createError.message : 'Shop could not be created.');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+    if (editVendor) {
+      const saved = await patchVendor(editVendor, vendorDraft);
+      if (saved) {
+        setEditVendor(null);
+        setVendorDraft(null);
+      }
     }
   }
 
@@ -1346,6 +1474,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to City</Button>}
+            {isDm && selectedVendor && <Button variant="secondary" onClick={() => openProductCreate(selectedVendor)} disabled={saving}><Plus className="mr-2 inline" size={15} /> Add to shop</Button>}
             {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
             <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
             {isDm && !selectedVendor && selectedCity && <Button variant="secondary" onClick={() => openCityEdit(selectedCity)} disabled={saving}><Settings className="mr-2 inline" size={15} /> City Settings</Button>}
@@ -1454,7 +1583,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </Card>
 
           <section className="space-y-3">
-            <CitySectionHeading label="City Services" city={selectedCity} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-[14rem] flex-1"><CitySectionHeading label="City Services" city={selectedCity} /></div>
+              {isDm && <Button variant="secondary" className="px-3 py-2 text-xs" onClick={openVendorCreate} disabled={saving}><Plus className="mr-2 inline" size={13} /> Create shop</Button>}
+            </div>
             {cityVendors.length === 0 ? (
               <Card><p className="text-sm font-bold text-[var(--muted)]">No services are available here yet.</p></Card>
             ) : (
@@ -1594,6 +1726,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
                   <p className="text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">{isSpellProduct(selectedProduct) ? 'Spell description' : 'Potion effect'}</p>
                   <p className="mt-1">{productEffectText(selectedProduct)}</p>
+                </div>
+              )}
+              {selectedProduct.kind === 'document' && (
+                <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">{selectedProduct.documentAuthor ? `By ${selectedProduct.documentAuthor}` : 'Document'}</p>
+                  <p className="mt-1 whitespace-pre-line">{selectedProduct.documentContent || 'Contents unlock after purchase.'}</p>
                 </div>
               )}
             </div>
@@ -1993,8 +2131,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </Modal>
       )}
 
-      {editVendor && vendorDraft && (
-        <Modal title={`Edit ${editVendor.name}`} onClose={() => setEditVendor(null)}>
+      {(editVendor || creatingVendor) && vendorDraft && (
+        <Modal title={creatingVendor ? 'Create Shop' : `Edit ${editVendor?.name ?? 'Shop'}`} onClose={() => { setEditVendor(null); setCreatingVendor(false); setVendorDraft(null); }}>
           <form onSubmit={saveVendor} className="grid gap-3">
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop name</span>
@@ -2005,6 +2143,26 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <TextField value={vendorDraft.npcName} onChange={(event) => setVendorDraft({ ...vendorDraft, npcName: event.target.value })} />
             </label>
             <div className="grid gap-2 sm:grid-cols-2">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Blueprint</span>
+                <SelectField value={vendorDraft.blueprintType} onChange={(event) => setVendorDraft({ ...vendorDraft, blueprintType: event.target.value as VendorDraft['blueprintType'] })} disabled={!creatingVendor}>
+                  <option value="market">Market</option>
+                  <option value="blacksmith">Blacksmith</option>
+                  <option value="armory">Armory</option>
+                  <option value="brewery">Brewery</option>
+                  <option value="spell_registrar">Spell Registrar</option>
+                  <option value="library">Library</option>
+                </SelectField>
+              </label>
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Player-run payout</span>
+                <SelectField value={vendorDraft.payoutCharacterId} onChange={(event) => setVendorDraft({ ...vendorDraft, payoutCharacterId: event.target.value })}>
+                  <option value="">No payout</option>
+                  {payload.characters.map((character) => (
+                    <option key={character.id} value={character.id}>{character.name} - {character.className}</option>
+                  ))}
+                </SelectField>
+              </label>
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Facility</span>
                 <TextField value={vendorDraft.facility} onChange={(event) => setVendorDraft({ ...vendorDraft, facility: event.target.value })} />
@@ -2023,12 +2181,43 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </Modal>
       )}
 
-      {editProduct && productDraft && (
-        <Modal title={`Edit ${editProduct.name}`} onClose={() => setEditProduct(null)}>
+      {(editProduct || creatingProductForVendor) && productDraft && (
+        <Modal title={creatingProductForVendor ? `Add to ${creatingProductForVendor.name}` : `Edit ${editProduct?.name ?? 'Product'}`} onClose={() => { setEditProduct(null); setCreatingProductForVendor(null); setProductDraft(null); setProductCatalogPickerOpen(false); }}>
           <form onSubmit={saveProduct} className="grid gap-3">
-            <TextField value={productDraft.name} onChange={(event) => setProductDraft({ ...productDraft, name: event.target.value })} />
-            <TextAreaField rows={3} value={productDraft.description} onChange={(event) => setProductDraft({ ...productDraft, description: event.target.value })} />
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Name</span>
+              <TextField value={productDraft.name} onChange={(event) => setProductDraft({ ...productDraft, name: event.target.value })} />
+            </label>
+            <label>
+              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Description / public preview</span>
+              <TextAreaField rows={3} value={productDraft.description} onChange={(event) => setProductDraft({ ...productDraft, description: event.target.value })} />
+            </label>
             <div className="grid gap-2 sm:grid-cols-2">
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Sale kind</span>
+                <SelectField value={productDraft.kind} onChange={(event) => setProductDraft({ ...productDraft, kind: event.target.value as ProductDraft['kind'] })}>
+                  <option value="item">Item</option>
+                  <option value="spell">Spell</option>
+                  <option value="document">Document</option>
+                  <option value="service">Service only</option>
+                </SelectField>
+              </label>
+              {productDraft.kind === 'item' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProductCatalogPickerOpen(true);
+                    setCatalogSearch('');
+                  }}
+                  className="flex min-h-[3.25rem] items-center gap-3 rounded-xl border border-[var(--line)] bg-black/20 px-3 py-2 text-left transition hover:border-[var(--brass)]/60"
+                >
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><PackageCheck size={17} /></span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-black">{productDraft.catalogItemKey ? 'Catalog linked' : 'Choose catalog item'}</span>
+                    <span className="block text-xs font-bold text-[var(--muted)]">{productDraft.catalogItemKey || 'Optional, but recommended'}</span>
+                  </span>
+                </button>
+              )}
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Item type</span>
                 <SelectField value={productDraft.type} onChange={(event) => setProductDraft({ ...productDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
@@ -2050,20 +2239,82 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 <NumberInput min={0} step={productDraft.quantityStep || 1} value={productDraft.stockQuantity} onValueChange={(stockQuantity) => setProductDraft({ ...productDraft, stockQuantity })} />
               </label>
               <label>
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop section</span>
+                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">{productDraft.kind === 'spell' ? 'Spell category' : productDraft.kind === 'document' ? 'Library section' : 'Shop section'}</span>
                 <TextField value={productDraft.section} onChange={(event) => setProductDraft({ ...productDraft, section: event.target.value })} placeholder="Shop section" />
               </label>
+              {productDraft.kind === 'spell' && (
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Mana cost</span>
+                  <NumberInput min={0} step={1} value={productDraft.manaCost} onValueChange={(manaCost) => setProductDraft({ ...productDraft, manaCost })} />
+                </label>
+              )}
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Quantity step</span>
                 <NumberInput min={0.5} step={0.5} value={productDraft.quantityStep} onValueChange={(quantityStep) => setProductDraft({ ...productDraft, quantityStep })} />
               </label>
             </div>
+            {productDraft.kind === 'document' && (
+              <div className="grid gap-3">
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Author / drafted by</span>
+                  <TextField value={productDraft.documentAuthor} onChange={(event) => setProductDraft({ ...productDraft, documentAuthor: event.target.value })} />
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Document contents</span>
+                  <TextAreaField rows={8} value={productDraft.documentContent} onChange={(event) => setProductDraft({ ...productDraft, documentContent: event.target.value })} />
+                </label>
+              </div>
+            )}
             <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
               <input type="checkbox" checked={productDraft.available} onChange={(event) => setProductDraft({ ...productDraft, available: event.target.checked })} />
               Available for sale
             </label>
             <Button variant="primary" disabled={!productDraft.name.trim() || saving}><PackageCheck className="mr-2 inline" size={15} /> Save product</Button>
           </form>
+        </Modal>
+      )}
+
+      {productDraft && productCatalogPickerOpen && (
+        <Modal title="Choose Shop Item" onClose={() => setProductCatalogPickerOpen(false)}>
+          <div className="grid gap-4">
+            <label className="relative block">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
+              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search item catalog" autoFocus />
+            </label>
+            <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/15 p-2">
+              {filteredProductCatalog.length === 0 ? (
+                <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">No catalog items match that search.</div>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {filteredProductCatalog.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setProductDraft({
+                          ...productDraft,
+                          name: item.name,
+                          type: item.type,
+                          rarity: item.rarity,
+                          quantityStep: item.quantityStep,
+                          catalogItemKey: item.key,
+                          description: productDraft.description || item.notes
+                        });
+                        setProductCatalogPickerOpen(false);
+                      }}
+                      className="flex min-h-[4.5rem] items-center gap-3 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-left transition hover:border-[var(--brass)]/60"
+                    >
+                      <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-black/25 ${rarityClass(item.rarity)}`}><ItemIcon type={item.type} size={21} /></span>
+                      <span className="min-w-0">
+                        <span className="block break-words font-black">{item.name}</span>
+                        <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{item.rarity} - {item.type}{item.category ? ` - ${item.category}` : ''}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
     </div>
@@ -2402,7 +2653,7 @@ function BlacksmithPage(props: {
           </span>
           <div>
             <p className="eyebrow">Forge Services</p>
-            <h3 className="text-2xl font-black">Calostrynn Blacksmith</h3>
+            <h3 className="text-2xl font-black">{vendor.name}</h3>
           </div>
         </div>
       </Card>
@@ -2468,7 +2719,7 @@ function ArmoryPage(props: {
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   onCraft: (state: CraftModalState) => void;
 }) {
-  const { sharedMaterials, onCraft } = props;
+  const { vendor, sharedMaterials, onCraft } = props;
   const recipeSections = Array.from(new Set(ARMORY_RECIPES.map((recipe) => recipe.section)));
 
   return (
@@ -2480,7 +2731,7 @@ function ArmoryPage(props: {
           </span>
           <div>
             <p className="eyebrow">Armor Services</p>
-            <h3 className="text-2xl font-black">Calostrynn Armory</h3>
+            <h3 className="text-2xl font-black">{vendor.name}</h3>
           </div>
         </div>
       </Card>
@@ -2572,7 +2823,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
 
     let active = true;
     setBreweryLoading(true);
-    fetch(`/api/cities/brewery?characterId=${shopper.id}`, { cache: 'no-store' })
+    fetch(`/api/cities/brewery?characterId=${encodeURIComponent(shopper.id)}&vendorKey=${encodeURIComponent(vendor.key)}`, { cache: 'no-store' })
       .then((response) => response.json().then((body) => ({ response, body })).catch(() => ({ response, body: {} })))
       .then(({ response, body }) => {
         if (!active) return;
@@ -2591,7 +2842,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
     return () => {
       active = false;
     };
-  }, [canShop, liveRefreshSignal, setError, shopper]);
+  }, [canShop, liveRefreshSignal, setError, shopper, vendor.key]);
 
   useEffect(() => {
     setPropertySelections({});
@@ -2676,6 +2927,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           characterId: shopper.id,
+          vendorKey: vendor.key,
           strength,
           propertyKey: selectedDefinition.propertyKey,
           propertySelections: selectionsToPayload(propertySelections),
@@ -2710,7 +2962,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
           </span>
           <div>
             <p className="eyebrow">Brewing Services</p>
-            <h3 className="text-2xl font-black">Calostrynn Brewery</h3>
+            <h3 className="text-2xl font-black">{vendor.name}</h3>
           </div>
         </div>
       </Card>

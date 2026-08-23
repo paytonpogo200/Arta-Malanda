@@ -168,6 +168,7 @@ export function normalizeConstructionProject(value: unknown): CityConstructionPr
 
 export function normalizeProduct(value: unknown): MarketProduct {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const kind = source.kind === 'spell' || source.kind === 'document' || source.kind === 'service' ? source.kind : 'item';
   return {
     id: String(source.id ?? ''),
     vendorId: String(source.vendorId ?? ''),
@@ -182,12 +183,24 @@ export function normalizeProduct(value: unknown): MarketProduct {
     available: Boolean(source.available),
     catalogItemKey: String(source.catalogItemKey ?? ''),
     section: String(source.section ?? ''),
-    quantityStep: Math.max(0.1, numberFrom(source.quantityStep, 1))
+    quantityStep: Math.max(0.1, numberFrom(source.quantityStep, 1)),
+    kind,
+    manaCost: Math.max(0, numberFrom(source.manaCost, 0)),
+    manaLabel: String(source.manaLabel ?? ''),
+    documentAuthor: String(source.documentAuthor ?? ''),
+    documentContent: String(source.documentContent ?? '')
   };
 }
 
 export function normalizeVendor(value: unknown): ShopVendor {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const blueprintType = source.blueprintType === 'blacksmith'
+    || source.blueprintType === 'armory'
+    || source.blueprintType === 'brewery'
+    || source.blueprintType === 'spell_registrar'
+    || source.blueprintType === 'library'
+    ? source.blueprintType
+    : 'market';
   return {
     id: String(source.id ?? ''),
     cityKey: String(source.cityKey ?? ''),
@@ -196,6 +209,9 @@ export function normalizeVendor(value: unknown): ShopVendor {
     npcName: String(source.npcName ?? 'Shopkeeper'),
     facility: String(source.facility ?? 'Market'),
     category: String(source.category ?? 'General'),
+    blueprintType,
+    payoutCharacterId: source.payoutCharacterId ? String(source.payoutCharacterId) : null,
+    custom: Boolean(source.custom),
     hidden: Boolean(source.hidden),
     order: numberFrom(source.order, 0),
     products: Array.isArray(source.products) ? source.products.map(normalizeProduct).filter((product) => product.id) : []

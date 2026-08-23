@@ -9,6 +9,7 @@ export async function GET(request: NextRequest) {
     if (!token) return NextResponse.json({ error: 'Log in before using the brewery.' }, { status: 401 });
 
     const characterId = request.nextUrl.searchParams.get('characterId') ?? '';
+    const vendorKey = request.nextUrl.searchParams.get('vendorKey') ?? '';
     if (!characterId) return NextResponse.json({ error: 'Choose a brewing character first.' }, { status: 400 });
 
     const supabase = createAuthDatabaseClient();
@@ -16,7 +17,8 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await supabase.rpc('get_brewery_state', {
       p_session_token: token,
-      p_character_id: characterId
+      p_character_id: characterId,
+      p_vendor_key: vendorKey || null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
@@ -42,7 +44,8 @@ export async function POST(request: NextRequest) {
       p_property_key: String(body.propertyKey ?? ''),
       p_property_selections: Array.isArray(body.propertySelections) ? body.propertySelections : [],
       p_stabilizer_selections: Array.isArray(body.stabilizerSelections) ? body.stabilizerSelections : [],
-      p_catalyst_selection: body.catalystSelection && typeof body.catalystSelection === 'object' ? body.catalystSelection : null
+      p_catalyst_selection: body.catalystSelection && typeof body.catalystSelection === 'object' ? body.catalystSelection : null,
+      p_vendor_key: body.vendorKey ? String(body.vendorKey) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

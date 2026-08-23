@@ -123,6 +123,7 @@ create table if not exists public.inventory_items (
   loadout_slot text,
   is_accessory boolean not null default false,
   is_storage boolean not null default false,
+  storage_active boolean not null default false,
   storage_capacity int not null default 0 check (storage_capacity between 0 and 500),
   modifiers jsonb not null default '{}'::jsonb check (jsonb_typeof(modifiers) = 'object'),
   enchantment text,
@@ -167,6 +168,8 @@ create unique index if not exists inventory_loadout_slot_unique
   on public.inventory_items (character_id, loadout_slot)
   where loadout_slot is not null;
 
+drop index if exists inventory_storage_kind_unique;
+
 alter table public.inventory_items
   alter column item_type type text using item_type::text,
   alter column quantity type numeric(12,1) using quantity::numeric;
@@ -175,6 +178,7 @@ alter table public.inventory_items
   add column if not exists display_name text,
   add column if not exists item_description text not null default '',
   add column if not exists is_accessory boolean not null default false,
+  add column if not exists storage_active boolean not null default false,
   add column if not exists enchantment text,
   add column if not exists rune_name text,
   add column if not exists material text,
@@ -1924,6 +1928,44 @@ as $$
   end
 $$;
 
+create or replace function public.additional_storage_kind(p_item_name text, p_item_type text default 'storage')
+returns text
+language sql
+immutable
+as $$
+  select case
+    when public.normalize_item_type(coalesce(p_item_type, 'storage')) <> 'storage' then null
+    when lower(coalesce(p_item_name, '')) like '%wagon home%' then null
+    when lower(coalesce(p_item_name, '')) like '%caged wagon%' then null
+    when lower(coalesce(p_item_name, '')) like '%bag of holding%' then 'bag-of-holding'
+    when lower(coalesce(p_item_name, '')) like '%heavy wagon%' then 'heavy-wagon'
+    when lower(coalesce(p_item_name, '')) like '%light wagon%' then 'light-wagon'
+    when lower(coalesce(p_item_name, '')) like '%heavy duffle%' then 'heavy-duffle'
+    when lower(coalesce(p_item_name, '')) like '%light duffle%' then 'light-duffle'
+    when lower(coalesce(p_item_name, '')) like '%back bag%' or lower(coalesce(p_item_name, '')) like '%backpack%' then 'back-bag'
+    when lower(coalesce(p_item_name, '')) like '%waist pouch%' or lower(coalesce(p_item_name, '')) like '%pouch%' then 'waist-pouch'
+    else null
+  end
+$$;
+
+create or replace function public.inventory_item_can_hold_children(p_item public.inventory_items)
+returns boolean
+language sql
+stable
+as $$
+  select p_item.is_storage = true
+    and (
+      coalesce(p_item.storage_active, false)
+      or (
+        public.normalize_item_type(p_item.item_type) = 'storage'
+        and (
+          lower(coalesce(p_item.item_name, '')) like '%wagon home%'
+          or lower(coalesce(p_item.item_name, '')) like '%caged wagon%'
+        )
+      )
+    )
+$$;
+
 
 create or replace function public.assert_valid_item_quantity(p_item_name text, p_item_type text, p_quantity numeric)
 returns numeric
@@ -2557,6 +2599,7 @@ as $$
     'stackable', public.item_catalog_stackable(p_item.item_name, p_item.item_type),
     'isAccessory', p_item.is_accessory,
     'isStorage', p_item.is_storage,
+    'storageActive', p_item.storage_active,
     'storageCapacity', p_item.storage_capacity,
     'modifiers', p_item.modifiers,
     'enchantment', p_item.enchantment,
@@ -2719,7 +2762,7 @@ begin
     from public.inventory_items i
     where i.id = p_parent_item_id
       and i.character_id = p_character.id
-      and i.is_storage = true;
+      and public.inventory_item_can_hold_children(i);
 
     if v_capacity is null then
       raise exception 'Storage container not found.';
@@ -2763,9 +2806,69 @@ as $$
       and i.loadout_slot is null
       and i.item_type = 'storage'::text
       and i.is_storage = true
-      and lower(i.item_name) = lower(trim(coalesce(p_item_name, '')))
+      and i.storage_active = true
+      and public.additional_storage_kind(i.item_name, i.item_type) = public.additional_storage_kind(p_item_name, 'storage')
+      and public.additional_storage_kind(p_item_name, 'storage') is not null
   )
 $$;
+
+do $$
+declare
+  v_item record;
+  v_slot int;
+  v_capacity int;
+begin
+  update public.inventory_items
+  set storage_active = true
+  where is_storage = true
+    and parent_item_id is null
+    and loadout_slot is null
+    and public.additional_storage_kind(item_name, item_type) is null;
+
+  with ranked_storage as (
+    select
+      i.id,
+      row_number() over (
+        partition by i.character_id, public.additional_storage_kind(i.item_name, i.item_type)
+        order by i.storage_active desc, i.created_at, i.id
+      ) as storage_rank
+    from public.inventory_items i
+    where i.is_storage = true
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and public.additional_storage_kind(i.item_name, i.item_type) is not null
+  )
+  update public.inventory_items i
+  set storage_active = ranked_storage.storage_rank = 1
+  from ranked_storage
+  where i.id = ranked_storage.id;
+
+  for v_item in
+    select i.*
+    from public.inventory_items i
+    where i.is_storage = true
+      and i.storage_active = false
+      and i.parent_item_id is null
+      and i.loadout_slot is null
+      and i.slot_index < 0
+    order by i.character_id, i.created_at, i.id
+  loop
+    select inventory_slots into v_capacity from public.characters where id = v_item.character_id;
+    v_slot := public.find_first_free_inventory_slot(v_item.character_id, null, v_capacity);
+    if v_slot is null then
+      update public.characters
+      set inventory_slots = least(120, inventory_slots + 1)
+      where id = v_item.character_id
+      returning inventory_slots - 1 into v_slot;
+    end if;
+
+    update public.inventory_items
+    set slot_index = greatest(0, coalesce(v_slot, 0)),
+        parent_item_id = null,
+        loadout_slot = null
+    where id = v_item.id;
+  end loop;
+end $$;
 
 with active_storage as (
   select i.id,
@@ -2775,6 +2878,7 @@ with active_storage as (
     and i.loadout_slot is null
     and i.item_type = 'storage'::text
     and i.is_storage = true
+    and i.storage_active = true
 )
 update public.inventory_items i
 set slot_index = -100000 - active_storage.storage_rank
@@ -2789,6 +2893,7 @@ with active_storage as (
     and i.loadout_slot is null
     and i.item_type = 'storage'::text
     and i.is_storage = true
+    and i.storage_active = true
 )
 update public.inventory_items i
 set slot_index = -active_storage.storage_rank
@@ -2921,6 +3026,9 @@ declare
   v_storage_capacity int := greatest(0, coalesce(p_storage_capacity, 0));
   v_make_storage_container boolean := false;
   v_storage_item public.inventory_items%rowtype;
+  v_storage_kind text;
+  v_storage_should_activate boolean := false;
+  v_normal_slot int;
   v_potion_strength text;
   v_potion_property text;
   v_potion_quality text;
@@ -3002,18 +3110,28 @@ begin
     and p_parent_item_id is null;
 
   if v_make_storage_container then
-    if public.character_storage_container_exists(p_character_id, v_item_name) then
-      raise exception 'Only one % can be equipped as additional storage.', v_item_name;
+    v_storage_kind := public.additional_storage_kind(v_item_name, v_item_type);
+    v_storage_should_activate := v_storage_kind is null
+      or not public.character_storage_container_exists(p_character_id, v_item_name);
+    v_normal_slot := case
+      when v_storage_should_activate then null
+      else coalesce(p_slot_index, public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots))
+    end;
+    if not v_storage_should_activate and v_normal_slot is null then
+      raise exception 'Inventory full.';
     end if;
 
     insert into public.inventory_items (
       character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
-      item_description, is_accessory, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+      item_description, is_accessory, is_storage, storage_active, storage_capacity, modifiers, enchantment, material, enhancement_count,
       is_two_handed, potion_strength, potion_property, potion_quality
     )
     values (
-      p_character_id, null, public.next_storage_container_slot(p_character_id), v_item_name, v_item_type, v_rarity, 1,
-      v_item_description, v_is_accessory, true, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
+      p_character_id,
+      null,
+      case when v_storage_should_activate then public.next_storage_container_slot(p_character_id) else v_normal_slot end,
+      v_item_name, v_item_type, v_rarity, 1,
+      v_item_description, v_is_accessory, true, v_storage_should_activate, greatest(1, coalesce(nullif(v_storage_capacity, 0), 6)), v_modifiers,
       nullif(trim(coalesce(p_enchantment, '')), ''), v_material, v_enhancement_count,
       v_is_two_handed, v_potion_strength, v_potion_property, v_potion_quality
     )
@@ -3103,6 +3221,7 @@ declare
   v_original_slot_index int;
   v_fallback_slot_index int;
   v_temporary_slot_index int;
+  v_storage_kind text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -3123,6 +3242,10 @@ begin
     )
   then
     raise exception 'Only Peaceful Restoration spell books can change form.';
+  end if;
+
+  if v_patch ? 'storageActive' and (not v_item.is_storage or public.additional_storage_kind(v_item.item_name, v_item.item_type) is null) then
+    raise exception 'Only carried additional storage can be activated or packed up.';
   end if;
 
   if v_item.item_type = 'pet' and coalesce(v_item.loadout_slot, '') <> 'active-pet' then
@@ -3218,6 +3341,60 @@ begin
     returning * into v_item;
   end if;
 
+  if v_patch ? 'spellBookForm' then
+    update public.inventory_items
+    set spell_book_form = least(2, greatest(1, (v_patch->>'spellBookForm')::int))
+    where id = p_item_id
+      and public.normalize_item_type(item_type) = 'spell book'
+      and lower(public.normalize_item_name(item_name)) = lower(public.normalize_item_name('Peaceful Restoration Spell Book'))
+    returning * into v_item;
+
+    if v_item.id is null then raise exception 'Spell book not found.'; end if;
+  end if;
+
+  if v_patch ? 'storageActive' then
+    v_storage_kind := public.additional_storage_kind(v_item.item_name, v_item.item_type);
+    if coalesce((v_patch->>'storageActive')::boolean, false) then
+      if exists (
+        select 1 from public.inventory_items i
+        where i.character_id = v_item.character_id
+          and i.id <> v_item.id
+          and i.parent_item_id is null
+          and i.loadout_slot is null
+          and i.is_storage = true
+          and i.storage_active = true
+          and public.additional_storage_kind(i.item_name, i.item_type) = v_storage_kind
+      ) then
+        raise exception 'Only one % can be active additional storage.', v_item.item_name;
+      end if;
+
+      update public.inventory_items
+      set storage_active = true,
+          parent_item_id = null,
+          loadout_slot = null,
+          slot_index = public.next_storage_container_slot(v_item.character_id)
+      where id = p_item_id
+      returning * into v_item;
+    else
+      if exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+        raise exception 'Empty this storage before packing it up.';
+      end if;
+
+      v_slot_index := public.find_first_free_inventory_slot(v_item.character_id, null, v_character.inventory_slots);
+      if v_slot_index is null then raise exception 'No open inventory slot.'; end if;
+
+      update public.inventory_items
+      set storage_active = false,
+          parent_item_id = null,
+          loadout_slot = null,
+          slot_index = v_slot_index
+      where id = p_item_id
+      returning * into v_item;
+    end if;
+
+    return public.inventory_item_record_to_json(v_item);
+  end if;
+
   if v_patch ? 'loadoutSlot' and not (v_patch ? 'slotIndex' or v_patch ? 'parentItemId') then
     v_loadout_slot := nullif(v_patch->>'loadoutSlot', '');
 
@@ -3283,6 +3460,7 @@ begin
 
     if v_item.is_storage
       and public.normalize_item_type(v_item.item_type) = 'storage'
+      and v_item.storage_active = true
       and v_parent_item_id is null
       and exists (
         select 1
@@ -3292,8 +3470,10 @@ begin
           and i.parent_item_id is null
           and i.loadout_slot is null
           and i.is_storage = true
+          and i.storage_active = true
           and public.normalize_item_type(i.item_type) = 'storage'
-          and lower(i.item_name) = lower(v_item.item_name)
+          and public.additional_storage_kind(i.item_name, i.item_type) = public.additional_storage_kind(v_item.item_name, v_item.item_type)
+          and public.additional_storage_kind(v_item.item_name, v_item.item_type) is not null
       )
     then
       raise exception 'Only one % can be equipped as additional storage.', v_item.item_name;
@@ -3305,20 +3485,20 @@ begin
       end if;
 
       select * into v_parent_item
-      from public.inventory_items
-      where id = v_parent_item_id
-        and character_id = v_item.character_id
-        and is_storage = true;
+      from public.inventory_items parent
+      where parent.id = v_parent_item_id
+        and parent.character_id = v_item.character_id
+        and public.inventory_item_can_hold_children(parent);
 
       if v_parent_item.id is null or lower(v_parent_item.item_name) not like '%caged wagon%' then
         raise exception 'Pets can only occupy active pet slots, house stable slots, or Caged Wagon slots.';
       end if;
     elsif v_parent_item_id is not null then
       select * into v_parent_item
-      from public.inventory_items
-      where id = v_parent_item_id
-        and character_id = v_item.character_id
-        and is_storage = true;
+      from public.inventory_items parent
+      where parent.id = v_parent_item_id
+        and parent.character_id = v_item.character_id
+        and public.inventory_item_can_hold_children(parent);
 
       if v_parent_item.id is not null and public.inventory_item_is_caged_wagon_storage(v_parent_item.item_name, v_parent_item.item_type) then
         raise exception 'Only animals can be placed in a Caged Wagon.';
@@ -7243,6 +7423,8 @@ create table if not exists public.market_products (
   catalog_item_key text,
   shop_section text not null default 'Wares',
   quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
+  mana_cost int not null default 0 check (mana_cost >= 0),
+  mana_label text not null default '',
   is_available boolean not null default true,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -7338,7 +7520,7 @@ with blacksmith_vendor as (select id from public.shop_vendors where vendor_key =
 delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
 with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
 delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
-insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
@@ -7685,6 +7867,11 @@ as $$
     'catalogItemKey', p_product.catalog_item_key,
     'section', p_product.shop_section,
     'quantityStep', p_product.quantity_step,
+    'kind', p_product.product_kind,
+    'manaCost', p_product.mana_cost,
+    'manaLabel', p_product.mana_label,
+    'documentAuthor', p_product.document_author,
+    'documentContent', case when p_product.product_kind = 'document' and p_product.price_coin > 0 then '' else p_product.document_content end,
     'available', p_product.is_available
   )
 $$;
@@ -7817,17 +8004,78 @@ begin
 end;
 $$;
 
+create or replace function public.credit_character_wallet_value(
+  p_character_id uuid,
+  p_currency_system_key text,
+  p_value int
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_total int;
+begin
+  if p_character_id is null or coalesce(p_value, 0) <= 0 then
+    return;
+  end if;
+
+  v_total := public.wallet_total_currency(p_character_id, p_currency_system_key) + greatest(0, coalesce(p_value, 0));
+  perform public.set_wallet_from_currency_value(p_character_id, p_currency_system_key, v_total);
+end;
+$$;
+
 alter table public.shop_vendors
-add column if not exists npc_name text not null default 'Shopkeeper';
+add column if not exists npc_name text not null default 'Shopkeeper',
+add column if not exists blueprint_type text not null default 'market',
+add column if not exists payout_character_id uuid references public.characters(id) on delete set null,
+add column if not exists is_custom boolean not null default false;
+
+alter table public.shop_vendors
+  drop constraint if exists shop_vendors_blueprint_type_check,
+  add constraint shop_vendors_blueprint_type_check check (blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library'));
+
+alter table public.market_products
+  add column if not exists product_kind text not null default 'item',
+  add column if not exists document_author text not null default '',
+  add column if not exists document_content text not null default '',
+  add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
+  add column if not exists mana_label text not null default '';
+
+alter table public.market_products
+  drop constraint if exists market_products_product_kind_check,
+  add constraint market_products_product_kind_check check (product_kind in ('item', 'spell', 'document', 'service'));
 
 update public.shop_vendors
 set name = 'City Market',
     facility = 'Market',
     category = 'General Goods',
+    blueprint_type = 'market',
     npc_name = 'Market Stalls',
     is_hidden = false,
     display_order = 60
 where vendor_key = 'calostrynn-city-market';
+
+update public.shop_vendors
+set blueprint_type = case
+  when vendor_key = 'calostrynn-blacksmith' then 'blacksmith'
+  when vendor_key = 'calostrynn-armory' then 'armory'
+  when vendor_key = 'calostrynn-brewery' then 'brewery'
+  when vendor_key = 'calostrynn-spells' then 'spell_registrar'
+  when vendor_key = 'calostrynn-library' then 'library'
+  else blueprint_type
+end,
+is_custom = false
+where vendor_key in ('calostrynn-blacksmith', 'calostrynn-armory', 'calostrynn-brewery', 'calostrynn-spells', 'calostrynn-library', 'calostrynn-city-market');
+
+update public.market_products
+set product_kind = case
+  when item_type = 'spell' or shop_section ilike '%spells%' then 'spell'
+  when vendor_id in (select id from public.shop_vendors where blueprint_type = 'library') then 'document'
+  when item_type = 'food' and shop_section ilike '%tavern%' then 'service'
+  else 'item'
+end;
 
 create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
 returns jsonb
@@ -7842,6 +8090,9 @@ as $$
     'npcName', p_vendor.npc_name,
     'facility', p_vendor.facility,
     'category', p_vendor.category,
+    'blueprintType', p_vendor.blueprint_type,
+    'payoutCharacterId', p_vendor.payout_character_id,
+    'custom', p_vendor.is_custom,
     'hidden', p_vendor.is_hidden,
     'order', p_vendor.display_order,
     'products', (
@@ -7927,6 +8178,9 @@ declare
   v_potion_property text;
   v_potion_quality text;
   v_research_type text;
+  v_storage_kind text;
+  v_storage_active boolean := false;
+  v_storage_slot int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -7984,8 +8238,11 @@ begin
     raise exception 'That character is not in %.', v_city.name;
   end if;
 
-  if v_vendor.vendor_key = 'calostrynn-city-market'
-    and lower(trim(coalesce(v_product.shop_section, ''))) = 'lucien - tavern keep'
+  if v_product.product_kind = 'service'
+    or (
+      v_vendor.vendor_key = 'calostrynn-city-market'
+      and lower(trim(coalesce(v_product.shop_section, ''))) = 'lucien - tavern keep'
+    )
   then
     if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
       raise exception 'Not enough stock.';
@@ -7998,6 +8255,7 @@ begin
     end if;
 
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
+    perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -8008,7 +8266,10 @@ begin
     return public.get_discovered_cities(p_session_token);
   end if;
 
-  if v_vendor.vendor_key = 'calostrynn-spells' then
+  if v_vendor.blueprint_type = 'spell_registrar'
+    or v_product.product_kind = 'spell'
+    or v_product.shop_section ilike '%spells%'
+  then
     select * into v_spell
     from public.spell_catalog
     where spell_key = coalesce(nullif(v_product.catalog_item_key, ''), public.catalog_key_for_name(v_product.item_name))
@@ -8037,6 +8298,7 @@ begin
     values (v_character.id, v_spell.id, v_slot is not null, v_slot);
 
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
+    perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -8091,6 +8353,9 @@ begin
   if public.normalize_item_type(v_product.item_type) = 'storage' then
     v_quantity := 1;
   end if;
+  if v_product.product_kind = 'document' and length(trim(coalesce(v_product.document_content, ''))) > 0 then
+    v_product.description := concat_ws(E'\n\n', nullif(trim(v_product.document_author), ''), v_product.document_content);
+  end if;
 
   if v_product.stock_quantity is not null and v_quantity > v_product.stock_quantity then
     raise exception 'Not enough stock.';
@@ -8104,6 +8369,7 @@ begin
 
   if public.normalize_item_type(v_product.item_type) = 'pet' then
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
+    perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
     perform public.place_pet_item_in_stable_for_character(
       v_character.id,
       v_item_name,
@@ -8132,6 +8398,17 @@ begin
   v_inventory_quantity := v_quantity;
 
   if v_product.item_type = 'storage'::text then
+    v_storage_kind := public.additional_storage_kind(v_item_name, v_product.item_type);
+    v_storage_active := v_storage_kind is null
+      or not public.character_storage_container_exists(v_character.id, v_item_name);
+    v_storage_slot := case
+      when v_storage_active then public.next_storage_container_slot(v_character.id)
+      else public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots)
+    end;
+    if v_storage_slot is null then
+      raise exception 'Inventory full.';
+    end if;
+
     insert into public.inventory_items (
       character_id,
       parent_item_id,
@@ -8142,6 +8419,7 @@ begin
       rarity,
       quantity,
       is_storage,
+      storage_active,
       storage_capacity,
       modifiers,
       enchantment,
@@ -8155,13 +8433,14 @@ begin
     values (
       v_character.id,
       null,
-      public.next_storage_container_slot(v_character.id),
+      v_storage_slot,
       v_item_name,
       left(trim(coalesce(v_product.description, '')), 1500),
       v_product.item_type,
       v_product.rarity,
       1,
       true,
+      v_storage_active,
       greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_item_name))),
       v_modifiers,
       null,
@@ -8256,6 +8535,7 @@ begin
   end if;
 
   perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
+  perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
 
   if v_product.stock_quantity is not null then
     update public.market_products
@@ -8280,6 +8560,9 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_product public.market_products%rowtype;
+  v_spell_type text;
+  v_spell_key text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -8336,6 +8619,15 @@ begin
     stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
     catalog_item_key = case when v_patch ? 'catalogItemKey' then nullif(trim(coalesce(v_patch->>'catalogItemKey', '')), '') else catalog_item_key end,
     shop_section = case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares') else shop_section end,
+    product_kind = case when v_patch ? 'kind' and v_patch->>'kind' in ('item', 'spell', 'document', 'service') then v_patch->>'kind' else product_kind end,
+    mana_cost = case when v_patch ? 'manaCost' then greatest(0, (v_patch->>'manaCost')::int) else mana_cost end,
+    mana_label = case
+      when v_patch ? 'manaCost' then greatest(0, (v_patch->>'manaCost')::int)::text || ' mana'
+      when v_patch ? 'manaLabel' then coalesce(nullif(trim(v_patch->>'manaLabel'), ''), mana_label)
+      else mana_label
+    end,
+    document_author = case when v_patch ? 'documentAuthor' then left(trim(coalesce(v_patch->>'documentAuthor', '')), 160) else document_author end,
+    document_content = case when v_patch ? 'documentContent' then left(coalesce(v_patch->>'documentContent', ''), 12000) else document_content end,
     quantity_step = case
       when lower(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale') then 1
       when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5
@@ -8343,7 +8635,46 @@ begin
       else quantity_step
     end,
     is_available = case when v_patch ? 'available' then (v_patch->>'available')::boolean else is_available end
-  where id = p_product_id;
+  where id = p_product_id
+  returning * into v_product;
+
+  if v_product.id is null then
+    raise exception 'Shop product not found.';
+  end if;
+
+  if v_product.product_kind = 'spell' then
+    v_spell_type := case
+      when regexp_replace(v_product.shop_section, '\s+Spells$', '', 'i') in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility') then regexp_replace(v_product.shop_section, '\s+Spells$', '', 'i')
+      else 'Utility'
+    end;
+    v_spell_key := coalesce(nullif(v_product.catalog_item_key, ''), public.catalog_key_for_name(v_product.item_name));
+
+    insert into public.spell_catalog (spell_key, name, school, spell_type, mana_cost, mana_label, summary, details, rarity, is_available, display_order, price_coin)
+    values (
+      v_spell_key,
+      v_product.item_name,
+      'arcane',
+      v_spell_type,
+      v_product.mana_cost,
+      coalesce(nullif(v_product.mana_label, ''), v_product.mana_cost::text || ' mana'),
+      v_product.description,
+      v_product.description,
+      v_product.rarity,
+      v_product.is_available,
+      coalesce((select max(display_order) + 10 from public.spell_catalog), 10),
+      v_product.price_coin
+    )
+    on conflict (spell_key) do update
+    set name = excluded.name,
+        spell_type = excluded.spell_type,
+        mana_cost = excluded.mana_cost,
+        mana_label = excluded.mana_label,
+        summary = excluded.summary,
+        details = excluded.details,
+        rarity = excluded.rarity,
+        is_available = excluded.is_available,
+        price_coin = excluded.price_coin;
+  end if;
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -10321,6 +10652,7 @@ $$;
 drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text);
 drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int);
 drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb);
+drop function if exists public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb, text);
 
 create or replace function public.run_blacksmith_action(
   p_session_token text,
@@ -10333,7 +10665,8 @@ create or replace function public.run_blacksmith_action(
   p_modifier_key text default null,
   p_rune_quantity int default null,
   p_dragon_scale_selections jsonb default null,
-  p_rune_name text default null
+  p_rune_name text default null,
+  p_vendor_key text default null
 )
 returns jsonb
 language plpgsql
@@ -10369,7 +10702,7 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
-  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-blacksmith');
+  v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-blacksmith'));
 
   if lower(coalesce(p_action, '')) = 'dragon-scales' then
     perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name, p_dragon_scale_selections);
@@ -10527,6 +10860,7 @@ $$;
 
 drop function if exists public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text);
 drop function if exists public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb);
+drop function if exists public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb, text);
 
 create or replace function public.run_armory_action(
   p_session_token text,
@@ -10538,7 +10872,8 @@ create or replace function public.run_armory_action(
   p_rune_product_id uuid default null,
   p_modifier_key text default null,
   p_dragon_scale_selections jsonb default null,
-  p_rune_name text default null
+  p_rune_name text default null,
+  p_vendor_key text default null
 )
 returns jsonb
 language plpgsql
@@ -10570,7 +10905,7 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
-  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-armory');
+  v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-armory'));
 
   if lower(coalesce(p_action, '')) = 'dragon-scales' then
     perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name, p_dragon_scale_selections);
@@ -10899,9 +11234,12 @@ as $$
   from useful
 $$;
 
+drop function if exists public.get_brewery_state(text, uuid);
+
 create or replace function public.get_brewery_state(
   p_session_token text,
-  p_character_id uuid
+  p_character_id uuid,
+  p_vendor_key text default null
 )
 returns jsonb
 language plpgsql
@@ -10917,7 +11255,7 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
-  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-brewery');
+  v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-brewery'));
 
   return jsonb_build_object(
     'definitions', (
@@ -10939,6 +11277,8 @@ begin
 end;
 $$;
 
+drop function if exists public.brew_potion(text, uuid, text, text, jsonb, jsonb, jsonb);
+
 create or replace function public.brew_potion(
   p_session_token text,
   p_character_id uuid,
@@ -10946,7 +11286,8 @@ create or replace function public.brew_potion(
   p_property_key text,
   p_property_selections jsonb,
   p_stabilizer_selections jsonb,
-  p_catalyst_selection jsonb default null
+  p_catalyst_selection jsonb default null,
+  p_vendor_key text default null
 )
 returns jsonb
 language plpgsql
@@ -10984,7 +11325,7 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
-  v_city := public.assert_character_can_use_vendor(v_character, 'calostrynn-brewery');
+  v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-brewery'));
 
   if v_strength not in ('Lesser', 'Greater', 'Greatest') then
     raise exception 'Choose Lesser, Greater, or Greatest strength.';
@@ -11127,7 +11468,7 @@ begin
       'item', v_created_item,
       'message', case when v_success then 'Brew successful.' else 'The brew failed and the ingredients were consumed.' end
     ),
-    'brewery', public.get_brewery_state(p_session_token, v_character.id),
+    'brewery', public.get_brewery_state(p_session_token, v_character.id, p_vendor_key),
     'cities', public.get_discovered_cities(p_session_token)
   );
 end;
@@ -11287,10 +11628,14 @@ grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
 grant execute on function public.wallet_total_currency(uuid, text) to anon, authenticated;
 grant execute on function public.set_wallet_from_coin_value(uuid, int) to anon, authenticated;
 grant execute on function public.set_wallet_from_currency_value(uuid, text, int) to anon, authenticated;
+grant execute on function public.credit_character_wallet_value(uuid, text, int) to anon, authenticated;
 grant execute on function public.get_discovered_cities(text) to anon, authenticated;
 grant execute on function public.purchase_market_product(text, uuid, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.safe_slug(text) to anon, authenticated;
+grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
+grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
 grant execute on function public.upsert_dragon_scale_fragment(text, text, text, int) to anon, authenticated;
 grant execute on function public.upsert_material_conversion_recipe(text, text, text, text, text, text, numeric, int) to anon, authenticated;
@@ -11321,13 +11666,13 @@ grant execute on function public.update_player_house(text, uuid, jsonb) to anon,
 grant execute on function public.delete_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.set_player_house_permissions(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.consume_forge_materials(uuid, uuid, numeric, int, text, text) to anon, authenticated;
-grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb, text) to anon, authenticated;
-grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb, text) to anon, authenticated;
+grant execute on function public.run_blacksmith_action(text, uuid, text, text, uuid, uuid, uuid, text, int, jsonb, text, text) to anon, authenticated;
+grant execute on function public.run_armory_action(text, uuid, text, text, uuid, uuid, uuid, text, jsonb, text, text) to anon, authenticated;
 grant execute on function public.crafting_selection_item(uuid, text, uuid, text) to anon, authenticated;
 grant execute on function public.consume_crafting_selection(uuid, text, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.brewery_available_items(uuid, text) to anon, authenticated;
-grant execute on function public.get_brewery_state(text, uuid) to anon, authenticated;
-grant execute on function public.brew_potion(text, uuid, text, text, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function public.get_brewery_state(text, uuid, text) to anon, authenticated;
+grant execute on function public.brew_potion(text, uuid, text, text, jsonb, jsonb, jsonb, text) to anon, authenticated;
 grant execute on function public.consume_inventory_potion(text, uuid, boolean) to anon, authenticated;
 
 update public.market_products
@@ -11496,6 +11841,15 @@ begin
     npc_name = case when v_patch ? 'npcName' then coalesce(nullif(trim(v_patch->>'npcName'), ''), npc_name) else npc_name end,
     facility = case when v_patch ? 'facility' then coalesce(nullif(trim(v_patch->>'facility'), ''), facility) else facility end,
     category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
+    blueprint_type = case
+      when v_patch ? 'blueprintType' and v_patch->>'blueprintType' in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library') then v_patch->>'blueprintType'
+      else blueprint_type
+    end,
+    payout_character_id = case
+      when v_patch ? 'payoutCharacterId' then nullif(v_patch->>'payoutCharacterId', '')::uuid
+      else payout_character_id
+    end,
+    display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end,
     is_hidden = case when v_patch ? 'hidden' then (v_patch->>'hidden')::boolean else is_hidden end
   where id = p_vendor_id;
 
@@ -11704,6 +12058,9 @@ select
   s.spell_type || ' Spells',
   1,
   s.spell_key,
+  'spell',
+  s.mana_cost,
+  s.mana_label,
   s.is_available,
   s.display_order
 from public.shop_vendors v
@@ -11719,6 +12076,9 @@ set vendor_id = excluded.vendor_id,
     shop_section = excluded.shop_section,
     quantity_step = excluded.quantity_step,
     catalog_item_key = excluded.catalog_item_key,
+    product_kind = excluded.product_kind,
+    mana_cost = excluded.mana_cost,
+    mana_label = excluded.mana_label,
     display_order = excluded.display_order,
     updated_at = now();
 
@@ -11739,6 +12099,245 @@ as $$
     'details', p_spell.details,
     'rarity', p_spell.rarity
   )
+$$;
+
+create or replace function public.safe_slug(p_value text)
+returns text
+language sql
+immutable
+as $$
+  select coalesce(nullif(regexp_replace(lower(trim(coalesce(p_value, ''))), '[^a-z0-9]+', '-', 'g'), ''), 'entry')
+$$;
+
+create or replace function public.create_shop_vendor(
+  p_session_token text,
+  p_city_key text,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_city public.cities%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_blueprint text := coalesce(nullif(v_patch->>'blueprintType', ''), 'market');
+  v_name text := coalesce(nullif(trim(v_patch->>'name'), ''), 'New Shop');
+  v_vendor public.shop_vendors%rowtype;
+  v_source public.shop_vendors%rowtype;
+  v_currency text;
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+
+  if v_blueprint not in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library') then
+    raise exception 'Unsupported shop blueprint.';
+  end if;
+
+  select * into v_city from public.cities where city_key = p_city_key;
+  if v_city.id is null then raise exception 'City not found.'; end if;
+  v_currency := case when p_city_key = 'calostrynn' then 'calostrynn' else 'common' end;
+
+  insert into public.shop_vendors (
+    city_key,
+    vendor_key,
+    name,
+    npc_name,
+    facility,
+    category,
+    blueprint_type,
+    payout_character_id,
+    is_custom,
+    is_hidden,
+    display_order
+  )
+  values (
+    p_city_key,
+    public.safe_slug(p_city_key || '-' || v_name || '-' || substring(gen_random_uuid()::text from 1 for 8)),
+    v_name,
+    coalesce(nullif(trim(v_patch->>'npcName'), ''), 'Shopkeeper'),
+    coalesce(nullif(trim(v_patch->>'facility'), ''), initcap(replace(v_blueprint, '_', ' '))),
+    coalesce(nullif(trim(v_patch->>'category'), ''), initcap(replace(v_blueprint, '_', ' '))),
+    v_blueprint,
+    nullif(v_patch->>'payoutCharacterId', '')::uuid,
+    true,
+    coalesce((v_patch->>'hidden')::boolean, false),
+    coalesce((select max(display_order) + 10 from public.shop_vendors where city_key = p_city_key), 10)
+  )
+  returning * into v_vendor;
+
+  if v_blueprint in ('blacksmith', 'armory', 'brewery') then
+    select * into v_source
+    from public.shop_vendors
+    where vendor_key = case
+      when v_blueprint = 'blacksmith' then 'calostrynn-blacksmith'
+      when v_blueprint = 'armory' then 'calostrynn-armory'
+      else 'calostrynn-brewery'
+    end;
+
+    insert into public.market_products (
+      vendor_id,
+      product_key,
+      item_name,
+      description,
+      item_type,
+      rarity,
+      price_coin,
+      currency_system_key,
+      stock_quantity,
+      catalog_item_key,
+      shop_section,
+      quantity_step,
+      product_kind,
+      document_author,
+      document_content,
+      is_available,
+      display_order
+    )
+    select
+      v_vendor.id,
+      public.safe_slug(v_vendor.vendor_key || '-' || p.product_key),
+      p.item_name,
+      p.description,
+      p.item_type,
+      p.rarity,
+      p.price_coin,
+      v_currency,
+      p.stock_quantity,
+      p.catalog_item_key,
+      p.shop_section,
+      p.quantity_step,
+      p.product_kind,
+      p.document_author,
+      p.document_content,
+      p.is_available,
+      p.display_order
+    from public.market_products p
+    where p.vendor_id = v_source.id;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.create_market_product(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_name text := coalesce(nullif(trim(v_patch->>'name'), ''), 'New Item');
+  v_section text := coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares');
+  v_kind text;
+  v_currency text;
+  v_spell_type text;
+  v_spell_key text;
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null then raise exception 'Shop not found.'; end if;
+
+  v_kind := case
+    when v_patch ? 'kind' and v_patch->>'kind' in ('item', 'spell', 'document', 'service') then v_patch->>'kind'
+    when v_vendor.blueprint_type = 'spell_registrar' then 'spell'
+    when v_vendor.blueprint_type = 'library' then 'document'
+    else 'item'
+  end;
+  v_currency := case when v_vendor.city_key = 'calostrynn' then 'calostrynn' else 'common' end;
+
+  if v_kind = 'spell' then
+    v_spell_type := case
+      when v_section in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility') then v_section
+      when regexp_replace(v_section, '\s+Spells$', '', 'i') in ('Ember', 'Frost', 'Lightning', 'Earth', 'Wind', 'Energy', 'Defensive Support', 'Offensive Support', 'Enhancement', 'Utility') then regexp_replace(v_section, '\s+Spells$', '', 'i')
+      else 'Utility'
+    end;
+    v_section := v_spell_type || ' Spells';
+    v_spell_key := public.catalog_key_for_name(v_name);
+
+    insert into public.spell_catalog (spell_key, name, school, spell_type, mana_cost, mana_label, summary, details, rarity, is_available, display_order, price_coin)
+    values (
+      v_spell_key,
+      v_name,
+      'arcane',
+      v_spell_type,
+      greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0)),
+      greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0))::text || ' mana',
+      coalesce(v_patch->>'description', ''),
+      coalesce(v_patch->>'description', ''),
+      coalesce(nullif(v_patch->>'rarity', ''), 'Common')::public.item_rarity,
+      true,
+      coalesce((select max(display_order) + 10 from public.spell_catalog), 10),
+      greatest(0, coalesce(nullif(v_patch->>'priceCoin', '')::int, 0))
+    )
+    on conflict (spell_key) do update
+    set name = excluded.name,
+        spell_type = excluded.spell_type,
+        mana_cost = excluded.mana_cost,
+        mana_label = excluded.mana_label,
+        summary = excluded.summary,
+        details = excluded.details,
+        rarity = excluded.rarity,
+        is_available = true;
+  end if;
+
+  insert into public.market_products (
+    vendor_id,
+    product_key,
+    item_name,
+    description,
+    item_type,
+    rarity,
+    price_coin,
+    currency_system_key,
+    stock_quantity,
+    catalog_item_key,
+    shop_section,
+    quantity_step,
+    product_kind,
+    mana_cost,
+    mana_label,
+    document_author,
+    document_content,
+    is_available,
+    display_order
+  )
+  values (
+    p_vendor_id,
+    public.safe_slug(v_vendor.vendor_key || '-' || v_name || '-' || substring(gen_random_uuid()::text from 1 for 8)),
+    v_name,
+    coalesce(v_patch->>'description', ''),
+    case
+      when v_kind = 'spell' then 'misc'
+      when v_kind = 'document' then 'quest'
+      else public.normalize_item_type(coalesce(v_patch->>'type', 'misc'))
+    end,
+    coalesce(nullif(v_patch->>'rarity', ''), 'Common')::public.item_rarity,
+    greatest(0, coalesce(nullif(v_patch->>'priceCoin', '')::int, 0)),
+    case when v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'calostrynn' then 'calostrynn' else v_currency end,
+    case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else null end,
+    coalesce(nullif(v_patch->>'catalogItemKey', ''), case when v_kind = 'spell' then v_spell_key else public.catalog_key_for_name(v_name) end),
+    v_section,
+    case when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 else 1 end,
+    v_kind,
+    case when v_kind = 'spell' then greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0)) else 0 end,
+    case when v_kind = 'spell' then greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0))::text || ' mana' else '' end,
+    left(trim(coalesce(v_patch->>'documentAuthor', '')), 160),
+    left(coalesce(v_patch->>'documentContent', ''), 12000),
+    coalesce((v_patch->>'available')::boolean, true),
+    coalesce((select max(display_order) + 10 from public.market_products where vendor_id = p_vendor_id), 10)
+  );
+
+  return public.get_discovered_cities(p_session_token);
+end;
 $$;
 
 create or replace function public.character_spell_record_to_json(p_entry public.character_spells)
@@ -13063,7 +13662,11 @@ set search_path = public, extensions
 as $$
 declare
   v_storage public.inventory_items%rowtype;
+  v_target_character public.characters%rowtype;
   v_slot_index int;
+  v_storage_kind text;
+  v_activate boolean := true;
+  v_has_children boolean := false;
 begin
   select * into v_storage
   from public.inventory_items
@@ -13074,27 +13677,40 @@ begin
   if not v_storage.is_storage then raise exception 'That item is not a storage container.'; end if;
   if v_storage.loadout_slot is not null then raise exception 'Unequip that storage container before moving it.'; end if;
 
-  if exists (
-    select 1
-    from public.inventory_items i
-    where i.character_id = p_to_character_id
-      and i.id <> v_storage.id
-      and i.parent_item_id is null
-      and i.loadout_slot is null
-      and i.is_storage = true
-      and public.normalize_item_type(i.item_type) = 'storage'
-      and lower(i.item_name) = lower(v_storage.item_name)
-  ) then
-    raise exception 'Only one % can be equipped as additional storage.', v_storage.item_name;
+  select * into v_target_character from public.characters where id = p_to_character_id;
+  if v_target_character.id is null then raise exception 'Receiving character was not found.'; end if;
+
+  v_storage_kind := public.additional_storage_kind(v_storage.item_name, v_storage.item_type);
+  v_has_children := exists (select 1 from public.inventory_items child where child.parent_item_id = v_storage.id);
+  v_activate := v_storage_kind is null
+    or not exists (
+      select 1
+      from public.inventory_items i
+      where i.character_id = p_to_character_id
+        and i.id <> v_storage.id
+        and i.parent_item_id is null
+        and i.loadout_slot is null
+        and i.is_storage = true
+        and i.storage_active = true
+        and public.additional_storage_kind(i.item_name, i.item_type) = v_storage_kind
+    );
+
+  if not v_activate and v_has_children then
+    raise exception 'That character already has active % storage. Empty this container before gifting or trading it.', v_storage.item_name;
   end if;
 
-  v_slot_index := public.next_storage_container_slot(p_to_character_id);
+  v_slot_index := case
+    when v_activate then public.next_storage_container_slot(p_to_character_id)
+    else public.find_first_free_inventory_slot(p_to_character_id, null, v_target_character.inventory_slots)
+  end;
+  if v_slot_index is null then raise exception 'Target inventory is full.'; end if;
 
   update public.inventory_items
   set character_id = p_to_character_id,
       parent_item_id = null,
       loadout_slot = null,
-      slot_index = v_slot_index
+      slot_index = v_slot_index,
+      storage_active = v_activate
   where id = p_storage_item_id;
 
   with recursive descendants as (
@@ -14810,6 +15426,9 @@ declare
   v_potion_property text;
   v_potion_quality text;
   v_has_open_inventory_slot boolean := false;
+  v_storage_kind text;
+  v_storage_active boolean := false;
+  v_storage_slot int;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -14922,9 +15541,14 @@ begin
   v_inventory_quantity := v_quantity;
 
   if v_item_type = 'storage'::text then
-    if public.character_storage_container_exists(v_character.id, v_item_name) then
-      raise exception 'Only one % can be equipped as additional storage.', v_item_name;
-    end if;
+    v_storage_kind := public.additional_storage_kind(v_item_name, v_item_type);
+    v_storage_active := v_storage_kind is null
+      or not public.character_storage_container_exists(v_character.id, v_item_name);
+    v_storage_slot := case
+      when v_storage_active then public.next_storage_container_slot(v_character.id)
+      else public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots)
+    end;
+    if v_storage_slot is null then raise exception 'Inventory full.'; end if;
 
     insert into public.inventory_items (
       character_id,
@@ -14935,6 +15559,7 @@ begin
       rarity,
       quantity,
       is_storage,
+      storage_active,
       storage_capacity,
       modifiers,
       enchantment,
@@ -14945,12 +15570,13 @@ begin
     values (
       v_character.id,
       null,
-      public.next_storage_container_slot(v_character.id),
+      v_storage_slot,
       v_item_name,
       v_item_type,
       v_rarity,
       1,
       true,
+      v_storage_active,
       greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_item_name))),
       v_modifiers,
       null,
@@ -15306,6 +15932,8 @@ grant execute on function public.import_loot_items(text, jsonb) to anon, authent
 grant execute on function public.update_shop_vendor(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.item_catalog_stackable(text, text) to anon, authenticated;
 grant execute on function public.catalog_storage_capacity(text) to anon, authenticated;
+grant execute on function public.additional_storage_kind(text, text) to anon, authenticated;
+grant execute on function public.inventory_item_can_hold_children(public.inventory_items) to anon, authenticated;
 grant execute on function public.split_inventory_item_stack(text, uuid, numeric, boolean) to anon, authenticated;
 grant execute on function public.award_exploration_loot_item(text, uuid, uuid, numeric) to anon, authenticated;
 grant execute on function public.world_map_record_to_json(public.world_map_uploads) to anon, authenticated;

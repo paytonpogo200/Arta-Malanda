@@ -183,6 +183,7 @@ export type InventoryItem = {
   stackable: boolean;
   isAccessory: boolean;
   isStorage: boolean;
+  storageActive: boolean;
   storageCapacity: number;
   modifiers: LoadoutModifiers;
   enchantment?: string;
@@ -317,6 +318,11 @@ export type MarketProduct = {
   catalogItemKey: string;
   section: string;
   quantityStep: number;
+  kind: 'item' | 'spell' | 'document' | 'service';
+  manaCost: number;
+  manaLabel: string;
+  documentAuthor: string;
+  documentContent: string;
 };
 
 export type ShopVendor = {
@@ -327,6 +333,9 @@ export type ShopVendor = {
   npcName: string;
   facility: string;
   category: string;
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library';
+  payoutCharacterId: string | null;
+  custom: boolean;
   hidden: boolean;
   order: number;
   products: MarketProduct[];

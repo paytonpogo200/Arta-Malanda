@@ -132,27 +132,37 @@ function isPotionConsumable(item: InventoryItem) {
   return item.type === 'potion' && !isEmptyFlask(item);
 }
 
-function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+function isActiveStorage(item: Pick<InventoryItem, 'isStorage' | 'storageActive'>) {
+  return item.isStorage && item.storageActive;
+}
+
+function isDormantAdditionalStorage(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive' | 'type'>) {
+  if (!item.isStorage || item.storageActive || item.type !== 'storage') return false;
   const normalized = item.name.toLowerCase();
-  return item.isStorage
+  return !normalized.includes('wagon home') && !normalized.includes('caged wagon');
+}
+
+function isWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive'>) {
+  const normalized = item.name.toLowerCase();
+  return isActiveStorage(item)
     && normalized.includes('wagon')
     && !normalized.includes('wagon home')
     && !normalized.includes('caged wagon');
 }
 
-function isMobileHomeStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
-  return item.isStorage && item.name.toLowerCase().includes('wagon home');
+function isMobileHomeStorage(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive'>) {
+  return isActiveStorage(item) && item.name.toLowerCase().includes('wagon home');
 }
 
-function isCagedWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
-  return item.isStorage && item.name.toLowerCase().includes('caged wagon');
+function isCagedWagonStorage(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive'>) {
+  return isActiveStorage(item) && item.name.toLowerCase().includes('caged wagon');
 }
 
-function isPermissionedMobileStorage(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+function isPermissionedMobileStorage(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive'>) {
   return isMobileHomeStorage(item) || isCagedWagonStorage(item);
 }
 
-function storageAccessLabel(item: Pick<InventoryItem, 'name' | 'isStorage'>) {
+function storageAccessLabel(item: Pick<InventoryItem, 'name' | 'isStorage' | 'storageActive'>) {
   if (isMobileHomeStorage(item)) return 'Wagon Home';
   if (isCagedWagonStorage(item)) return 'Caged Wagon';
   return 'Shared Wagon';
@@ -409,9 +419,9 @@ export function InventoryPanel({
     void loadCatalog();
   }, [loadCatalog]);
 
-  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !item.isStorage), [items]);
+  const mainItems = useMemo(() => items.filter((item) => sameContainer(item, null) && !isActiveStorage(item)), [items]);
   const itemByMainSlot = useMemo(() => new Map(mainItems.map((item) => [item.slotIndex, item])), [mainItems]);
-  const storageItems = useMemo(() => items.filter((item) => item.isStorage), [items]);
+  const storageItems = useMemo(() => items.filter(isActiveStorage), [items]);
   const nearbyWagonItemIds = useMemo(() => new Set(nearbyWagonItems.map((item) => item.id)), [nearbyWagonItems]);
   const filteredCatalog = useMemo(() => {
     const search = catalogSearch.trim().toLowerCase();
@@ -633,6 +643,19 @@ export function InventoryPanel({
     const nextForm: 1 | 2 = peacefulRestorationForm(item) === 1 ? 2 : 1;
     const optimisticItems = items.map((entry) => entry.id === item.id ? { ...entry, spellBookForm: nextForm } : entry);
     await patchItemState(item.id, { spellBookForm: nextForm }, optimisticItems);
+  }
+
+  async function setStorageActive(item: InventoryItem, storageActive: boolean) {
+    if (!canManage || !item.isStorage) return;
+    const nextSlot = storageActive ? -1 : firstOpenSlot(items, null, character.inventorySlots) ?? item.slotIndex;
+    const optimisticItems = items.map((entry) => entry.id === item.id ? {
+      ...entry,
+      storageActive,
+      parentItemId: null,
+      loadoutSlot: null,
+      slotIndex: nextSlot
+    } : entry);
+    await patchItemState(item.id, { storageActive }, optimisticItems);
   }
 
   function openSpellBookCast(item: InventoryItem) {
@@ -1832,22 +1855,20 @@ export function InventoryPanel({
                     <p className="mt-1 text-xs font-black uppercase tracking-wider text-[var(--muted)]">{modal.item.type} · {modal.item.rarity} · Quantity {modal.item.quantity}</p>
                     {isPeacefulRestorationBook(modal.item) && (
                       <div className="mt-3 grid gap-3">
-                        <p className="rounded-xl border border-black/25 bg-black/20 p-3 text-xs font-black uppercase tracking-wider text-[var(--paper)]">
+                        <p className={`rounded-xl border border-black/25 bg-black/20 p-3 text-xs font-black uppercase tracking-wider ${peacefulRestorationForm(modal.item) === 1 ? 'text-[#78d878]' : 'text-[#56e2c2]'}`}>
                           Current form: Form {peacefulRestorationForm(modal.item)} - 40 Mana - inventory item
                         </p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div className="spell-book-form-one rounded-xl border p-3 text-sm leading-6">
-                            <p className="font-black">Form 1</p>
-                            <p>Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.</p>
-                          </div>
-                          <div className="spell-book-form-two rounded-xl border p-3 text-sm leading-6">
-                            <p className="font-black">Form 2</p>
-                            <p>Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.</p>
-                          </div>
+                        <div className={`${peacefulRestorationForm(modal.item) === 1 ? 'spell-book-form-one' : 'spell-book-form-two'} rounded-xl border p-3 text-sm leading-6`}>
+                          <p className="font-black">Form {peacefulRestorationForm(modal.item)}</p>
+                          <p>
+                            {peacefulRestorationForm(modal.item) === 1
+                              ? 'Heals an ally for 75 HP and restores 25 Mana. If the caster is on fire, it instead heals 20 HP and restores 10 Mana.'
+                              : 'Restores 75 Mana and heals 25 HP. This form cannot be used while the caster is on fire.'}
+                          </p>
                         </div>
                       </div>
                     )}
-                    {modal.item.itemDescription && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
+                    {modal.item.itemDescription && !isPeacefulRestorationBook(modal.item) && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
                     {modalPotionEffect && (
                       <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3 text-sm leading-6 text-[var(--paper)]">
                         <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Potion effect</p>
@@ -1962,6 +1983,16 @@ export function InventoryPanel({
                   {character.ownerUserId && (
                     <Button variant="secondary" onClick={() => sendToHouse(modal.item!)}>
                       {modal.item.type === 'pet' ? 'Send to stable' : 'Send to house'}
+                    </Button>
+                  )}
+                  {isDormantAdditionalStorage(modal.item) && (
+                    <Button variant="teal" onClick={() => setStorageActive(modal.item!, true)} disabled={saving}>
+                      Activate additional storage
+                    </Button>
+                  )}
+                  {modal.item.isStorage && modal.item.storageActive && !isPermissionedMobileStorage(modal.item) && (
+                    <Button variant="secondary" onClick={() => setStorageActive(modal.item!, false)} disabled={saving}>
+                      Pack up storage
                     </Button>
                   )}
                   {modal.item.isStorage && isPermissionedMobileStorage(modal.item) && canEditSpecialStoragePermissions && (

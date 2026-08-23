@@ -72,6 +72,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
     stackable: source.stackable === undefined ? true : Boolean(source.stackable),
     isAccessory: Boolean(source.isAccessory),
     isStorage: Boolean(source.isStorage),
+    storageActive: source.storageActive === undefined ? Boolean(source.isStorage) : Boolean(source.storageActive),
     storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0)),
     modifiers: normalizeModifiers(source.modifiers),
     enchantment: source.enchantment ? String(source.enchantment) : undefined,

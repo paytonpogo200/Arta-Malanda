@@ -3,7 +3,7 @@
 import { memo } from 'react';
 import { Plus } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
-import { itemHasEnhancementVisual, spellBookVisualClass } from '@/features/inventory/itemDetails';
+import { itemHasEnhancementVisual, peacefulRestorationForm, spellBookVisualClass } from '@/features/inventory/itemDetails';
 import { rarityClass } from '@/lib/utils/rarity';
 import type { InventoryItem } from '@/lib/types';
 
@@ -70,7 +70,10 @@ export const InventorySlot = memo(function InventorySlot({
             <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[var(--muted)]">{item.name}</span>
           )}
           {item.type === 'spell book' && (
-            <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[var(--paper)]">Form {item.spellBookForm ?? 1}</span>
+            <span className={`w-full truncate text-[9px] font-black uppercase tracking-wide ${peacefulRestorationForm(item) === 1 ? 'text-[#78d878]' : 'text-[#56e2c2]'}`}>Form {item.spellBookForm ?? 1}</span>
+          )}
+          {item.isStorage && !item.storageActive && (
+            <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[var(--muted)]">Packed storage</span>
           )}
           {item.runeName && <span className="w-full truncate text-[9px] font-black uppercase tracking-wide text-[#56e2c2]">{item.runeName}</span>}
           <span className="min-h-[1.25rem]">
