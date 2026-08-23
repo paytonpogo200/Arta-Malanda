@@ -8568,9 +8568,6 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
-  v_product public.market_products%rowtype;
-  v_spell_type text;
-  v_spell_key text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -8602,6 +8599,9 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_product public.market_products%rowtype;
+  v_spell_type text;
+  v_spell_key text;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
