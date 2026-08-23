@@ -7654,6 +7654,121 @@ where p.vendor_id = v.id
   and v.city_key <> 'calostrynn'
   and p.product_kind = 'service';
 
+-- Repair existing custom forge shops created before service rows existed.
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select
+  v.id,
+  public.safe_slug(v.vendor_key || '-service-' || seed.catalog_item_key),
+  seed.item_name,
+  seed.description,
+  public.normalize_item_type(seed.item_type),
+  seed.rarity::public.item_rarity,
+  case when v.city_key = 'calostrynn' then seed.price_coin else 0 end,
+  case when v.city_key = 'calostrynn' then 'calostrynn' else 'common' end,
+  null,
+  seed.shop_section,
+  1,
+  seed.catalog_item_key,
+  'service',
+  0,
+  '',
+  true,
+  seed.display_order
+from public.shop_vendors v
+join (values
+  ('Dagger', 'Forge labor price for crafting a dagger.', 'weapon', 'Common', 50, 'Light Weapons', 'dagger', 210),
+  ('Throwing Knives', 'Forge labor price for crafting throwing knives.', 'weapon', 'Common', 100, 'Light Weapons', 'throwing-knives', 220),
+  ('Shortbow', 'Forge labor price for crafting a shortbow.', 'weapon', 'Common', 100, 'Light Weapons', 'shortbow', 230),
+  ('Custom Light Weapon', 'Forge labor price for a custom light weapon.', 'weapon', 'Common', 1000, 'Light Weapons', 'custom-light-weapon', 240),
+  ('Sword', 'Forge labor price for crafting a sword.', 'weapon', 'Common', 300, 'Medium Weapons', 'sword', 310),
+  ('Spear', 'Forge labor price for crafting a spear.', 'weapon', 'Common', 500, 'Medium Weapons', 'spear', 320),
+  ('Longbow', 'Forge labor price for crafting a longbow.', 'weapon', 'Common', 500, 'Medium Weapons', 'longbow', 330),
+  ('Custom Medium Weapon', 'Forge labor price for a custom medium weapon.', 'weapon', 'Common', 2500, 'Medium Weapons', 'custom-medium-weapon', 340),
+  ('Battleaxe', 'Forge labor price for crafting a battleaxe.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'battleaxe', 410),
+  ('Mace', 'Forge labor price for crafting a mace.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'mace', 420),
+  ('Claymore', 'Forge labor price for crafting a claymore.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'claymore', 430),
+  ('Crossbow', 'Forge labor price for crafting a crossbow.', 'weapon', 'Common', 4000, 'Heavy Weapons', 'crossbow', 440),
+  ('Custom Heavy Weapon', 'Forge labor price for a custom heavy weapon.', 'weapon', 'Common', 5000, 'Heavy Weapons', 'custom-heavy-weapon', 450),
+  ('Magic Bow', 'Commission labor price for a magic bow.', 'weapon', 'Common', 3000, 'Magecraft Commissions', 'magic-bow', 510),
+  ('Magic Longbow', 'Commission labor price for a magic longbow.', 'weapon', 'Common', 5000, 'Magecraft Commissions', 'magic-longbow', 520),
+  ('Wand', 'Commission labor price for a wand.', 'weapon', 'Common', 100, 'Magecraft Commissions', 'wand', 530),
+  ('Scepter', 'Commission labor price for a scepter.', 'weapon', 'Common', 1000, 'Magecraft Commissions', 'scepter', 540),
+  ('Staff', 'Commission labor price for a staff.', 'weapon', 'Common', 5000, 'Magecraft Commissions', 'staff', 550),
+  ('Custom Magecraft Commission', 'Labor price for a flexible magecraft commission.', 'weapon', 'Common', 6500, 'Magecraft Commissions', 'custom-magecraft', 560),
+  ('Shield', 'Forge labor price for crafting a shield.', 'shield', 'Common', 5000, 'Shield Creation', 'shield', 610)
+) as seed(item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.blueprint_type = 'blacksmith'
+where not exists (
+  select 1
+  from public.market_products existing
+  where existing.vendor_id = v.id
+    and existing.product_kind = 'service'
+    and lower(existing.catalog_item_key) = lower(seed.catalog_item_key)
+)
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    currency_system_key = excluded.currency_system_key,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    product_kind = excluded.product_kind,
+    display_order = excluded.display_order,
+    updated_at = now();
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select
+  v.id,
+  public.safe_slug(v.vendor_key || '-service-' || seed.catalog_item_key),
+  seed.item_name,
+  seed.description,
+  public.normalize_item_type(seed.item_type),
+  seed.rarity::public.item_rarity,
+  case when v.city_key = 'calostrynn' then seed.price_coin else 0 end,
+  case when v.city_key = 'calostrynn' then 'calostrynn' else 'common' end,
+  null,
+  seed.shop_section,
+  1,
+  seed.catalog_item_key,
+  'service',
+  0,
+  '',
+  true,
+  seed.display_order
+from public.shop_vendors v
+join (values
+  ('Leather Armor', 'Armory labor price for leather armor.', 'armor', 'Common', 0, 'Armor Creation', 'leather-armor', 210),
+  ('Iron Armor', 'Armory labor price for iron armor.', 'armor', 'Common', 500, 'Armor Creation', 'iron-armor', 220),
+  ('Steel Armor', 'Armory labor price for steel armor.', 'armor', 'Uncommon', 2500, 'Armor Creation', 'steel-armor', 230),
+  ('Mythril Armor', 'Armory labor price for mythril armor.', 'armor', 'Rare', 5000, 'Armor Creation', 'mythril-armor', 240),
+  ('Vaylium Armor', 'Armory labor price for vaylium armor.', 'armor', 'Epic', 7500, 'Armor Creation', 'vaylium-armor', 250),
+  ('Dragonscale Armor', 'Armory labor price for dragonscale armor.', 'armor', 'Legendary', 10000, 'Armor Creation', 'dragonscale-armor', 260)
+) as seed(item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.blueprint_type = 'armory'
+where not exists (
+  select 1
+  from public.market_products existing
+  where existing.vendor_id = v.id
+    and existing.product_kind = 'service'
+    and lower(existing.catalog_item_key) = lower(seed.catalog_item_key)
+)
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    currency_system_key = excluded.currency_system_key,
+    stock_quantity = excluded.stock_quantity,
+    shop_section = excluded.shop_section,
+    quantity_step = excluded.quantity_step,
+    catalog_item_key = excluded.catalog_item_key,
+    product_kind = excluded.product_kind,
+    display_order = excluded.display_order,
+    updated_at = now();
+
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
   applied_at timestamptz not null default now()
