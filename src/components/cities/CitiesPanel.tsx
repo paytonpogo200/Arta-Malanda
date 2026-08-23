@@ -177,6 +177,8 @@ const ARMORY_RECIPES: CraftRecipe[] = [
 ];
 const FORGE_MATERIAL_ORDER = ['Bronze Scale', 'Iron Scale', 'Steel Scale', 'Mythril Scale', 'Vaylium Scale', 'Dragonscale Scale'];
 const ARMORY_SERVICE_SECTIONS = ['Shared Material Scales', 'Armor Creation', 'Mythril Services'];
+const FORGE_RECIPE_KEYS = new Set([...BLACKSMITH_RECIPES, ...ARMORY_RECIPES].map((recipe) => recipe.key));
+const FORGE_RECIPE_SECTION_NAMES = new Set([...BLACKSMITH_RECIPES, ...ARMORY_RECIPES].map((recipe) => `${recipe.section.toLowerCase()}::${recipe.name.toLowerCase()}`));
 const MATERIAL_SECTION_ALIASES = new Set(['material scales', 'materials', 'scales']);
 const CALOSTRYNN_ACTIVE_VENDOR_KEYS = new Set(['calostrynn-armory', 'calostrynn-brewery', 'calostrynn-blacksmith', 'calostrynn-city-market', 'calostrynn-library', 'calostrynn-spells']);
 const MAGICAL_RESEARCH_TYPES = spellTypes;
@@ -578,13 +580,17 @@ function forgeRecipeProductKey(recipe: CraftRecipe) {
 }
 
 function isForgeRecipeProduct(product: MarketProduct) {
-  return product.kind === 'service' && product.key.includes('-service-');
+  const catalogKey = (product.catalogItemKey || '').toLowerCase();
+  const sectionNameKey = `${productSection(product).toLowerCase()}::${product.name.toLowerCase()}`;
+  return (product.kind === 'service' && product.key.includes('-service-'))
+    || FORGE_RECIPE_KEYS.has(catalogKey)
+    || FORGE_RECIPE_SECTION_NAMES.has(sectionNameKey);
 }
 
 function forgeProductForRecipe(vendor: ShopVendor, recipe: CraftRecipe) {
   const suffix = forgeRecipeProductKey(recipe);
   return vendor.products.find((product) => product.key.endsWith(suffix))
-    ?? vendor.products.find((product) => product.kind === 'service' && productSection(product) === recipe.section && product.name.toLowerCase() === recipe.name.toLowerCase())
+    ?? vendor.products.find((product) => isForgeRecipeProduct(product) && productSection(product) === recipe.section && product.name.toLowerCase() === recipe.name.toLowerCase())
     ?? null;
 }
 

@@ -7769,6 +7769,59 @@ set vendor_id = excluded.vendor_id,
     display_order = excluded.display_order,
     updated_at = now();
 
+with forge_recipe_duplicates as (
+  select p.id
+  from public.market_products p
+  join public.shop_vendors v on v.id = p.vendor_id
+  join (values
+    ('blacksmith', 'dagger', 'Light Weapons', 'Dagger'),
+    ('blacksmith', 'throwing-knives', 'Light Weapons', 'Throwing Knives'),
+    ('blacksmith', 'shortbow', 'Light Weapons', 'Shortbow'),
+    ('blacksmith', 'custom-light-weapon', 'Light Weapons', 'Custom Light Weapon'),
+    ('blacksmith', 'sword', 'Medium Weapons', 'Sword'),
+    ('blacksmith', 'spear', 'Medium Weapons', 'Spear'),
+    ('blacksmith', 'longbow', 'Medium Weapons', 'Longbow'),
+    ('blacksmith', 'custom-medium-weapon', 'Medium Weapons', 'Custom Medium Weapon'),
+    ('blacksmith', 'battleaxe', 'Heavy Weapons', 'Battleaxe'),
+    ('blacksmith', 'mace', 'Heavy Weapons', 'Mace'),
+    ('blacksmith', 'claymore', 'Heavy Weapons', 'Claymore'),
+    ('blacksmith', 'crossbow', 'Heavy Weapons', 'Crossbow'),
+    ('blacksmith', 'custom-heavy-weapon', 'Heavy Weapons', 'Custom Heavy Weapon'),
+    ('blacksmith', 'magic-bow', 'Magecraft Commissions', 'Magic Bow'),
+    ('blacksmith', 'magic-longbow', 'Magecraft Commissions', 'Magic Longbow'),
+    ('blacksmith', 'wand', 'Magecraft Commissions', 'Wand'),
+    ('blacksmith', 'scepter', 'Magecraft Commissions', 'Scepter'),
+    ('blacksmith', 'staff', 'Magecraft Commissions', 'Staff'),
+    ('blacksmith', 'custom-magecraft', 'Magecraft Commissions', 'Custom Magecraft Commission'),
+    ('blacksmith', 'shield', 'Shield Creation', 'Shield'),
+    ('armory', 'leather-armor', 'Armor Creation', 'Leather Armor'),
+    ('armory', 'iron-armor', 'Armor Creation', 'Iron Armor'),
+    ('armory', 'steel-armor', 'Armor Creation', 'Steel Armor'),
+    ('armory', 'mythril-armor', 'Armor Creation', 'Mythril Armor'),
+    ('armory', 'vaylium-armor', 'Armor Creation', 'Vaylium Armor'),
+    ('armory', 'dragonscale-armor', 'Armor Creation', 'Dragonscale Armor')
+  ) as seed(blueprint_type, catalog_item_key, shop_section, item_name)
+    on v.blueprint_type = seed.blueprint_type
+   and (
+     lower(coalesce(p.catalog_item_key, '')) = seed.catalog_item_key
+     or (
+       lower(coalesce(p.shop_section, '')) = lower(seed.shop_section)
+       and lower(p.item_name) = lower(seed.item_name)
+     )
+   )
+  where coalesce(p.product_kind, 'item') <> 'service'
+    and exists (
+      select 1
+      from public.market_products service_row
+      where service_row.vendor_id = p.vendor_id
+        and service_row.product_kind = 'service'
+        and lower(coalesce(service_row.catalog_item_key, '')) = seed.catalog_item_key
+    )
+)
+delete from public.market_products p
+using forge_recipe_duplicates d
+where p.id = d.id;
+
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
   applied_at timestamptz not null default now()
