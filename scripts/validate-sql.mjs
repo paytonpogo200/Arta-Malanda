@@ -27,8 +27,13 @@ function normalizeSignature(rawParams) {
     .join(', ');
 }
 
+function lineNumberAt(source, index) {
+  return source.slice(0, index).split(/\r?\n/).length;
+}
+
 const sql = fs.readFileSync(sqlPath, 'utf8');
 const definitions = new Map();
+const firstDefinitionLines = new Map();
 const definitionPattern = /create\s+or\s+replace\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:returns|language)\b/gi;
 let definitionMatch;
 
@@ -37,6 +42,9 @@ while ((definitionMatch = definitionPattern.exec(sql))) {
   const signatures = definitions.get(name) ?? new Set();
   signatures.add(normalizeSignature(params));
   definitions.set(name, signatures);
+  if (!firstDefinitionLines.has(name)) {
+    firstDefinitionLines.set(name, lineNumberAt(sql, definitionMatch.index));
+  }
 }
 
 const duplicateOverloads = Array.from(definitions.entries())
@@ -47,6 +55,19 @@ const grants = new Set(
   Array.from(sql.matchAll(/grant\s+execute\s+on\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(/gi))
     .map((match) => match[1])
 );
+
+const grantOrderProblems = [];
+const grantsWithoutDefinitions = [];
+for (const match of sql.matchAll(/grant\s+execute\s+on\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(/gi)) {
+  const name = match[1];
+  const grantLine = lineNumberAt(sql, match.index);
+  const definitionLine = firstDefinitionLines.get(name);
+  if (!definitionLine) {
+    grantsWithoutDefinitions.push(`${name} at line ${grantLine}`);
+  } else if (definitionLine > grantLine) {
+    grantOrderProblems.push(`${name}: grant at line ${grantLine}, definition at line ${definitionLine}`);
+  }
+}
 
 const rpcCalls = new Set();
 for (const filePath of walkFiles(srcRoot)) {
@@ -70,6 +91,14 @@ if (missingDefinitions.length) {
 
 if (missingGrants.length) {
   failures.push(`RPC calls without execute grants:\n${missingGrants.map((name) => `- ${name}`).join('\n')}`);
+}
+
+if (grantsWithoutDefinitions.length) {
+  failures.push(`Execute grants without SQL definitions:\n${grantsWithoutDefinitions.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (grantOrderProblems.length) {
+  failures.push(`Execute grants before SQL definitions:\n${grantOrderProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (failures.length) {

@@ -11641,9 +11641,6 @@ grant execute on function public.get_discovered_cities(text) to anon, authentica
 grant execute on function public.purchase_market_product(text, uuid, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_market_product(text, uuid, jsonb) to anon, authenticated;
-grant execute on function public.safe_slug(text) to anon, authenticated;
-grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
-grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.forge_material_modifiers(text, text) to anon, authenticated;
 grant execute on function public.upsert_dragon_scale_fragment(text, text, text, int) to anon, authenticated;
 grant execute on function public.upsert_material_conversion_recipe(text, text, text, text, text, text, numeric, int) to anon, authenticated;
@@ -12347,6 +12344,10 @@ begin
   return public.get_discovered_cities(p_session_token);
 end;
 $$;
+
+grant execute on function public.safe_slug(text) to anon, authenticated;
+grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
+grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
 
 create or replace function public.character_spell_record_to_json(p_entry public.character_spells)
 returns jsonb
