@@ -7423,6 +7423,9 @@ create table if not exists public.market_products (
   catalog_item_key text,
   shop_section text not null default 'Wares',
   quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
+  product_kind text not null default 'item',
+  document_author text not null default '',
+  document_content text not null default '',
   mana_cost int not null default 0 check (mana_cost >= 0),
   mana_label text not null default '',
   is_available boolean not null default true,
@@ -7446,7 +7449,12 @@ alter table public.market_products
   add column if not exists catalog_item_key text,
   add column if not exists shop_section text not null default 'Wares',
   add column if not exists currency_system_key text not null default 'calostrynn',
-  add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1));
+  add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
+  add column if not exists product_kind text not null default 'item',
+  add column if not exists document_author text not null default '',
+  add column if not exists document_content text not null default '',
+  add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
+  add column if not exists mana_label text not null default '';
 
 alter table public.market_products
   drop constraint if exists market_products_currency_system_key_check,
