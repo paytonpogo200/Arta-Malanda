@@ -8,7 +8,7 @@ import { Card, SoftCard } from '@/components/ui/Card';
 import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
-import { composeCurrencyValue, currencyUnitsForSystem, decomposeCurrencyValue, formatCoinValue, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey, type CitiesPayload } from '@/features/cities/data';
+import { CURRENCY_SYSTEMS, composeCurrencyValue, currencyUnitsForSystem, decomposeCurrencyValue, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey, type CitiesPayload } from '@/features/cities/data';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
 import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
@@ -561,12 +561,36 @@ function walletTotalCurrency(wallet: WalletBalance[], systemKey = 'calostrynn') 
     .reduce((total, entry) => total + entry.amount * (currencyUnitsForSystem(key).find((unit) => unit.key === entry.unit.key.toLowerCase())?.value ?? 0), 0);
 }
 
-function walletTotalCoin(wallet: WalletBalance[]) {
-  return walletTotalCurrency(wallet, 'calostrynn');
-}
-
 function formatProductPrice(product: Pick<MarketProduct, 'priceCoin' | 'currencySystemKey'>, quantity = 1) {
   return formatCurrencyValue(product.priceCoin * quantity, product.currencySystemKey);
+}
+
+function vendorCurrencySystemKey(vendor?: Pick<ShopVendor, 'cityKey'> | null) {
+  return vendor?.cityKey === 'calostrynn' ? 'calostrynn' : 'common';
+}
+
+function formatCraftCurrency(value: number, systemKey: 'common' | 'calostrynn') {
+  return formatCurrencyValue(value, systemKey);
+}
+
+function forgeRecipeProductKey(recipe: CraftRecipe) {
+  return `service-${recipe.key}`;
+}
+
+function isForgeRecipeProduct(product: MarketProduct) {
+  return product.kind === 'service' && product.key.includes('-service-');
+}
+
+function forgeProductForRecipe(vendor: ShopVendor, recipe: CraftRecipe) {
+  const suffix = forgeRecipeProductKey(recipe);
+  return vendor.products.find((product) => product.key.endsWith(suffix))
+    ?? vendor.products.find((product) => product.kind === 'service' && productSection(product) === recipe.section && product.name.toLowerCase() === recipe.name.toLowerCase())
+    ?? null;
+}
+
+function pricedRecipeForVendor(vendor: ShopVendor, recipe: CraftRecipe) {
+  const product = forgeProductForRecipe(vendor, recipe);
+  return product ? { ...recipe, laborCoin: product.priceCoin } : recipe;
 }
 
 function carriedQuantity(items: InventoryItem[], itemName: string) {
@@ -881,10 +905,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const selectedDragonScaleOutput = dragonScaleOutputQuantity(selectedDragonScaleTotal);
   const selectedDragonScaleConsumed = dragonScaleConsumedQuantity(selectedDragonScaleTotal);
   const selectedDragonScaleReturned = dragonScaleReturnedQuantity(selectedDragonScaleTotal);
+  const selectedVendorCurrency = vendorCurrencySystemKey(selectedVendor);
   const canConfirmForge = (() => {
     if (!craftModal || !selectedVendor || !selectedShopper || !canShop) return false;
     if (craftModal.mode === 'craft') {
-      const walletCoin = walletTotalCoin(craftWallet);
+      const walletCoin = walletTotalCurrency(craftWallet, selectedVendorCurrency);
       const plan = buildMaterialPlan(craftModal.recipe, craftMaterials, craftMaterialProductId, craftInventory, craftHouseItems);
       const totalCost = plan.materialCost + recipeLaborCost(craftModal.service, selectedShopper, craftModal.recipe);
       return plan.canCover && walletCoin >= totalCost;
@@ -1559,7 +1584,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           name: 'Labor',
           type: 'currency' as ItemType,
           rarity: 'Common' as ItemRarity,
-          quantity: formatCoinValue(laborCost)
+          quantity: formatCraftCurrency(laborCost, selectedVendorCurrency)
         }] : [])
       ];
       return {
@@ -1937,6 +1962,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 inventory={craftInventory}
                 houseItems={craftHouseItems}
                 wallet={craftWallet}
+                currencySystemKey={selectedVendorCurrency}
                 materialProductId={craftMaterialProductId}
                 setMaterialProductId={setCraftMaterialProductId}
               />
@@ -2715,8 +2741,8 @@ function CurrencyPriceEditor({
         <label>
           <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Price currency</span>
           <SelectField value={systemKey} onChange={(event) => onSystemChange(normalizeCurrencySystemKey(event.target.value))}>
-            <option value="common">Bits / Shillings / Marks / Crown / Sovereign</option>
-            <option value="calostrynn">Coin / Callis / Callor / Cal</option>
+            <option value="common">Global Currency - Bits / Shillings / Marks / Crown / Sovereign</option>
+            <option value="calostrynn">Calostrynn Currency - Coin / Callis / Callor / Cal</option>
           </SelectField>
         </label>
         <span className="rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-3 py-2 text-sm font-black text-[var(--brass)]">
@@ -3023,8 +3049,9 @@ function BlacksmithPage(props: {
   onCraft: (state: CraftModalState) => void;
 }) {
   const { vendor, onCraft } = props;
-  const productGroups = groupProducts(vendor.products);
+  const productGroups = groupProducts(vendor.products.filter((product) => !isForgeRecipeProduct(product)));
   const recipeSections = Array.from(new Set(BLACKSMITH_RECIPES.map((recipe) => recipe.section)));
+  const currencySystemKey = vendorCurrencySystemKey(vendor);
 
   return (
     <div className="grid gap-4">
@@ -3051,23 +3078,26 @@ function BlacksmithPage(props: {
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {BLACKSMITH_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => (
+            {BLACKSMITH_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
+              const pricedRecipe = pricedRecipeForVendor(vendor, recipe);
+              return (
               <button
                 key={recipe.key}
                 type="button"
-                onClick={() => onCraft({ mode: 'craft', service: 'blacksmith', recipe })}
+                onClick={() => onCraft({ mode: 'craft', service: 'blacksmith', recipe: pricedRecipe })}
                 className="rounded-2xl border border-[var(--line)] bg-black/15 p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99]"
               >
                 <span className="flex items-start gap-2">
                   <ItemIcon type={recipe.type} />
                   <span>
                     <span className="block font-black">{recipe.name}</span>
-                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} material scale · ` : ''}{formatCoinValue(recipe.laborCoin)} labor{recipe.twoHanded ? ' · two-handed' : ''}</span>
+                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} material scale · ` : ''}{formatCraftCurrency(pricedRecipe.laborCoin, currencySystemKey)} labor{recipe.twoHanded ? ' · two-handed' : ''}</span>
                     {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
                   </span>
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ))}
@@ -3104,6 +3134,7 @@ function ArmoryPage(props: {
 }) {
   const { vendor, sharedMaterials, onCraft } = props;
   const recipeSections = Array.from(new Set(ARMORY_RECIPES.map((recipe) => recipe.section)));
+  const currencySystemKey = vendorCurrencySystemKey(vendor);
 
   return (
     <div className="grid gap-4">
@@ -3129,13 +3160,14 @@ function ArmoryPage(props: {
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
+              const pricedRecipe = pricedRecipeForVendor(vendor, recipe);
               const materialProduct = recipe.materialName ? materialProductByName(sharedMaterials, recipe.materialName) : null;
               const recipeMaterialClass = materialProduct ? rarityClass(materialProduct.rarity) : 'border-[var(--line)] bg-black/15';
               return (
               <button
                 key={recipe.key}
                 type="button"
-                onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe })}
+                onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe: pricedRecipe })}
                 className={`rounded-2xl border p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99] ${recipeMaterialClass}`}
               >
                 <span className="flex items-start gap-2">
@@ -3145,7 +3177,7 @@ function ArmoryPage(props: {
                   </span>
                   <span>
                     <span className="block font-black">{recipe.name}</span>
-                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} - ` : ''}{formatCoinValue(recipe.laborCoin)} labor</span>
+                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} - ` : ''}{formatCraftCurrency(pricedRecipe.laborCoin, currencySystemKey)} labor</span>
                     {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
                   </span>
                 </span>
@@ -3553,7 +3585,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(min(100%,13.5rem),1fr))]">
       {products.map((product) => {
         const disabled = !hasUsableStock(product);
         const manaBadge = spellManaBadgeText(product);
@@ -3695,7 +3727,7 @@ function DragonScaleInputPicker({ items, selections, onChange, total }: {
   );
 }
 
-function CraftRecipeForm({ service, shopper, recipe, materials, inventory, houseItems, wallet, materialProductId, setMaterialProductId }: {
+function CraftRecipeForm({ service, shopper, recipe, materials, inventory, houseItems, wallet, currencySystemKey, materialProductId, setMaterialProductId }: {
   service: ForgeService;
   shopper: Character | null;
   recipe: CraftRecipe;
@@ -3703,13 +3735,14 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
   inventory: InventoryItem[];
   houseItems: InventoryItem[];
   wallet: WalletBalance[];
+  currencySystemKey: 'common' | 'calostrynn';
   materialProductId: string;
   setMaterialProductId: (value: string) => void;
 }) {
   const plan = buildMaterialPlan(recipe, materials, materialProductId, inventory, houseItems);
   const laborCost = recipeLaborCost(service, shopper, recipe);
   const totalCost = plan.materialCost + laborCost;
-  const walletCoin = walletTotalCoin(wallet);
+  const walletCoin = walletTotalCurrency(wallet, currencySystemKey);
   const discountLabel = service === 'armory' ? 'Armor-clad discount' : 'Blacksmith discount';
   return (
     <div className="grid gap-3">
@@ -3743,16 +3776,16 @@ function CraftRecipeForm({ service, shopper, recipe, materials, inventory, house
         </div>
       )}
       <div className="grid gap-2 sm:grid-cols-3">
-        <SoftCard><p className="eyebrow">Materials</p><p className="font-black">{formatCoinValue(plan.materialCost)}</p></SoftCard>
+        <SoftCard><p className="eyebrow">Materials</p><p className="font-black">{formatCraftCurrency(plan.materialCost, currencySystemKey)}</p></SoftCard>
         <SoftCard>
           <p className="eyebrow">Labor</p>
-          <p className="font-black">{formatCoinValue(laborCost)}</p>
+          <p className="font-black">{formatCraftCurrency(laborCost, currencySystemKey)}</p>
           {recipe.laborCoin > 0 && laborCost === 0 && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--teal)]">{discountLabel}</span>}
         </SoftCard>
-        <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCoinValue(totalCost)}</p></SoftCard>
+        <SoftCard><p className="eyebrow">Total</p><p className="font-black text-[var(--brass)]">{formatCraftCurrency(totalCost, currencySystemKey)}</p></SoftCard>
       </div>
       {recipe.materialQuantity > 0 && !plan.canCover && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{plan.reason}</div>}
-      {walletCoin < totalCost && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Not enough currency.</div>}
+      {walletCoin < totalCost && <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">Not enough {CURRENCY_SYSTEMS[currencySystemKey].label.toLowerCase()}.</div>}
     </div>
   );
 }

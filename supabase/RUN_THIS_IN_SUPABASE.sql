@@ -7525,9 +7525,9 @@ where city_key = 'calostrynn'
 -- Market seed rows keep product metadata current, but existing live stock and DM visibility
 -- are intentionally preserved so purchases and shop edits do not get reset by rerunning SQL.
 with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
-delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
+delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_kind <> 'service' and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
 with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
-delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
+delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_kind <> 'service' and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
@@ -7559,6 +7559,44 @@ set vendor_id = excluded.vendor_id,
     display_order = excluded.display_order,
     updated_at = now();
 
+-- Service rows make forge recipe sections editable in the DM shop manager.
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, 'calostrynn', null, seed.shop_section, 1, seed.catalog_item_key, 'service', 0, '', true, seed.display_order
+from public.shop_vendors v
+join (values
+  ('blacksmith-service-dagger', 'Dagger', 'Forge labor price for crafting a dagger.', 'weapon', 'Common', 50, 'Light Weapons', 'dagger', 210),
+  ('blacksmith-service-throwing-knives', 'Throwing Knives', 'Forge labor price for crafting throwing knives.', 'weapon', 'Common', 100, 'Light Weapons', 'throwing-knives', 220),
+  ('blacksmith-service-shortbow', 'Shortbow', 'Forge labor price for crafting a shortbow.', 'weapon', 'Common', 100, 'Light Weapons', 'shortbow', 230),
+  ('blacksmith-service-custom-light-weapon', 'Custom Light Weapon', 'Forge labor price for a custom light weapon.', 'weapon', 'Common', 1000, 'Light Weapons', 'custom-light-weapon', 240),
+  ('blacksmith-service-sword', 'Sword', 'Forge labor price for crafting a sword.', 'weapon', 'Common', 300, 'Medium Weapons', 'sword', 310),
+  ('blacksmith-service-spear', 'Spear', 'Forge labor price for crafting a spear.', 'weapon', 'Common', 500, 'Medium Weapons', 'spear', 320),
+  ('blacksmith-service-longbow', 'Longbow', 'Forge labor price for crafting a longbow.', 'weapon', 'Common', 500, 'Medium Weapons', 'longbow', 330),
+  ('blacksmith-service-custom-medium-weapon', 'Custom Medium Weapon', 'Forge labor price for a custom medium weapon.', 'weapon', 'Common', 2500, 'Medium Weapons', 'custom-medium-weapon', 340),
+  ('blacksmith-service-battleaxe', 'Battleaxe', 'Forge labor price for crafting a battleaxe.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'battleaxe', 410),
+  ('blacksmith-service-mace', 'Mace', 'Forge labor price for crafting a mace.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'mace', 420),
+  ('blacksmith-service-claymore', 'Claymore', 'Forge labor price for crafting a claymore.', 'weapon', 'Common', 3000, 'Heavy Weapons', 'claymore', 430),
+  ('blacksmith-service-crossbow', 'Crossbow', 'Forge labor price for crafting a crossbow.', 'weapon', 'Common', 4000, 'Heavy Weapons', 'crossbow', 440),
+  ('blacksmith-service-custom-heavy-weapon', 'Custom Heavy Weapon', 'Forge labor price for a custom heavy weapon.', 'weapon', 'Common', 5000, 'Heavy Weapons', 'custom-heavy-weapon', 450),
+  ('blacksmith-service-magic-bow', 'Magic Bow', 'Commission labor price for a magic bow.', 'weapon', 'Common', 3000, 'Magecraft Commissions', 'magic-bow', 510),
+  ('blacksmith-service-magic-longbow', 'Magic Longbow', 'Commission labor price for a magic longbow.', 'weapon', 'Common', 5000, 'Magecraft Commissions', 'magic-longbow', 520),
+  ('blacksmith-service-wand', 'Wand', 'Commission labor price for a wand.', 'weapon', 'Common', 100, 'Magecraft Commissions', 'wand', 530),
+  ('blacksmith-service-scepter', 'Scepter', 'Commission labor price for a scepter.', 'weapon', 'Common', 1000, 'Magecraft Commissions', 'scepter', 540),
+  ('blacksmith-service-staff', 'Staff', 'Commission labor price for a staff.', 'weapon', 'Common', 5000, 'Magecraft Commissions', 'staff', 550),
+  ('blacksmith-service-custom-magecraft', 'Custom Magecraft Commission', 'Labor price for a flexible magecraft commission.', 'weapon', 'Common', 6500, 'Magecraft Commissions', 'custom-magecraft', 560),
+  ('blacksmith-service-shield', 'Shield', 'Forge labor price for crafting a shield.', 'shield', 'Common', 5000, 'Shield Creation', 'shield', 610)
+) as seed(product_key, item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.vendor_key = 'calostrynn-blacksmith'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    shop_section = excluded.shop_section,
+    catalog_item_key = excluded.catalog_item_key,
+    product_kind = excluded.product_kind,
+    display_order = excluded.display_order,
+    updated_at = now();
+
 -- Seed Armory scales as Armory-owned wares instead of borrowing Blacksmith product rows.
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
@@ -7583,6 +7621,38 @@ set vendor_id = excluded.vendor_id,
     catalog_item_key = excluded.catalog_item_key,
     display_order = excluded.display_order,
     updated_at = now();
+
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, 'calostrynn', null, seed.shop_section, 1, seed.catalog_item_key, 'service', 0, '', true, seed.display_order
+from public.shop_vendors v
+join (values
+  ('armory-service-leather-armor', 'Leather Armor', 'Armory labor price for leather armor.', 'armor', 'Common', 0, 'Armor Creation', 'leather-armor', 210),
+  ('armory-service-iron-armor', 'Iron Armor', 'Armory labor price for iron armor.', 'armor', 'Common', 500, 'Armor Creation', 'iron-armor', 220),
+  ('armory-service-steel-armor', 'Steel Armor', 'Armory labor price for steel armor.', 'armor', 'Uncommon', 2500, 'Armor Creation', 'steel-armor', 230),
+  ('armory-service-mythril-armor', 'Mythril Armor', 'Armory labor price for mythril armor.', 'armor', 'Rare', 5000, 'Armor Creation', 'mythril-armor', 240),
+  ('armory-service-vaylium-armor', 'Vaylium Armor', 'Armory labor price for vaylium armor.', 'armor', 'Epic', 7500, 'Armor Creation', 'vaylium-armor', 250),
+  ('armory-service-dragonscale-armor', 'Dragonscale Armor', 'Armory labor price for dragonscale armor.', 'armor', 'Legendary', 10000, 'Armor Creation', 'dragonscale-armor', 260)
+) as seed(product_key, item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.vendor_key = 'calostrynn-armory'
+on conflict (product_key) do update
+set vendor_id = excluded.vendor_id,
+    item_name = excluded.item_name,
+    description = excluded.description,
+    item_type = excluded.item_type,
+    rarity = excluded.rarity,
+    shop_section = excluded.shop_section,
+    catalog_item_key = excluded.catalog_item_key,
+    product_kind = excluded.product_kind,
+    display_order = excluded.display_order,
+    updated_at = now();
+
+update public.market_products p
+set currency_system_key = 'common',
+    price_coin = 0,
+    updated_at = now()
+from public.shop_vendors v
+where p.vendor_id = v.id
+  and v.city_key <> 'calostrynn'
+  and p.product_kind = 'service';
 
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
@@ -10685,6 +10755,7 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_material_product public.market_products%rowtype;
+  v_service_product public.market_products%rowtype;
   v_rune_product public.market_products%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
@@ -10705,12 +10776,16 @@ declare
   v_rune_name text := '';
   v_spell_name text;
   v_city public.cities%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_currency_system text := 'calostrynn';
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
   v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-blacksmith'));
+  select * into v_vendor from public.shop_vendors where vendor_key = coalesce(nullif(p_vendor_key, ''), 'calostrynn-blacksmith');
+  v_currency_system := case when coalesce(v_vendor.city_key, 'calostrynn') = 'calostrynn' then 'calostrynn' else 'common' end;
 
   if lower(coalesce(p_action, '')) = 'dragon-scales' then
     perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name, p_dragon_scale_selections);
@@ -10742,6 +10817,22 @@ begin
       else raise exception 'Unknown blacksmith recipe.';
     end case;
 
+    select * into v_service_product
+    from public.market_products
+    where vendor_id = v_vendor.id
+      and product_kind = 'service'
+      and (
+        product_key = v_vendor.vendor_key || '-service-' || lower(coalesce(p_recipe_key, ''))
+        or (lower(item_name) = lower(v_recipe_name) and lower(shop_section) in ('light weapons', 'medium weapons', 'heavy weapons', 'magecraft commissions', 'shield creation'))
+      )
+    order by case when product_key = v_vendor.vendor_key || '-service-' || lower(coalesce(p_recipe_key, '')) then 0 else 1 end
+    limit 1;
+
+    if v_service_product.id is not null then
+      v_labor := v_service_product.price_coin;
+      v_currency_system := v_service_product.currency_system_key;
+    end if;
+
     if lower(v_character.class_key) = 'blacksmith' or lower(v_character.class_name) = 'blacksmith' then
       v_labor := 0;
     end if;
@@ -10757,9 +10848,9 @@ begin
       v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_city.name);
     end if;
 
-    v_wallet := public.wallet_total_coin(v_character.id);
+    v_wallet := public.wallet_total_currency(v_character.id, v_currency_system);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.set_wallet_from_currency_value(v_character.id, v_currency_system, v_wallet - v_cost);
 
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
@@ -10892,6 +10983,7 @@ declare
   v_profile public.profiles%rowtype;
   v_character public.characters%rowtype;
   v_material_product public.market_products%rowtype;
+  v_service_product public.market_products%rowtype;
   v_rune_product public.market_products%rowtype;
   v_target public.inventory_items%rowtype;
   v_item public.inventory_items%rowtype;
@@ -10908,12 +11000,16 @@ declare
   v_key text := lower(trim(coalesce(p_modifier_key, 'strength')));
   v_rune_name text := '';
   v_city public.cities%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_currency_system text := 'calostrynn';
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
   v_city := public.assert_character_can_use_vendor(v_character, coalesce(nullif(p_vendor_key, ''), 'calostrynn-armory'));
+  select * into v_vendor from public.shop_vendors where vendor_key = coalesce(nullif(p_vendor_key, ''), 'calostrynn-armory');
+  v_currency_system := case when coalesce(v_vendor.city_key, 'calostrynn') = 'calostrynn' then 'calostrynn' else 'common' end;
 
   if lower(coalesce(p_action, '')) = 'dragon-scales' then
     perform public.forge_dragonscale_scale_from_dragon_scales(p_session_token, v_character.id, v_city.name, p_dragon_scale_selections);
@@ -10931,6 +11027,22 @@ begin
       else raise exception 'Unknown armory recipe.';
     end case;
 
+    select * into v_service_product
+    from public.market_products
+    where vendor_id = v_vendor.id
+      and product_kind = 'service'
+      and (
+        product_key = v_vendor.vendor_key || '-service-' || lower(coalesce(p_recipe_key, ''))
+        or (lower(item_name) = lower(v_recipe_name) and lower(shop_section) = 'armor creation')
+      )
+    order by case when product_key = v_vendor.vendor_key || '-service-' || lower(coalesce(p_recipe_key, '')) then 0 else 1 end
+    limit 1;
+
+    if v_service_product.id is not null then
+      v_labor := v_service_product.price_coin;
+      v_currency_system := v_service_product.currency_system_key;
+    end if;
+
     if lower(v_character.class_key) = 'armor-clad' or lower(v_character.class_name) = 'armor-clad' then
       v_labor := 0;
     end if;
@@ -10946,9 +11058,9 @@ begin
       v_cost := v_cost + public.consume_forge_materials(v_character.id, v_material_product.id, v_material_quantity, v_character.inventory_slots, v_city.name, v_material_name);
     end if;
 
-    v_wallet := public.wallet_total_coin(v_character.id);
+    v_wallet := public.wallet_total_currency(v_character.id, v_currency_system);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
-    perform public.set_wallet_from_coin_value(v_character.id, v_wallet - v_cost);
+    perform public.set_wallet_from_currency_value(v_character.id, v_currency_system, v_wallet - v_cost);
 
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
@@ -12207,7 +12319,7 @@ begin
       p.description,
       p.item_type,
       p.rarity,
-      p.price_coin,
+      case when p_city_key = 'calostrynn' then p.price_coin else 0 end,
       v_currency,
       p.stock_quantity,
       p.catalog_item_key,
@@ -12221,6 +12333,12 @@ begin
     from public.market_products p
     where p.vendor_id = v_source.id;
   end if;
+
+  update public.market_products
+  set currency_system_key = 'common',
+      price_coin = 0
+  where vendor_id = v_vendor.id
+    and v_vendor.city_key <> 'calostrynn';
 
   return public.get_discovered_cities(p_session_token);
 end;

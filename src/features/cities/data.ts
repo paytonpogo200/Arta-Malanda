@@ -59,7 +59,7 @@ function normalizeItemCatalogEntry(value: unknown): ItemCatalogEntry {
 
 export const CURRENCY_SYSTEMS = {
   common: {
-    label: 'Wallet',
+    label: 'Global Currency',
     units: [
       { key: 'sovereign', name: 'Sovereign', value: 10000 },
       { key: 'crown', name: 'Crown', value: 1000 },
@@ -69,7 +69,7 @@ export const CURRENCY_SYSTEMS = {
     ]
   },
   calostrynn: {
-    label: 'Calostrynn Money',
+    label: 'Calostrynn Currency',
     units: [
       { key: 'cal', name: 'Cal', value: 10000 },
       { key: 'callor', name: 'Callor', value: 100 },
