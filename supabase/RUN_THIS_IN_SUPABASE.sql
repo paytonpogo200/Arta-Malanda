@@ -7529,7 +7529,7 @@ delete from public.market_products p using blacksmith_vendor v where p.vendor_id
 with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
 delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
-select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
   ('blacksmith-bronze-scale', 'Bronze Scale', 'Bronze: -1 Strength when used for weapons; +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 1, 'bronze-scale', true, 10),
@@ -7560,8 +7560,8 @@ set vendor_id = excluded.vendor_id,
     updated_at = now();
 
 -- Seed Armory scales as Armory-owned wares instead of borrowing Blacksmith product rows.
-insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
-select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, seed.is_available, seed.display_order
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
   ('armory-bronze-scale', 'Bronze Scale', 'Bronze: +1 Vitality when used for shields.', 'material', 'Common', 100, 50, 'Material Scales', 1, 'bronze-scale', true, 10),
@@ -7617,8 +7617,8 @@ where p.vendor_id = v.id
     or lower(p.item_name) in ('minor healing potion', 'minor mana potion', 'glass flask', 'glass flasks')
   );
 
-insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
-select v.id, seed.product_key, seed.item_name, seed.description, 'potion', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, seed.is_available, seed.display_order
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
+select v.id, seed.product_key, seed.item_name, seed.description, 'potion', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
 join (values
   ('brewery-arcane-nector', 'Arcane Nector', 'Required canvas for every brewed potion.', 'Uncommon', 100, 80, 'Brewing Supplies', 'arcane-nector', true, 10),
@@ -12053,7 +12053,7 @@ using spell_vendor v
 where p.vendor_id = v.id
   and p.product_key not in ('spell-emberbolt', 'spell-scorch', 'spell-flame-ring', 'spell-solar-flare', 'spell-radiance', 'spell-fireball', 'spell-sear', 'spell-frostbite', 'spell-ice-shard', 'spell-hypothermia', 'spell-ice-wall', 'spell-ice-cube', 'spell-christmas-tree', 'spell-absolute-zero', 'spell-sparkshot', 'spell-static-charge', 'spell-arc-shot', 'spell-defibrillate', 'spell-electric-explosion', 'spell-thunder-crash', 'spell-lightning-chain', 'spell-stone-fist', 'spell-quicksand', 'spell-earthen-spikes', 'spell-earthquake', 'spell-wind-cutter', 'spell-mighty-gust', 'spell-wind-be-with-me', 'spell-gale-burst', 'spell-pulse', 'spell-energy-shield', 'spell-mend-wounds', 'spell-greater-mend', 'spell-antivenom', 'spell-fortify', 'spell-iron-skin', 'spell-shield', 'spell-cleanse', 'spell-revitalize', 'spell-golden-boy', 'spell-insurance', 'spell-counter-attack', 'spell-retaliation', 'spell-internal-bleeding', 'spell-strip', 'spell-demoralize', 'spell-weaken', 'spell-cripple', 'spell-enfeeblement', 'spell-dreadfall', 'spell-whats-mine-is-yours', 'spell-judas', 'spell-jump-him', 'spell-follow-the-leader', 'spell-bloodthirsty', 'spell-swiftness', 'spell-clarity', 'spell-mana-surge', 'spell-guided-strike', 'spell-stabilize', 'spell-light-orb', 'spell-warmth', 'spell-cooling', 'spell-levitation', 'spell-seal', 'spell-magecraft-detection', 'spell-purify-water', 'spell-silent-step', 'spell-taunt', 'spell-entangle', 'spell-pure-chaos', 'spell-equilibrium', 'spell-preparation');
 
-insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
+insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select
   v.id,
   'spell-' || s.spell_key,
