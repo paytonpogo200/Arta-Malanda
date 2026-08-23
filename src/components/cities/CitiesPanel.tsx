@@ -3049,8 +3049,9 @@ function BlacksmithPage(props: {
   onCraft: (state: CraftModalState) => void;
 }) {
   const { vendor, onCraft } = props;
-  const productGroups = groupProducts(vendor.products.filter((product) => !isForgeRecipeProduct(product)));
   const recipeSections = Array.from(new Set(BLACKSMITH_RECIPES.map((recipe) => recipe.section)));
+  const recipeSectionSet = new Set(recipeSections);
+  const productGroups = groupProducts(vendor.products.filter((product) => !isForgeRecipeProduct(product) && !recipeSectionSet.has(productSection(product))));
   const currencySystemKey = vendorCurrencySystemKey(vendor);
 
   return (
@@ -3077,7 +3078,8 @@ function BlacksmithPage(props: {
       {recipeSections.map((section) => (
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {BLACKSMITH_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
               const pricedRecipe = pricedRecipeForVendor(vendor, recipe);
               return (
@@ -3098,6 +3100,13 @@ function BlacksmithPage(props: {
               </button>
               );
             })}
+            </div>
+            {vendor.products.some((product) => !isForgeRecipeProduct(product) && productSection(product) === section) && (
+              <ProductGrid
+                {...props}
+                products={vendor.products.filter((product) => !isForgeRecipeProduct(product) && productSection(product) === section)}
+              />
+            )}
           </div>
         </Card>
       ))}
@@ -3158,32 +3167,40 @@ function ArmoryPage(props: {
       {recipeSections.map((section) => (
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
-              const pricedRecipe = pricedRecipeForVendor(vendor, recipe);
-              const materialProduct = recipe.materialName ? materialProductByName(sharedMaterials, recipe.materialName) : null;
-              const recipeMaterialClass = materialProduct ? rarityClass(materialProduct.rarity) : 'border-[var(--line)] bg-black/15';
-              return (
-              <button
-                key={recipe.key}
-                type="button"
-                onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe: pricedRecipe })}
-                className={`rounded-2xl border p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99] ${recipeMaterialClass}`}
-              >
-                <span className="flex items-start gap-2">
-                  <span className="grid shrink-0 justify-items-center gap-1 text-[var(--brass)]">
-                    <ItemIcon type="armor" />
-                    {materialProduct && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--paper)]">{materialProduct.rarity}</span>}
+          <div className="grid gap-3">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {ARMORY_RECIPES.filter((recipe) => recipe.section === section).map((recipe) => {
+                const pricedRecipe = pricedRecipeForVendor(vendor, recipe);
+                const materialProduct = recipe.materialName ? materialProductByName(sharedMaterials, recipe.materialName) : null;
+                const recipeMaterialClass = materialProduct ? rarityClass(materialProduct.rarity) : 'border-[var(--line)] bg-black/15';
+                return (
+                <button
+                  key={recipe.key}
+                  type="button"
+                  onClick={() => onCraft({ mode: 'craft', service: 'armory', recipe: pricedRecipe })}
+                  className={`rounded-2xl border p-3 text-left transition hover:border-[var(--brass)] active:scale-[0.99] ${recipeMaterialClass}`}
+                >
+                  <span className="flex items-start gap-2">
+                    <span className="grid shrink-0 justify-items-center gap-1 text-[var(--brass)]">
+                      <ItemIcon type="armor" />
+                      {materialProduct && <span className="text-[10px] font-black uppercase tracking-wide text-[var(--paper)]">{materialProduct.rarity}</span>}
+                    </span>
+                    <span>
+                      <span className="block font-black">{recipe.name}</span>
+                      <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} - ` : ''}{formatCraftCurrency(pricedRecipe.laborCoin, currencySystemKey)} labor</span>
+                      {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
+                    </span>
                   </span>
-                  <span>
-                    <span className="block font-black">{recipe.name}</span>
-                    <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.materialQuantity ? `${recipe.materialQuantity} ${recipe.materialName} - ` : ''}{formatCraftCurrency(pricedRecipe.laborCoin, currencySystemKey)} labor</span>
-                    {recipe.note && <span className="mt-1 block text-xs text-[var(--muted)]">{recipe.note}</span>}
-                  </span>
-                </span>
-              </button>
-              );
-            })}
+                </button>
+                );
+              })}
+            </div>
+            {vendor.products.some((product) => !isForgeRecipeProduct(product) && productSection(product) === section) && (
+              <ProductGrid
+                {...props}
+                products={vendor.products.filter((product) => !isForgeRecipeProduct(product) && productSection(product) === section)}
+              />
+            )}
           </div>
         </Card>
       ))}
