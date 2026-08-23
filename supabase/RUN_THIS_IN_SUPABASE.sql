@@ -12345,9 +12345,102 @@ begin
 end;
 $$;
 
+create or replace function public.delete_market_product(
+  p_session_token text,
+  p_product_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_product public.market_products%rowtype;
+begin
+  perform public.require_dm_profile(p_session_token);
+
+  select * into v_product
+  from public.market_products
+  where id = p_product_id;
+
+  if v_product.id is null then
+    raise exception 'Shop product not found.';
+  end if;
+
+  delete from public.market_products
+  where id = p_product_id;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.delete_market_section(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_section text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_vendor public.shop_vendors%rowtype;
+  v_section text := coalesce(nullif(trim(p_section), ''), 'Wares');
+begin
+  perform public.require_dm_profile(p_session_token);
+
+  select * into v_vendor
+  from public.shop_vendors
+  where id = p_vendor_id;
+
+  if v_vendor.id is null then
+    raise exception 'Shop not found.';
+  end if;
+
+  delete from public.market_products
+  where vendor_id = p_vendor_id
+    and coalesce(nullif(trim(shop_section), ''), 'Wares') = v_section;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.delete_shop_vendor(
+  p_session_token text,
+  p_vendor_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_vendor public.shop_vendors%rowtype;
+begin
+  perform public.require_dm_profile(p_session_token);
+
+  select * into v_vendor
+  from public.shop_vendors
+  where id = p_vendor_id;
+
+  if v_vendor.id is null then
+    raise exception 'Shop not found.';
+  end if;
+
+  delete from public.shop_vendors
+  where id = p_vendor_id;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
 grant execute on function public.safe_slug(text) to anon, authenticated;
 grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
 grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.delete_market_product(text, uuid) to anon, authenticated;
+grant execute on function public.delete_market_section(text, uuid, text) to anon, authenticated;
+grant execute on function public.delete_shop_vendor(text, uuid) to anon, authenticated;
 
 create or replace function public.character_spell_record_to_json(p_entry public.character_spells)
 returns jsonb

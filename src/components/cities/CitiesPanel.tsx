@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -267,6 +267,64 @@ function defaultProductDraft(vendor: ShopVendor, city?: City | null): ProductDra
     documentContent: '',
     manaCost: 0,
     catalogItemKey: ''
+  };
+}
+
+const SHOP_BLUEPRINTS: Array<{ key: VendorDraft['blueprintType']; label: string; facility: string; category: string; description: string }> = [
+  { key: 'market', label: 'Market', facility: 'Market', category: 'General Goods', description: 'Blank section-based shop for stalls, supplies, food, pets, tools, and odd wares.' },
+  { key: 'blacksmith', label: 'Blacksmith', facility: 'Blacksmith', category: 'Forge Services', description: 'Copies the Calostrynn blacksmith structure and keeps forge services available.' },
+  { key: 'armory', label: 'Armory', facility: 'Armory', category: 'Armor Services', description: 'Copies the Calostrynn armory structure and keeps armor crafting services available.' },
+  { key: 'brewery', label: 'Brewery', facility: 'Brewery', category: 'Alchemy Services', description: 'Uses the Calostrynn brewery style with editable sale sections.' },
+  { key: 'spell_registrar', label: 'Spell Registrar', facility: 'Spell Registrar', category: 'Spells', description: 'Category-based spell shop for existing or custom spells.' },
+  { key: 'library', label: 'Library', facility: 'Library', category: 'Documents', description: 'Government and recreation documents, including purchasable books.' }
+];
+
+function blueprintInfo(blueprint: VendorDraft['blueprintType']) {
+  return SHOP_BLUEPRINTS.find((entry) => entry.key === blueprint) ?? SHOP_BLUEPRINTS[0];
+}
+
+function blueprintSections(blueprint: VendorDraft['blueprintType']) {
+  if (blueprint === 'blacksmith') return [...BLACKSMITH_SERVICE_SECTIONS, 'Crafted Weapons', 'Mythril Services', 'Dragon Scale Refining'];
+  if (blueprint === 'armory') return [...ARMORY_SERVICE_SECTIONS, 'Crafted Armor', 'Dragon Scale Refining'];
+  if (blueprint === 'brewery') return ['Brewing Supplies', 'Finished Potions', 'Brew Potion'];
+  if (blueprint === 'spell_registrar') return [...SPELL_SERVICE_SECTIONS];
+  if (blueprint === 'library') return ['Government', 'Recreation', 'For Sale'];
+  return ['Wares'];
+}
+
+function defaultSectionForBlueprint(blueprint: VendorDraft['blueprintType']) {
+  if (blueprint === 'library') return 'Government';
+  if (blueprint === 'spell_registrar') return 'Utility Spells';
+  if (blueprint === 'brewery') return 'Finished Potions';
+  return 'Wares';
+}
+
+function sectionNamesForVendor(vendor: ShopVendor, extraSection = '') {
+  const names = new Set<string>();
+  vendor.products.forEach((product) => names.add(productSection(product)));
+  if (extraSection.trim()) names.add(extraSection.trim());
+  if (names.size === 0) names.add(defaultSectionForBlueprint(vendor.blueprintType));
+  return Array.from(names).sort((a, b) => {
+    const blueprintOrder = blueprintSections(vendor.blueprintType);
+    const indexA = blueprintOrder.indexOf(a);
+    const indexB = blueprintOrder.indexOf(b);
+    if (indexA >= 0 || indexB >= 0) return (indexA < 0 ? 99 : indexA) - (indexB < 0 ? 99 : indexB);
+    return a.localeCompare(b);
+  });
+}
+
+function productDraftFromCatalogItem(vendor: ShopVendor, city: City | null | undefined, section: string, item: ItemCatalogEntry): ProductDraft {
+  return {
+    ...defaultProductDraft(vendor, city),
+    name: item.name,
+    description: item.notes,
+    type: item.type,
+    rarity: item.rarity,
+    section,
+    quantityStep: item.quantityStep,
+    catalogItemKey: item.key,
+    kind: 'item',
+    stockQuantity: 0
   };
 }
 
@@ -724,6 +782,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [productDraft, setProductDraft] = useState<ProductDraft | null>(null);
   const [vendorDraft, setVendorDraft] = useState<VendorDraft | null>(null);
   const [productCatalogPickerOpen, setProductCatalogPickerOpen] = useState(false);
+  const [managingVendorId, setManagingVendorId] = useState('');
+  const [manageSection, setManageSection] = useState('');
+  const [sectionDraftName, setSectionDraftName] = useState('');
+  const [bulkProductPickerOpen, setBulkProductPickerOpen] = useState(false);
+  const [bulkCatalogKeys, setBulkCatalogKeys] = useState<string[]>([]);
   const [quantity, setQuantity] = useState(1);
   const [researchType, setResearchType] = useState(MAGICAL_RESEARCH_TYPES[0]);
   const [craftModal, setCraftModal] = useState<CraftModalState | null>(null);
@@ -753,6 +816,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const shoppers = useMemo(() => payload.characters.filter((character) => isDm || character.ownerUserId === profile.id), [isDm, payload.characters, profile.id]);
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
+  const managingVendor = payload.vendors.find((vendor) => vendor.id === managingVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
   const cityLocked = Boolean(selectedCity?.locked);
   const shopperInCity = sameCityName(selectedShopper?.locationName, selectedCity?.name);
   const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
@@ -834,6 +898,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (craftModal.mode === 'enhance' && !craftModifier) return false;
     return true;
   })();
+  const manageSections = managingVendor ? sectionNamesForVendor(managingVendor, manageSection) : [];
+  const activeManageSection = manageSections.includes(manageSection) ? manageSection : manageSections[0] ?? 'Wares';
+  const manageSectionProducts = managingVendor
+    ? managingVendor.products.filter((product) => productSection(product) === activeManageSection)
+    : [];
+  const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key));
 
   const cityVendors = useMemo(() => payload.vendors
     .filter((vendor) => vendor.cityKey === selectedCity?.key)
@@ -1154,6 +1224,89 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     }
   }
 
+  async function deleteProduct(product: MarketProduct) {
+    if (!isDm) return;
+    if (!window.confirm(`Delete ${product.name} from this shop?`)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/products/${product.id}`, { method: 'DELETE' }), 'Shop item could not be deleted.');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Shop item could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSection(vendor: ShopVendor, section: string) {
+    if (!isDm) return;
+    const productsInSection = vendor.products.filter((product) => productSection(product) === section).length;
+    if (!window.confirm(productsInSection > 0
+      ? `Delete the ${section} section and its ${productsInSection} product${productsInSection === 1 ? '' : 's'}?`
+      : `Remove the empty ${section} section from this workspace?`)) return;
+    if (productsInSection === 0) {
+      setManageSection('');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${vendor.id}/sections?section=${encodeURIComponent(section)}`, { method: 'DELETE' }), 'Shop section could not be deleted.');
+      setManageSection('');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Shop section could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteVendor(vendor: ShopVendor) {
+    if (!isDm) return;
+    if (!window.confirm(`Delete ${vendor.name} and every product inside it?`)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${vendor.id}`, { method: 'DELETE' }), 'Shop could not be deleted.');
+      setSelectedVendorId('');
+      setManagingVendorId('');
+      setManageSection('');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Shop could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addCatalogProductsToSection(vendor: ShopVendor, section: string) {
+    if (!isDm || !selectedCity || bulkCatalogKeys.length === 0) return;
+    const selectedItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key));
+    if (selectedItems.length === 0) return;
+    setSaving(true);
+    setError('');
+    try {
+      let latestPayload: CitiesPayload | null = null;
+      for (const item of selectedItems) {
+        const response = await fetch('/api/cities/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...productDraftFromCatalogItem(vendor, selectedCity, section, item), vendorId: vendor.id })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error ?? 'Shop items could not be added.');
+        latestPayload = normalizeCitiesPayload(body);
+      }
+      if (latestPayload) setPayload(latestPayload);
+      setBulkCatalogKeys([]);
+      setBulkProductPickerOpen(false);
+      setCatalogSearch('');
+      setManageSection(section);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Shop items could not be added.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function moveVendor(vendor: ShopVendor, direction: -1 | 1) {
     const currentIndex = cityVendors.findIndex((entry) => entry.id === vendor.id);
     const swapWith = cityVendors[currentIndex + direction];
@@ -1280,10 +1433,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setVendorDraft(defaultVendorDraft());
   }
 
-  function openProductCreate(vendor: ShopVendor) {
+  function openProductCreate(vendor: ShopVendor, section = '') {
     setEditProduct(null);
     setCreatingProductForVendor(vendor);
-    setProductDraft(defaultProductDraft(vendor, selectedCity));
+    const draft = defaultProductDraft(vendor, selectedCity);
+    setProductDraft(section ? { ...draft, section } : draft);
   }
 
   async function saveProduct(event: FormEvent) {
@@ -1474,7 +1628,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to City</Button>}
-            {isDm && selectedVendor && <Button variant="secondary" onClick={() => openProductCreate(selectedVendor)} disabled={saving}><Plus className="mr-2 inline" size={15} /> Add to shop</Button>}
+            {isDm && selectedVendor && <Button variant="secondary" onClick={() => { setManagingVendorId(selectedVendor.id); setManageSection(sectionNamesForVendor(selectedVendor)[0] ?? 'Wares'); }} disabled={saving}><Settings className="mr-2 inline" size={15} /> Manage shop</Button>}
             {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
             <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
             {isDm && !selectedVendor && selectedCity && <Button variant="secondary" onClick={() => openCityEdit(selectedCity)} disabled={saving}><Settings className="mr-2 inline" size={15} /> City Settings</Button>}
@@ -1600,7 +1754,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     index={cityVendors.findIndex((entry) => entry.id === vendor.id)}
                     total={cityVendors.length}
                     onOpen={() => setSelectedVendorId(vendor.id)}
+                    onManage={() => {
+                      setManagingVendorId(vendor.id);
+                      setManageSection(sectionNamesForVendor(vendor)[0] ?? 'Wares');
+                    }}
                     onEdit={() => openVendorEdit(vendor)}
+                    onDelete={() => void deleteVendor(vendor)}
                     onToggleVisibility={() => void patchVendor(vendor, { hidden: !vendor.hidden }, 'Shop visibility could not be changed.')}
                     onMove={(direction) => void moveVendor(vendor, direction)}
                   />
@@ -1634,6 +1793,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             setQuantity(product.quantityStep || quantityStepForItem(product));
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCraft={openCraftModal}
         />
@@ -1649,6 +1809,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             setQuantity(product.quantityStep || quantityStepForItem(product));
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCraft={openCraftModal}
         />
@@ -1664,6 +1825,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             setQuantity(product.quantityStep || quantityStepForItem(product));
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
           onCitiesChanged={setPayload}
           liveRefreshSignal={craftRefreshSignal}
@@ -1680,6 +1842,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             setQuantity(1);
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Spell visibility could not be changed.')}
         />
       ) : isLibraryVendor(selectedVendor) ? (
@@ -1694,6 +1857,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             if (isMagicalResearchProduct(product)) setResearchType(MAGICAL_RESEARCH_TYPES[0]);
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Library stock could not be changed.')}
         />
       ) : (
@@ -1707,6 +1871,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             setQuantity(product.quantityStep || quantityStepForItem(product));
           }}
           onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
         />
       )}
@@ -2131,9 +2296,214 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </Modal>
       )}
 
+      {managingVendor && selectedCity && (
+        <Modal title={`Manage ${managingVendor.name}`} onClose={() => { setManagingVendorId(''); setManageSection(''); setSectionDraftName(''); setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
+          <div className="grid gap-4">
+            <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="eyebrow">{blueprintInfo(managingVendor.blueprintType).label} Blueprint</p>
+                  <h3 className="mt-1 break-words text-2xl font-black">{managingVendor.name}</h3>
+                  <p className="mt-1 text-sm font-bold text-[var(--muted)]">{managingVendor.npcName} - {managingVendor.facility} - {productCountText(managingVendor)}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openVendorEdit(managingVendor)} disabled={saving}><Pencil className="mr-2 inline" size={13} /> Shop settings</Button>
+                  <Button variant={managingVendor.hidden ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => void patchVendor(managingVendor, { hidden: !managingVendor.hidden }, 'Shop visibility could not be changed.')} disabled={saving}>
+                    {managingVendor.hidden ? <Eye className="mr-2 inline" size={13} /> : <EyeOff className="mr-2 inline" size={13} />}
+                    {managingVendor.hidden ? 'Show shop' : 'Hide shop'}
+                  </Button>
+                  <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteVendor(managingVendor)} disabled={saving}><Trash2 className="mr-2 inline" size={13} /> Delete shop</Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-[18rem_1fr]">
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="eyebrow">Sections</p>
+                    <p className="text-xs font-bold text-[var(--muted)]">Choose where products live.</p>
+                  </div>
+                  <span className="rounded-full border border-[var(--line)] bg-black/25 px-2 py-1 text-xs font-black text-[var(--muted)]">{manageSections.length}</span>
+                </div>
+                <div className="grid gap-2">
+                  {manageSections.map((section) => {
+                    const count = managingVendor.products.filter((product) => productSection(product) === section).length;
+                    const selected = section === activeManageSection;
+                    return (
+                      <button
+                        key={section}
+                        type="button"
+                        onClick={() => setManageSection(section)}
+                        className={`rounded-xl border p-3 text-left transition ${selected ? 'border-[var(--brass)] bg-[var(--brass)]/12' : 'border-[var(--line)] bg-black/15 hover:border-[var(--brass)]/50'}`}
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block break-words text-sm font-black">{section}</span>
+                            <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{count} product{count === 1 ? '' : 's'}</span>
+                          </span>
+                          {selected && <CheckCircle2 size={16} className="shrink-0 text-[var(--brass)]" />}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-3 grid gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">New section</span>
+                    <TextField value={sectionDraftName} onChange={(event) => setSectionDraftName(event.target.value)} placeholder="Example: Cedrick - Supplies" />
+                  </label>
+                  <div className="flex flex-wrap gap-1">
+                    {blueprintSections(managingVendor.blueprintType)
+                      .filter((section) => !manageSections.includes(section))
+                      .slice(0, 6)
+                      .map((section) => (
+                        <button
+                          key={section}
+                          type="button"
+                          onClick={() => setSectionDraftName(section)}
+                          className="rounded-lg border border-[var(--line)] bg-black/20 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--muted)] transition hover:border-[var(--brass)]/50 hover:text-[var(--brass)]"
+                        >
+                          {section}
+                        </button>
+                      ))}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    className="px-3 py-2 text-xs"
+                    disabled={!sectionDraftName.trim()}
+                    onClick={() => {
+                      const nextSection = sectionDraftName.trim();
+                      setManageSection(nextSection);
+                      setSectionDraftName('');
+                    }}
+                  >
+                    <Plus className="mr-2 inline" size={13} /> Add section
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="eyebrow">Section Inventory</p>
+                    <h3 className="mt-1 text-xl font-black">{activeManageSection}</h3>
+                    <p className="mt-1 text-xs font-bold text-[var(--muted)]">Products here use the same cards players see while shopping.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => { setBulkProductPickerOpen(true); setBulkCatalogKeys([]); setCatalogSearch(''); }} disabled={saving}>
+                      <PackageCheck className="mr-2 inline" size={13} /> Add catalog items
+                    </Button>
+                    <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openProductCreate(managingVendor, activeManageSection)} disabled={saving}>
+                      <Plus className="mr-2 inline" size={13} /> Custom product
+                    </Button>
+                    <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteSection(managingVendor, activeManageSection)} disabled={saving}>
+                      <Trash2 className="mr-2 inline" size={13} /> Delete section
+                    </Button>
+                  </div>
+                </div>
+                {manageSectionProducts.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-5 text-sm font-bold text-[var(--muted)]">
+                    This section is empty. Add catalog items or create a custom product to make it appear in the shop.
+                  </div>
+                ) : (
+                  <ProductGrid
+                    products={manageSectionProducts}
+                    isDm={isDm}
+                    saving={saving}
+                    canShop={false}
+                    onSelectProduct={openProductEdit}
+                    onEditProduct={openProductEdit}
+                    onDeleteProduct={(product) => void deleteProduct(product)}
+                    onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Item visibility could not be changed.')}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {managingVendor && selectedCity && bulkProductPickerOpen && (
+        <Modal title={`Add Items to ${activeManageSection}`} onClose={() => { setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
+          <div className="grid gap-4">
+            <label className="relative block">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
+              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder="Search item catalog" autoFocus />
+            </label>
+            <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-black">{selectedBulkCatalogItems.length} selected</p>
+                <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => setBulkCatalogKeys([])} disabled={selectedBulkCatalogItems.length === 0}>Clear</Button>
+              </div>
+              <div className="thin-scrollbar max-h-[58vh] overflow-y-auto pr-1">
+                {filteredProductCatalog.length === 0 ? (
+                  <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">No catalog items match that search.</div>
+                ) : (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {filteredProductCatalog.map((item) => {
+                      const selected = bulkCatalogKeys.includes(item.key);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setBulkCatalogKeys((current) => selected ? current.filter((key) => key !== item.key) : [...current, item.key])}
+                          className={`flex min-h-[4.75rem] items-center gap-3 rounded-xl border p-3 text-left transition ${selected ? 'border-[var(--brass)] bg-[var(--brass)]/12' : 'border-[var(--line)] bg-black/20 hover:border-[var(--brass)]/60'}`}
+                        >
+                          <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border bg-black/25 ${rarityClass(item.rarity)}`}><ItemIcon type={item.type} size={21} /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block break-words font-black">{item.name}</span>
+                            <span className="mt-1 block text-xs font-bold text-[var(--muted)]">{item.rarity} - {item.type}{item.category ? ` - ${item.category}` : ''}</span>
+                          </span>
+                          {selected && <CheckCircle2 size={17} className="shrink-0 text-[var(--brass)]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            <Button variant="primary" disabled={saving || bulkCatalogKeys.length === 0} onClick={() => void addCatalogProductsToSection(managingVendor, activeManageSection)}>
+              <PackageCheck className="mr-2 inline" size={15} /> Add {bulkCatalogKeys.length || ''} item{bulkCatalogKeys.length === 1 ? '' : 's'}
+            </Button>
+          </div>
+        </Modal>
+      )}
+
       {(editVendor || creatingVendor) && vendorDraft && (
         <Modal title={creatingVendor ? 'Create Shop' : `Edit ${editVendor?.name ?? 'Shop'}`} onClose={() => { setEditVendor(null); setCreatingVendor(false); setVendorDraft(null); }}>
           <form onSubmit={saveVendor} className="grid gap-3">
+            {creatingVendor && (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                <p className="eyebrow">Choose Blueprint</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {SHOP_BLUEPRINTS.map((blueprint) => {
+                    const selected = vendorDraft.blueprintType === blueprint.key;
+                    return (
+                      <button
+                        key={blueprint.key}
+                        type="button"
+                        onClick={() => setVendorDraft({
+                          ...vendorDraft,
+                          blueprintType: blueprint.key,
+                          facility: blueprint.facility,
+                          category: blueprint.category
+                        })}
+                        className={`rounded-2xl border p-3 text-left transition ${selected ? 'border-[var(--brass)] bg-[var(--brass)]/12' : 'border-[var(--line)] bg-black/15 hover:border-[var(--brass)]/50'}`}
+                      >
+                        <span className="flex items-start gap-3">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><Store size={18} /></span>
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2 font-black">{blueprint.label}{selected && <CheckCircle2 size={15} className="text-[var(--brass)]" />}</span>
+                            <span className="mt-1 block text-xs font-bold leading-5 text-[var(--muted)]">{blueprint.description}</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop name</span>
               <TextField value={vendorDraft.name} onChange={(event) => setVendorDraft({ ...vendorDraft, name: event.target.value })} />
@@ -2479,14 +2849,16 @@ function ConstructionRequirementRow({ requirement, city }: { requirement: CityCo
   );
 }
 
-function ShopCard({ vendor, isDm, saving, index, total, onOpen, onEdit, onToggleVisibility, onMove }: {
+function ShopCard({ vendor, isDm, saving, index, total, onOpen, onManage, onEdit, onDelete, onToggleVisibility, onMove }: {
   vendor: ShopVendor;
   isDm: boolean;
   saving: boolean;
   index: number;
   total: number;
   onOpen: () => void;
+  onManage: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   onToggleVisibility: () => void;
   onMove: (direction: -1 | 1) => void;
 }) {
@@ -2515,12 +2887,18 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onEdit, onToggle
 
       {isDm && (
         <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="primary" className="px-3 py-2 text-xs" onClick={onManage} disabled={saving}>
+            <Settings className="mr-2 inline" size={13} /> Manage
+          </Button>
           <Button variant="secondary" className="px-3 py-2 text-xs" onClick={onEdit} disabled={saving}>
             <Pencil className="mr-2 inline" size={13} /> Edit shop
           </Button>
           <Button variant={vendor.hidden ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={onToggleVisibility} disabled={saving}>
             {vendor.hidden ? <Eye className="mr-2 inline" size={13} /> : <EyeOff className="mr-2 inline" size={13} />}
             {vendor.hidden ? 'Show shop' : 'Hide shop'}
+          </Button>
+          <Button variant="danger" className="px-3 py-2 text-xs" onClick={onDelete} disabled={saving}>
+            <Trash2 className="mr-2 inline" size={13} /> Delete
           </Button>
           <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onMove(-1)} disabled={saving || index <= 0} aria-label={`Move ${vendor.name} up`}><ArrowUp size={13} /></Button>
           <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => onMove(1)} disabled={saving || index >= total - 1} aria-label={`Move ${vendor.name} down`}><ArrowDown size={13} /></Button>
@@ -2530,13 +2908,14 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onEdit, onToggle
   );
 }
 
-function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct }: {
+function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
   vendor: ShopVendor;
   isDm: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
   return (
@@ -2544,20 +2923,21 @@ function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduc
       {groupProducts(vendor.products).map(([section, products]) => (
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
-          <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+          <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
         </Card>
       ))}
     </div>
   );
 }
 
-function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct }: {
+function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
   vendor: ShopVendor;
   isDm: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(() => new Set());
@@ -2598,7 +2978,7 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
             </button>
             {expanded && (
               <div className="mt-4">
-                <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+                <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
               </div>
             )}
           </Card>
@@ -2615,6 +2995,7 @@ function LibraryPage(props: {
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
   const productGroups = groupProducts(props.vendor.products);
@@ -2637,6 +3018,7 @@ function BlacksmithPage(props: {
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   onCraft: (state: CraftModalState) => void;
 }) {
@@ -2716,6 +3098,7 @@ function ArmoryPage(props: {
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   onCraft: (state: CraftModalState) => void;
 }) {
@@ -2788,7 +3171,7 @@ function ArmoryPage(props: {
   );
 }
 
-function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct, onCitiesChanged, liveRefreshSignal, setError }: {
+function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct, onCitiesChanged, liveRefreshSignal, setError }: {
   vendor: ShopVendor;
   shopper: Character | null;
   isDm: boolean;
@@ -2796,6 +3179,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   onCitiesChanged: (payload: CitiesPayload) => void;
   liveRefreshSignal: number;
@@ -2970,7 +3354,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
       {productGroups.map(([section, products]) => (
         <Card key={section}>
           <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{section}</h3></div>
-          <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onPatchProduct={onPatchProduct} />
+          <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
         </Card>
       ))}
 
@@ -3158,13 +3542,14 @@ function BreweryIngredientPicker({ title, items, selections, onChange }: {
   );
 }
 
-function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditProduct, onPatchProduct }: {
+function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
   products: MarketProduct[];
   isDm: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
 }) {
   return (
@@ -3195,6 +3580,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
                     {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
                   </span>
                   <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)] ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/10 p-2 text-[var(--red)] ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
                 </span>
               )}
             </span>
