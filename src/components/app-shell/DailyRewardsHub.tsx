@@ -108,8 +108,8 @@ function RewardVisual({ entry, compact = false }: { entry: Pick<DailyRewardEntry
 }
 
 function statusStamp(status: DailyRewardEntry['status']) {
-  if (status === 'received') return { label: 'Received', className: 'border-[var(--teal)]/60 bg-[var(--teal)]/20 text-[var(--teal)]' };
-  if (status === 'missed') return { label: 'Missed', className: 'border-[var(--red)]/60 bg-[var(--red)]/15 text-[var(--red)]' };
+  if (status === 'received') return { label: 'Received', className: 'border-[var(--teal)] bg-[var(--teal)] text-black shadow-[0_0_24px_rgba(43,214,196,0.45)]' };
+  if (status === 'missed') return { label: 'Missed', className: 'border-[var(--red)] bg-[var(--red)] text-white shadow-[0_0_24px_rgba(255,106,92,0.45)]' };
   return null;
 }
 
@@ -270,7 +270,7 @@ export function DailyRewardsHub({ profile, available, onRefresh }: DailyRewardsH
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {currentWeekRewards.map((entry) => {
                     const stamp = statusStamp(entry.status);
-                    const dimmed = entry.status === 'upcoming' || entry.status === 'empty';
+                    const dimmed = entry.status === 'upcoming' || entry.status === 'empty' || entry.status === 'received' || entry.status === 'missed';
                     return (
                       <button
                         key={entry.date}
@@ -289,9 +289,11 @@ export function DailyRewardsHub({ profile, available, onRefresh }: DailyRewardsH
                           </div>
                           {entry.available && <span className="rounded-full bg-[var(--brass)] px-2 py-1 text-[10px] font-black uppercase tracking-wide text-black">Claim</span>}
                         </div>
-                        <RewardVisual entry={entry} />
+                        <div className={entry.available ? '' : 'opacity-55 grayscale-[0.25]'}>
+                          <RewardVisual entry={entry} />
+                        </div>
                         {stamp && (
-                          <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rotate-[-10deg] rounded-xl border px-3 py-1 text-sm font-black uppercase tracking-wider ${stamp.className}`}>
+                          <span className={`absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rotate-[-10deg] rounded-xl border-2 px-4 py-2 text-base font-black uppercase tracking-[0.18em] ${stamp.className}`}>
                             {stamp.label}
                           </span>
                         )}
