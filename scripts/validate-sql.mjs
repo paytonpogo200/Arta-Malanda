@@ -80,6 +80,39 @@ for (const filePath of walkFiles(srcRoot)) {
 const missingDefinitions = Array.from(rpcCalls).filter((name) => !definitions.has(name)).sort();
 const missingGrants = Array.from(rpcCalls).filter((name) => !grants.has(name)).sort();
 const failures = [];
+const destructiveSeedPatterns = [
+  {
+    label: 'market product seed conflict updates can reset DM-edited shop names, sections, prices, or stock',
+    pattern: /on\s+conflict\s*\(\s*product_key\s*\)\s+do\s+update/gi
+  },
+  {
+    label: 'city seed conflict updates can revert DM-edited city names, colors, descriptions, or order',
+    pattern: /on\s+conflict\s*\(\s*city_key\s*\)\s+do\s+update/gi
+  },
+  {
+    label: 'Calostrynn vendor pruning can delete DM-created shops',
+    pattern: /delete\s+from\s+public\.shop_vendors\s+where\s+city_key\s*=\s*'calostrynn'/gi
+  },
+  {
+    label: 'vendor-owned product pruning can delete DM-created shop products',
+    pattern: /delete\s+from\s+public\.market_products\s+p\s+using\s+[a-zA-Z0-9_]+_vendor/gi
+  },
+  {
+    label: 'current residence seed reset can undo the DM-selected residence city',
+    pattern: /set\s+is_current_residence\s*=\s*city_key\s*=/gi
+  },
+  {
+    label: 'hardcoded City Market reset can undo DM-edited shop display settings',
+    pattern: /set\s+name\s*=\s*'City Market'/gi
+  }
+];
+
+const destructiveSeedProblems = [];
+for (const { label, pattern } of destructiveSeedPatterns) {
+  for (const match of sql.matchAll(pattern)) {
+    destructiveSeedProblems.push(`${label} at line ${lineNumberAt(sql, match.index)}`);
+  }
+}
 
 if (duplicateOverloads.length) {
   failures.push(`Duplicate live SQL function overloads:\n${duplicateOverloads.map((entry) => `- ${entry}`).join('\n')}`);
@@ -99,6 +132,10 @@ if (grantsWithoutDefinitions.length) {
 
 if (grantOrderProblems.length) {
   failures.push(`Execute grants before SQL definitions:\n${grantOrderProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (destructiveSeedProblems.length) {
+  failures.push(`City/shop seed reset patterns found:\n${destructiveSeedProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (failures.length) {

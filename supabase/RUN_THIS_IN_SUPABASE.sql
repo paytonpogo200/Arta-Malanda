@@ -7460,8 +7460,19 @@ alter table public.market_products
   drop constraint if exists market_products_currency_system_key_check,
   add constraint market_products_currency_system_key_check check (currency_system_key in ('calostrynn', 'common'));
 
+create table if not exists public.app_data_repairs (
+  repair_key text primary key,
+  applied_at timestamptz not null default now()
+);
+
+insert into public.app_data_repairs (repair_key)
+select 'calostrynn-shop-defaults-preexisting-2026-08-24'
+where exists (select 1 from public.shop_vendors where city_key = 'calostrynn')
+on conflict (repair_key) do nothing;
+
 delete from public.market_products
 where product_key = 'blacksmith-mountian-rune'
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
   and exists (
     select 1
     from public.market_products existing
@@ -7472,13 +7483,15 @@ update public.market_products
 set item_type = public.normalize_item_type(item_type),
     item_name = case when item_name = 'Mountian Rune' then 'Mountain Rune' else public.normalize_item_name(item_name) end,
     product_key = case when product_key = 'blacksmith-mountian-rune' then 'blacksmith-mountain-rune' else product_key end,
-    catalog_item_key = case when catalog_item_key = 'mountian-rune' then 'mountain-rune' else catalog_item_key end;
+    catalog_item_key = case when catalog_item_key = 'mountian-rune' then 'mountain-rune' else catalog_item_key end
+where not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set item_type = 'potion',
     rarity = case when lower(item_name) = 'arcane nector' then 'Uncommon'::public.item_rarity else 'Common'::public.item_rarity end,
     quantity_step = 1
-where lower(item_name) in ('empty flask', 'arcane nector');
+where lower(item_name) in ('empty flask', 'arcane nector')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 alter table public.cities enable row level security;
 alter table public.shop_vendors enable row level security;
@@ -7508,26 +7521,22 @@ values ('calostrynn', 'Calostrynn', false, 10)
 on conflict (city_key) do nothing;
 
 insert into public.shop_vendors (city_key, vendor_key, name, facility, category, display_order)
-values
+select seed.city_key, seed.vendor_key, seed.name, seed.facility, seed.category, seed.display_order
+from (values
   ('calostrynn', 'calostrynn-armory', 'Armory Quartermaster', 'Armory', 'Arms & Armor', 20),
   ('calostrynn', 'calostrynn-brewery', 'Brewery Keeper', 'Brewery', 'Potions & Ingredients', 30),
   ('calostrynn', 'calostrynn-spells', 'Spell Registrar', 'Spell Shop', 'Spell Catalog', 40),
   ('calostrynn', 'calostrynn-library', 'The Grand Calostrynn Library', 'Library', 'Books & Research', 45),
   ('calostrynn', 'calostrynn-blacksmith', 'Blacksmith', 'Blacksmith', 'Tools & Metalwork', 50),
   ('calostrynn', 'calostrynn-city-market', 'City Market', 'Market', 'General Goods', 60)
+) as seed(city_key, vendor_key, name, facility, category, display_order)
+where not exists (select 1 from public.shop_vendors existing where existing.city_key = 'calostrynn')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
 on conflict (vendor_key) do nothing;
-
-delete from public.shop_vendors
-where city_key = 'calostrynn'
-  and vendor_key not in ('calostrynn-armory', 'calostrynn-brewery', 'calostrynn-city-market', 'calostrynn-library', 'calostrynn-spells', 'calostrynn-blacksmith');
 
 -- Replace Blacksmith placeholder wares with source-backed forge materials and runes.
 -- Market seed rows keep product metadata current, but existing live stock and DM visibility
 -- are intentionally preserved so purchases and shop edits do not get reset by rerunning SQL.
-with blacksmith_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-blacksmith')
-delete from public.market_products p using blacksmith_vendor v where p.vendor_id = v.id and p.product_kind <> 'service' and p.product_key not in ('blacksmith-bronze-scale', 'blacksmith-iron-scale', 'blacksmith-steel-scale', 'blacksmith-mythril-scale', 'blacksmith-vaylium-scale', 'blacksmith-dragonscale-scale', 'blacksmith-ember-rune', 'blacksmith-frost-rune', 'blacksmith-lightning-rune', 'blacksmith-earth-rune', 'blacksmith-wind-rune', 'blacksmith-mountain-rune', 'blacksmith-void-rune');
-with armory_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-armory')
-delete from public.market_products p using armory_vendor v where p.vendor_id = v.id and p.product_kind <> 'service' and p.product_key not in ('armory-bronze-scale', 'armory-iron-scale', 'armory-steel-scale', 'armory-mythril-scale', 'armory-vaylium-scale', 'armory-dragonscale-scale');
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, seed.quantity_step::numeric, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
@@ -7546,18 +7555,13 @@ join (values
   ('blacksmith-mountain-rune', 'Mountain Rune', 'Cannot be used for enchantments yet.', 'rune', 'Epic', 0, 0, 'Runes', 1, 'mountain-rune', false, 120),
   ('blacksmith-void-rune', 'Void Rune', 'Cannot be used for enchantments yet.', 'rune', 'Mythical', 0, 0, 'Runes', 1, 'void-rune', false, 130)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-blacksmith'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    display_order = excluded.display_order,
-    updated_at = now();
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+    and coalesce(existing.product_kind, 'item') <> 'service'
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 -- Service rows make forge recipe sections editable in the DM shop manager.
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
@@ -7585,17 +7589,13 @@ join (values
   ('blacksmith-service-custom-magecraft', 'Custom Magecraft Commission', 'Labor price for a flexible magecraft commission.', 'weapon', 'Common', 6500, 'Magecraft Commissions', 'custom-magecraft', 560),
   ('blacksmith-service-shield', 'Shield', 'Forge labor price for crafting a shield.', 'shield', 'Common', 5000, 'Shield Creation', 'shield', 610)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.vendor_key = 'calostrynn-blacksmith'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    shop_section = excluded.shop_section,
-    catalog_item_key = excluded.catalog_item_key,
-    product_kind = excluded.product_kind,
-    display_order = excluded.display_order,
-    updated_at = now();
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+    and existing.product_kind = 'service'
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 -- Seed Armory scales as Armory-owned wares instead of borrowing Blacksmith product rows.
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
@@ -7609,18 +7609,13 @@ join (values
   ('armory-vaylium-scale', 'Vaylium Scale', 'Vaylium: +1 Vitality and +1 Intelligence for shields; +3 Intelligence and +1 Magic Resist for armor.', 'material', 'Epic', 5000, 0, 'Material Scales', 1, 'vaylium-scale', false, 50),
   ('armory-dragonscale-scale', 'Dragonscale Scale', 'Dragonscale: +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.', 'material', 'Legendary', 15000, 0, 'Material Scales', 1, 'dragonscale-scale', false, 60)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order) on v.vendor_key = 'calostrynn-armory'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    display_order = excluded.display_order,
-    updated_at = now();
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+    and coalesce(existing.product_kind, 'item') <> 'service'
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, 'calostrynn', null, seed.shop_section, 1, seed.catalog_item_key, 'service', 0, '', true, seed.display_order
@@ -7633,26 +7628,13 @@ join (values
   ('armory-service-vaylium-armor', 'Vaylium Armor', 'Armory labor price for vaylium armor.', 'armor', 'Epic', 7500, 'Armor Creation', 'vaylium-armor', 250),
   ('armory-service-dragonscale-armor', 'Dragonscale Armor', 'Armory labor price for dragonscale armor.', 'armor', 'Legendary', 10000, 'Armor Creation', 'dragonscale-armor', 260)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, shop_section, catalog_item_key, display_order) on v.vendor_key = 'calostrynn-armory'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    shop_section = excluded.shop_section,
-    catalog_item_key = excluded.catalog_item_key,
-    product_kind = excluded.product_kind,
-    display_order = excluded.display_order,
-    updated_at = now();
-
-update public.market_products p
-set currency_system_key = 'common',
-    price_coin = 0,
-    updated_at = now()
-from public.shop_vendors v
-where p.vendor_id = v.id
-  and v.city_key <> 'calostrynn'
-  and p.product_kind = 'service';
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+    and existing.product_kind = 'service'
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 -- Repair existing custom forge shops created before service rows existed.
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
@@ -7704,20 +7686,8 @@ where not exists (
     and existing.product_kind = 'service'
     and lower(existing.catalog_item_key) = lower(seed.catalog_item_key)
 )
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    currency_system_key = excluded.currency_system_key,
-    stock_quantity = excluded.stock_quantity,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    product_kind = excluded.product_kind,
-    display_order = excluded.display_order,
-    updated_at = now();
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select
@@ -7754,20 +7724,8 @@ where not exists (
     and existing.product_kind = 'service'
     and lower(existing.catalog_item_key) = lower(seed.catalog_item_key)
 )
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    currency_system_key = excluded.currency_system_key,
-    stock_quantity = excluded.stock_quantity,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    product_kind = excluded.product_kind,
-    display_order = excluded.display_order,
-    updated_at = now();
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 with forge_recipe_duplicates as (
   select p.id
@@ -7845,16 +7803,7 @@ where exists (select 1 from repair)
     or (product_key in ('blacksmith-dragonscale-scale', 'armory-dragonscale-scale') and stock_quantity = 2)
   );
 
--- Replace Brewery placeholder wares with source-backed finished potions and brewing supplies.
-with brewery_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-brewery')
-delete from public.market_products p
-using brewery_vendor v
-where p.vendor_id = v.id
-  and (
-    p.product_key in ('minor-healing-potion', 'minor-mana-potion', 'glass-flask')
-    or lower(p.item_name) in ('minor healing potion', 'minor mana potion', 'glass flask', 'glass flasks')
-  );
-
+-- Seed Brewery defaults only when the Brewery has no rows yet.
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, 'potion', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, 'item', 0, '', seed.is_available, seed.display_order
 from public.shop_vendors v
@@ -7908,22 +7857,12 @@ join (values
   ('brewery-greatest-clotting-potion', 'Greatest Clotting Potion (Fine)', 'Fine greatest clotting potion. Resolve the effect at the table.', 'Legendary', 600, 1, 'Finished Potions', 'greatest-clotting-potion', true, 540)
 ) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, is_available, display_order)
 on v.vendor_key = 'calostrynn-brewery'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    display_order = excluded.display_order;
-
-with library_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-library')
-delete from public.market_products p
-using library_vendor v
-where p.vendor_id = v.id
-  and p.product_key not in ('library-history-book', 'library-alchemy-book', 'library-bestiary', 'library-magical-research');
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, 'quest', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, 'Books', 1, seed.catalog_item_key, true, seed.display_order
@@ -7935,59 +7874,12 @@ join (values
   ('library-magical-research', 'Magical Research', 'Choose a spell category to receive a rare magic spell book for that category.', 'Rare', 2500, null, 'magical-research', 40)
 ) as seed(product_key, item_name, description, rarity, price_coin, stock_quantity, catalog_item_key, display_order)
 on v.vendor_key = 'calostrynn-library'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    display_order = excluded.display_order,
-    updated_at = now();
-
-with city_market_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-city-market')
-delete from public.market_products p
-using city_market_vendor v
-where p.vendor_id = v.id
-  and p.product_key not in (
-    'city-market-waist-pouch',
-    'city-market-back-bag',
-    'city-market-light-duffle',
-    'city-market-heavy-duffle',
-    'city-market-bag-of-holding',
-    'city-market-light-wagon',
-    'city-market-heavy-wagon',
-    'city-market-caged-wagon',
-    'city-market-wagon-home',
-    'city-market-torch',
-    'city-market-arrow',
-    'city-market-rope',
-    'city-market-blanket',
-    'city-market-cooking-pots',
-    'city-market-cloth',
-    'city-market-fine-cloth',
-    'city-market-ink-and-paper',
-    'city-market-lock',
-    'city-market-standard-hammer',
-    'city-market-standard-axe',
-    'city-market-quartz',
-    'city-market-emerald',
-    'city-market-ruby',
-    'city-market-sapphire',
-    'city-market-winter-wear',
-    'city-market-heat-wear',
-    'city-market-rainproof-wear',
-    'city-market-basic-meal',
-    'city-market-tavern-meal',
-    'city-market-inn-room',
-    'city-market-fine-inn',
-    'city-market-horse',
-    'city-market-war-horse',
-    'city-market-dog'
-  );
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
 select v.id, seed.product_key, seed.item_name, seed.description, public.normalize_item_type(seed.item_type), seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, seed.shop_section, 1, seed.catalog_item_key, true, seed.display_order
@@ -8029,18 +7921,12 @@ join (values
   ('city-market-dog', 'Dog', 'Cassandra sells a loyal dog.', 'pet', 'Epic', 1000, null, 'Cassandra - Stable Keeper', 'dog', 440)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, display_order)
 on v.vendor_key = 'calostrynn-city-market'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    display_order = excluded.display_order,
-    updated_at = now();
+where not exists (
+  select 1 from public.market_products existing
+  where existing.vendor_id = v.id
+)
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 create or replace function public.city_record_to_json(p_city public.cities)
 returns jsonb
@@ -8294,14 +8180,10 @@ alter table public.market_products
   add constraint market_products_product_kind_check check (product_kind in ('item', 'spell', 'document', 'service'));
 
 update public.shop_vendors
-set name = 'City Market',
-    facility = 'Market',
-    category = 'General Goods',
-    blueprint_type = 'market',
-    npc_name = 'Market Stalls',
-    is_hidden = false,
-    display_order = 60
-where vendor_key = 'calostrynn-city-market';
+set blueprint_type = 'market'
+where vendor_key = 'calostrynn-city-market'
+  and blueprint_type <> 'market'
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.shop_vendors
 set blueprint_type = case
@@ -8313,7 +8195,8 @@ set blueprint_type = case
   else blueprint_type
 end,
 is_custom = false
-where vendor_key in ('calostrynn-blacksmith', 'calostrynn-armory', 'calostrynn-brewery', 'calostrynn-spells', 'calostrynn-library', 'calostrynn-city-market');
+where vendor_key in ('calostrynn-blacksmith', 'calostrynn-armory', 'calostrynn-brewery', 'calostrynn-spells', 'calostrynn-library', 'calostrynn-city-market')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set product_kind = case
@@ -8321,7 +8204,8 @@ set product_kind = case
   when vendor_id in (select id from public.shop_vendors where blueprint_type = 'library') then 'document'
   when item_type = 'food' and shop_section ilike '%tavern%' then 'service'
   else 'item'
-end;
+end
+where not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
 returns jsonb
@@ -11963,30 +11847,35 @@ grant execute on function public.consume_inventory_potion(text, uuid, boolean) t
 update public.market_products
 set item_name = 'Mountain Rune',
     catalog_item_key = 'mountain-rune'
-where lower(item_name) = 'mountian rune'
-   or product_key = 'blacksmith-mountian-rune';
+where (lower(item_name) = 'mountian rune'
+   or product_key = 'blacksmith-mountian-rune')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set item_type = 'rune',
     rarity = 'Epic',
     quantity_step = 1
-where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune');
+where lower(item_name) in ('ember rune', 'frost rune', 'lightning rune', 'earth rune', 'wind rune', 'mountain rune')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set item_type = 'rune',
     rarity = 'Mythical',
     quantity_step = 1
-where lower(item_name) = 'void rune';
+where lower(item_name) = 'void rune'
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set item_type = 'material',
     quantity_step = 1
-where lower(item_name) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale');
+where lower(item_name) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale')
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.market_products
 set description = 'Dragonscale: +2 Strength and +3 Magic Resist for weapons; +2 Vitality and +3 Magic Resist for shields; +2 Vitality and +5 Magic Resist for armor.'
 where product_key = 'blacksmith-dragonscale-scale'
-  and description like '%+5 Magic Resist for shields%';
+  and description like '%+5 Magic Resist for shields%'
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
 update public.item_catalog
 set item_name = 'Mountain Rune',
@@ -12324,12 +12213,6 @@ set summary = replace(replace(replace(replace(replace(replace(summary, 'Sheild',
     details = replace(replace(replace(replace(replace(replace(details, 'Sheild', 'Shield'), 'Intellegence', 'Intelligence'), 'recieve', 'receive'), 'begining', 'beginning'), 'resuraction', 'resurrection'), 'Chose', 'Choose')
 where spell_key in ('emberbolt', 'scorch', 'flame-ring', 'solar-flare', 'radiance', 'fireball', 'sear', 'frostbite', 'ice-shard', 'hypothermia', 'ice-wall', 'ice-cube', 'christmas-tree', 'absolute-zero', 'sparkshot', 'static-charge', 'arc-shot', 'defibrillate', 'electric-explosion', 'thunder-crash', 'lightning-chain', 'stone-fist', 'quicksand', 'earthen-spikes', 'earthquake', 'wind-cutter', 'mighty-gust', 'wind-be-with-me', 'gale-burst', 'pulse', 'energy-shield', 'mend-wounds', 'greater-mend', 'antivenom', 'fortify', 'iron-skin', 'shield', 'cleanse', 'revitalize', 'golden-boy', 'insurance', 'counter-attack', 'retaliation', 'internal-bleeding', 'strip', 'demoralize', 'weaken', 'cripple', 'enfeeblement', 'dreadfall', 'whats-mine-is-yours', 'judas', 'jump-him', 'follow-the-leader', 'bloodthirsty', 'swiftness', 'clarity', 'mana-surge', 'guided-strike', 'stabilize', 'light-orb', 'warmth', 'cooling', 'levitation', 'seal', 'magecraft-detection', 'purify-water', 'silent-step', 'taunt', 'entangle', 'pure-chaos', 'equilibrium', 'preparation');
 
-with spell_vendor as (select id from public.shop_vendors where vendor_key = 'calostrynn-spells')
-delete from public.market_products p
-using spell_vendor v
-where p.vendor_id = v.id
-  and p.product_key not in ('spell-emberbolt', 'spell-scorch', 'spell-flame-ring', 'spell-solar-flare', 'spell-radiance', 'spell-fireball', 'spell-sear', 'spell-frostbite', 'spell-ice-shard', 'spell-hypothermia', 'spell-ice-wall', 'spell-ice-cube', 'spell-christmas-tree', 'spell-absolute-zero', 'spell-sparkshot', 'spell-static-charge', 'spell-arc-shot', 'spell-defibrillate', 'spell-electric-explosion', 'spell-thunder-crash', 'spell-lightning-chain', 'spell-stone-fist', 'spell-quicksand', 'spell-earthen-spikes', 'spell-earthquake', 'spell-wind-cutter', 'spell-mighty-gust', 'spell-wind-be-with-me', 'spell-gale-burst', 'spell-pulse', 'spell-energy-shield', 'spell-mend-wounds', 'spell-greater-mend', 'spell-antivenom', 'spell-fortify', 'spell-iron-skin', 'spell-shield', 'spell-cleanse', 'spell-revitalize', 'spell-golden-boy', 'spell-insurance', 'spell-counter-attack', 'spell-retaliation', 'spell-internal-bleeding', 'spell-strip', 'spell-demoralize', 'spell-weaken', 'spell-cripple', 'spell-enfeeblement', 'spell-dreadfall', 'spell-whats-mine-is-yours', 'spell-judas', 'spell-jump-him', 'spell-follow-the-leader', 'spell-bloodthirsty', 'spell-swiftness', 'spell-clarity', 'spell-mana-surge', 'spell-guided-strike', 'spell-stabilize', 'spell-light-orb', 'spell-warmth', 'spell-cooling', 'spell-levitation', 'spell-seal', 'spell-magecraft-detection', 'spell-purify-water', 'spell-silent-step', 'spell-taunt', 'spell-entangle', 'spell-pure-chaos', 'spell-equilibrium', 'spell-preparation');
-
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, product_kind, mana_cost, mana_label, is_available, display_order)
 select
   v.id,
@@ -12351,21 +12234,12 @@ select
 from public.shop_vendors v
 join public.spell_catalog s on s.spell_key in ('emberbolt', 'scorch', 'flame-ring', 'solar-flare', 'radiance', 'fireball', 'sear', 'frostbite', 'ice-shard', 'hypothermia', 'ice-wall', 'ice-cube', 'christmas-tree', 'absolute-zero', 'sparkshot', 'static-charge', 'arc-shot', 'defibrillate', 'electric-explosion', 'thunder-crash', 'lightning-chain', 'stone-fist', 'quicksand', 'earthen-spikes', 'earthquake', 'wind-cutter', 'mighty-gust', 'wind-be-with-me', 'gale-burst', 'pulse', 'energy-shield', 'mend-wounds', 'greater-mend', 'antivenom', 'fortify', 'iron-skin', 'shield', 'cleanse', 'revitalize', 'golden-boy', 'insurance', 'counter-attack', 'retaliation', 'internal-bleeding', 'strip', 'demoralize', 'weaken', 'cripple', 'enfeeblement', 'dreadfall', 'whats-mine-is-yours', 'judas', 'jump-him', 'follow-the-leader', 'bloodthirsty', 'swiftness', 'clarity', 'mana-surge', 'guided-strike', 'stabilize', 'light-orb', 'warmth', 'cooling', 'levitation', 'seal', 'magecraft-detection', 'purify-water', 'silent-step', 'taunt', 'entangle', 'pure-chaos', 'equilibrium', 'preparation')
 where v.vendor_key = 'calostrynn-spells'
-on conflict (product_key) do update
-set vendor_id = excluded.vendor_id,
-    item_name = excluded.item_name,
-    description = excluded.description,
-    item_type = excluded.item_type,
-    rarity = excluded.rarity,
-    price_coin = excluded.price_coin,
-    shop_section = excluded.shop_section,
-    quantity_step = excluded.quantity_step,
-    catalog_item_key = excluded.catalog_item_key,
-    product_kind = excluded.product_kind,
-    mana_cost = excluded.mana_cost,
-    mana_label = excluded.mana_label,
-    display_order = excluded.display_order,
-    updated_at = now();
+  and not exists (
+    select 1 from public.market_products existing
+    where existing.vendor_id = v.id
+  )
+  and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
+on conflict (product_key) do nothing;
 
 create or replace function public.spell_record_to_json(p_spell public.spell_catalog)
 returns jsonb
@@ -17851,14 +17725,18 @@ alter table public.cities
   add column if not exists show_under_construction boolean not null default false;
 
 insert into public.cities (city_key, name, description, is_locked, is_current_residence, show_under_construction, display_order)
-values ('the-ruined-city', 'The Ruined City*', '', false, true, false, 5)
-on conflict (city_key) do update
-set name = excluded.name,
-    display_order = least(public.cities.display_order, excluded.display_order),
-    updated_at = now();
+values ('the-ruined-city', 'The Ruined City*', '', false, false, false, 5)
+on conflict (city_key) do nothing;
 
 update public.cities
-set is_current_residence = city_key = 'the-ruined-city';
+set is_current_residence = true,
+    updated_at = now()
+where city_key = 'the-ruined-city'
+  and not exists (
+    select 1
+    from public.cities existing
+    where existing.is_current_residence
+  );
 
 update public.characters c
 set location_name = 'Wild'
