@@ -103,6 +103,7 @@ create table if not exists public.characters (
   class_passives jsonb not null default '[]'::jsonb check (jsonb_typeof(class_passives) = 'array'),
   personal_passives text not null default '',
   token_color text not null default '#9caf79',
+  location_city_key text,
   location_name text not null default 'Calostrynn',
   previous_owner_name text not null default '',
   created_at timestamptz not null default now(),
@@ -479,6 +480,9 @@ alter table public.class_templates
 alter table public.characters
   add column if not exists magic_resist int not null default 0 check (magic_resist >= 0);
 
+alter table public.characters
+  add column if not exists location_city_key text;
+
 update public.characters
 set class_key = lower(regexp_replace(class_name, '[^a-zA-Z0-9]+', '-', 'g'))
 where class_key is null;
@@ -493,6 +497,7 @@ alter table public.characters
   add column if not exists gift_inventory_open boolean not null default true;
 
 create index if not exists characters_class_key_idx on public.characters(class_key);
+create index if not exists characters_location_city_key_idx on public.characters(location_city_key);
 
 create or replace function public.profile_from_campaign_session(p_session_token text)
 returns public.profiles
@@ -536,6 +541,7 @@ as $$
     'classPassives', p_character.class_passives,
     'personalPassives', p_character.personal_passives,
     'tokenColor', p_character.token_color,
+    'locationCityKey', p_character.location_city_key,
     'locationName', p_character.location_name,
     'previousOwnerName', nullif(p_character.previous_owner_name, '')
   )
@@ -1400,6 +1406,8 @@ declare
   v_template public.class_templates%rowtype;
   v_character public.characters%rowtype;
   v_class_key text;
+  v_location_city_key text;
+  v_location_name text;
 begin
   select * into v_profile
   from public.profile_from_campaign_session(p_session_token);
@@ -1432,6 +1440,21 @@ begin
     raise exception 'Class template not found.';
   end if;
 
+  select city_key, name
+  into v_location_city_key, v_location_name
+  from public.cities
+  where is_current_residence
+  order by display_order, name
+  limit 1;
+
+  if v_location_city_key is null then
+    select city_key, name
+    into v_location_city_key, v_location_name
+    from public.cities
+    where city_key = 'calostrynn'
+    limit 1;
+  end if;
+
   insert into public.characters (
     name,
     kind,
@@ -1451,6 +1474,7 @@ begin
     class_passives,
     personal_passives,
     token_color,
+    location_city_key,
     location_name
   )
   values (
@@ -1472,7 +1496,8 @@ begin
     v_template.passives,
     coalesce(p_personal_passives, ''),
     coalesce(nullif(trim(p_token_color), ''), v_template.token_color),
-    'Calostrynn'
+    v_location_city_key,
+    coalesce(v_location_name, 'Wild')
   )
   returning * into v_character;
 
@@ -1513,6 +1538,7 @@ declare
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_owner_user_id uuid;
   v_class_key text;
+  v_location record;
 begin
   select * into v_profile
   from public.profile_from_campaign_session(p_session_token);
@@ -1559,6 +1585,12 @@ begin
     end if;
   end if;
 
+  if v_patch ? 'locationCityKey' or v_patch ? 'locationName' then
+    select *
+    into v_location
+    from public.resolve_character_location(v_patch->>'locationCityKey', v_patch->>'locationName');
+  end if;
+
   update public.characters
   set
     owner_user_id = v_owner_user_id,
@@ -1583,7 +1615,8 @@ begin
     attributes = case when v_patch ? 'attributes' and jsonb_typeof(v_patch->'attributes') = 'object' then v_patch->'attributes' else attributes end,
     personal_passives = case when v_patch ? 'personalPassives' then coalesce(v_patch->>'personalPassives', '') else personal_passives end,
     token_color = case when v_patch ? 'tokenColor' then coalesce(nullif(trim(v_patch->>'tokenColor'), ''), token_color) else token_color end,
-    location_name = case when v_patch ? 'locationName' then public.assert_valid_character_location(v_patch->>'locationName') else location_name end
+    location_city_key = case when v_location is not null then v_location.location_city_key else location_city_key end,
+    location_name = case when v_location is not null then v_location.location_name else location_name end
   where id = p_character_id
   returning * into v_character;
 
@@ -6198,7 +6231,7 @@ begin
       from public.inventory_items w
       join public.characters owner_character on owner_character.id = w.character_id
       where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
-        and public.city_names_match(owner_character.location_name, v_character.location_name)
+        and public.characters_share_location(owner_character, v_character)
     ),
     'items', (
       select coalesce(jsonb_agg(public.inventory_item_record_to_json(child) order by child.parent_item_id, child.slot_index, child.item_name), '[]'::jsonb)
@@ -6206,7 +6239,7 @@ begin
       join public.inventory_items w on w.id = child.parent_item_id
       join public.characters owner_character on owner_character.id = w.character_id
       where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
-        and public.city_names_match(owner_character.location_name, v_character.location_name)
+        and public.characters_share_location(owner_character, v_character)
     ),
     'activity', (
       select coalesce(jsonb_agg(jsonb_build_object(
@@ -6225,7 +6258,7 @@ begin
         join public.inventory_items w on w.id = log_entry.wagon_item_id
         join public.characters owner_character on owner_character.id = w.character_id
         where public.inventory_storage_visible_to_profile(v_profile, w, owner_character)
-          and public.city_names_match(owner_character.location_name, v_character.location_name)
+          and public.characters_share_location(owner_character, v_character)
         order by log_entry.created_at desc
         limit 30
       ) recent
@@ -6292,7 +6325,7 @@ begin
   end if;
 
   select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
-  if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
+  if v_wagon_owner.id is null or not public.characters_share_location(v_wagon_owner, v_actor) then
     raise exception 'That storage is not in this character''s location.';
   end if;
 
@@ -6385,7 +6418,7 @@ begin
   end if;
 
   select * into v_wagon_owner from public.characters where id = v_wagon.character_id;
-  if v_wagon_owner.id is null or not public.city_names_match(v_wagon_owner.location_name, v_actor.location_name) then
+  if v_wagon_owner.id is null or not public.characters_share_location(v_wagon_owner, v_actor) then
     raise exception 'That storage is not in this character''s location.';
   end if;
 
@@ -7980,6 +8013,98 @@ begin
 end;
 $$;
 
+create or replace function public.resolve_character_location(
+  p_location_city_key text,
+  p_location_name text
+)
+returns table(location_city_key text, location_name text)
+language plpgsql
+stable
+set search_path = public, extensions
+as $$
+declare
+  v_key text := nullif(trim(coalesce(p_location_city_key, '')), '');
+  v_name text := nullif(trim(coalesce(p_location_name, '')), '');
+  v_city public.cities%rowtype;
+begin
+  if v_key is null and (v_name is null or public.city_names_match(v_name, 'Wild')) then
+    location_city_key := null;
+    location_name := 'Wild';
+    return next;
+    return;
+  end if;
+
+  if v_key is not null then
+    if public.city_names_match(v_key, 'Wild') then
+      location_city_key := null;
+      location_name := 'Wild';
+      return next;
+      return;
+    end if;
+
+    select *
+    into v_city
+    from public.cities
+    where city_key = v_key
+    limit 1;
+  end if;
+
+  if v_city.id is null and v_name is not null then
+    select *
+    into v_city
+    from public.cities
+    where public.city_names_match(name, v_name)
+    order by display_order, name
+    limit 1;
+  end if;
+
+  if v_city.id is null then
+    raise exception 'Character location must be a discovered city or Wild.';
+  end if;
+
+  location_city_key := v_city.city_key;
+  location_name := v_city.name;
+  return next;
+end;
+$$;
+
+create or replace function public.character_is_in_city(
+  p_character public.characters,
+  p_city_key text
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce(p_character.location_city_key, '') = coalesce(p_city_key, '')
+    or (
+      p_character.location_city_key is null
+      and exists (
+        select 1
+        from public.cities city
+        where city.city_key = p_city_key
+          and public.city_names_match(city.name, p_character.location_name)
+      )
+    )
+$$;
+
+create or replace function public.characters_share_location(
+  p_left public.characters,
+  p_right public.characters
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when p_left.location_city_key is not null or p_right.location_city_key is not null
+      then coalesce(p_left.location_city_key, '') = coalesce(p_right.location_city_key, '')
+    else public.city_names_match(p_left.location_name, p_right.location_name)
+  end
+$$;
+
 create or replace function public.market_product_record_to_json(p_product public.market_products)
 returns jsonb
 language sql
@@ -8364,7 +8489,7 @@ begin
     raise exception 'That city is currently locked.';
   end if;
 
-  if not public.city_names_match(v_character.location_name, v_city.name) then
+  if not public.character_is_in_city(v_character, v_city.city_key) then
     raise exception 'That character is not in %.', v_city.name;
   end if;
 
@@ -8891,7 +9016,7 @@ begin
     raise exception '% is currently locked.', v_city.name;
   end if;
 
-  if not public.city_names_match(p_character.location_name, v_city.name) then
+  if not public.character_is_in_city(p_character, v_city.city_key) then
     raise exception '% is in %, not %.', p_character.name, p_character.location_name, v_city.name;
   end if;
 
@@ -11827,6 +11952,9 @@ grant execute on function public.convert_jursh_selected_scales_to_item(text, uui
 grant execute on function public.forge_dragonscale_scale_from_dragon_scales(text, uuid, text, jsonb) to anon, authenticated;
 grant execute on function public.enchantment_spell_for_rune(text, int, int) to anon, authenticated;
 grant execute on function public.assert_character_can_use_vendor(public.characters, text) to anon, authenticated;
+grant execute on function public.resolve_character_location(text, text) to anon, authenticated;
+grant execute on function public.character_is_in_city(public.characters, text) to anon, authenticated;
+grant execute on function public.characters_share_location(public.characters, public.characters) to anon, authenticated;
 grant execute on function public.crafting_house_is_accessible(uuid, text) to anon, authenticated;
 grant execute on function public.house_item_quantity_by_name(uuid, text, text) to anon, authenticated;
 grant execute on function public.accessible_item_quantity_by_name(uuid, text, text) to anon, authenticated;
@@ -16909,7 +17037,7 @@ begin
     and w.is_storage = true
     and public.inventory_item_is_mobile_home_storage(w.item_name, w.item_type)
   order by
-    case when public.city_names_match(c.location_name, 'Calostrynn') then 1 else 0 end,
+    case when coalesce(c.location_city_key, '') = 'calostrynn' then 1 else 0 end,
     c.name,
     w.slot_index,
     w.created_at
@@ -17739,13 +17867,48 @@ where city_key = 'the-ruined-city'
   );
 
 update public.characters c
-set location_name = 'Wild'
+set location_city_key = city.city_key,
+    location_name = city.name
+from public.cities city
+where c.location_city_key is null
+  and public.city_names_match(city.name, c.location_name);
+
+update public.characters c
+set location_name = city.name
+from public.cities city
+where c.location_city_key = city.city_key
+  and c.location_name is distinct from city.name;
+
+update public.characters c
+set location_city_key = null,
+    location_name = 'Wild'
+where c.location_city_key is not null
+  and not exists (
+    select 1
+    from public.cities city
+    where city.city_key = c.location_city_key
+  );
+
+update public.characters c
+set location_city_key = null,
+    location_name = 'Wild'
 where not public.city_names_match(c.location_name, 'Wild')
+  and c.location_city_key is null
   and not exists (
     select 1
     from public.cities city
     where public.city_names_match(city.name, c.location_name)
   );
+
+alter table public.characters
+  drop constraint if exists characters_location_city_key_fkey;
+
+alter table public.characters
+  add constraint characters_location_city_key_fkey
+  foreign key (location_city_key)
+  references public.cities(city_key)
+  on update cascade
+  on delete set null;
 
 drop index if exists cities_one_current_residence_idx;
 create unique index cities_one_current_residence_idx
@@ -17951,10 +18114,17 @@ as $$
 declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_city public.cities%rowtype;
+  v_new_name text;
 begin
   v_profile := public.require_dm_profile(p_session_token);
 
-  if not exists (select 1 from public.cities where city_key = p_city_key) then
+  select *
+  into v_city
+  from public.cities
+  where city_key = p_city_key;
+
+  if v_city.id is null then
     raise exception 'City not found.';
   end if;
 
@@ -17973,7 +18143,17 @@ begin
     show_under_construction = case when v_patch ? 'showUnderConstruction' then coalesce((v_patch->>'showUnderConstruction')::boolean, false) else show_under_construction end,
     is_current_residence = case when v_patch ? 'currentResidence' then coalesce((v_patch->>'currentResidence')::boolean, false) else is_current_residence end,
     display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
-  where city_key = p_city_key;
+  where city_key = p_city_key
+  returning name into v_new_name;
+
+  update public.characters
+  set location_city_key = p_city_key,
+      location_name = v_new_name
+  where location_city_key = p_city_key
+     or (
+       location_city_key is null
+       and public.city_names_match(location_name, v_city.name)
+     );
 
   if not exists (select 1 from public.cities where is_current_residence) then
     update public.cities
@@ -18027,7 +18207,7 @@ begin
   where id = v_root.character_id;
 
   return public.inventory_storage_visible_to_profile(p_profile, v_root, v_owner)
-    and public.city_names_match(v_owner.location_name, p_actor.location_name);
+    and public.characters_share_location(v_owner, p_actor);
 end;
 $$;
 
@@ -18183,7 +18363,7 @@ begin
   if v_city.id is null then raise exception 'Project city not found.'; end if;
   if v_city.is_locked then raise exception 'This city is locked by the Dungeon Master.'; end if;
   if not v_city.show_under_construction then raise exception 'Construction is not open in this city.'; end if;
-  if not public.city_names_match(v_actor.location_name, v_city.name) then
+  if not public.character_is_in_city(v_actor, v_city.city_key) then
     raise exception '% is in %, not %.', v_actor.name, v_actor.location_name, v_city.name;
   end if;
   if jsonb_typeof(coalesce(p_contributions, '[]'::jsonb)) <> 'array' or jsonb_array_length(coalesce(p_contributions, '[]'::jsonb)) = 0 then

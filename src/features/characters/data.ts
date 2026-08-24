@@ -79,6 +79,7 @@ export function normalizeCharacter(value: unknown): Character {
     classPassives: normalizeTextList(source.classPassives),
     personalPassives: String(source.personalPassives ?? ''),
     tokenColor: String(source.tokenColor ?? '#9caf79'),
+    locationCityKey: source.locationCityKey ? String(source.locationCityKey) : null,
     locationName: String(source.locationName ?? 'Calostrynn'),
     previousOwnerName: source.previousOwnerName ? String(source.previousOwnerName) : undefined
   };

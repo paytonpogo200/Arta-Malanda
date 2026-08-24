@@ -154,6 +154,7 @@ export type Character = {
   classPassives: string[];
   personalPassives: string;
   tokenColor: string;
+  locationCityKey: string | null;
   locationName: string;
   previousOwnerName?: string;
 };

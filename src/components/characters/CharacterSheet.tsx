@@ -14,7 +14,7 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type Profile } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type City, type ClassTemplate, type InventoryItem, type Profile } from '@/lib/types';
 import { signed } from '@/lib/utils/format';
 
 type CharacterSheetProps = {
@@ -23,21 +23,32 @@ type CharacterSheetProps = {
   profiles: CampaignProfile[];
   classes: ClassTemplate[];
   characters: Character[];
-  locationOptions: string[];
+  locationOptions: City[];
   onSaved: (character: Character) => void;
   onDeleted?: (characterId: string) => void;
 };
 
-function characterLocationOptions(cityNames: string[]) {
+function characterLocationOptions(cities: City[]) {
   const seen = new Set<string>();
-  return [...cityNames, 'Wild']
-    .map((name) => name.trim())
-    .filter((name) => {
-      const key = name.toLowerCase();
-      if (!name || seen.has(key)) return false;
+  const cityOptions = cities
+    .map((city) => ({ key: city.key, name: city.name.trim() }))
+    .filter((city) => {
+      const key = city.key || city.name.toLowerCase();
+      if (!city.name || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+  return [...cityOptions, { key: '', name: 'Wild' }];
+}
+
+function locationKeyForCharacter(character: Character, options: ReturnType<typeof characterLocationOptions>) {
+  if (character.locationCityKey && options.some((option) => option.key === character.locationCityKey)) return character.locationCityKey;
+  const byName = options.find((option) => option.name.toLowerCase() === character.locationName.trim().toLowerCase());
+  return byName?.key ?? '';
+}
+
+function locationNameForKey(key: string, options: ReturnType<typeof characterLocationOptions>) {
+  return options.find((option) => option.key === key)?.name ?? 'Wild';
 }
 
 function labelClasses(value: number) {
@@ -73,7 +84,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
   const classTemplate = useMemo(() => classes.find((entry) => entry.key === character.classKey), [character.classKey, classes]);
   const showJurshConversions = isJurshBlacksmith(character, profiles) && (isDm || owned);
   const availableLocations = useMemo(() => characterLocationOptions(locationOptions), [locationOptions]);
-  const draftLocation = availableLocations.includes(draft.locationName) ? draft.locationName : 'Wild';
+  const draftLocationKey = locationKeyForCharacter(draft, availableLocations);
+  const draftLocationName = locationNameForKey(draftLocationKey, availableLocations);
 
   useEffect(() => {
     if (characterIdRef.current !== character.id) {
@@ -122,7 +134,8 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
           attributes: draft.attributes,
           personalPassives: draft.personalPassives,
           tokenColor: draft.tokenColor,
-          locationName: draftLocation,
+          locationCityKey: draftLocationKey || null,
+          locationName: draftLocationName,
           ownerUserId: draft.ownerUserId,
           classKey: draft.classKey,
           className: draft.className,
@@ -254,8 +267,12 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
               </label>
               <label>
                 <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Location</span>
-                <SelectField value={draftLocation} onChange={(event) => setDraft({ ...draft, locationName: event.target.value })}>
-                  {availableLocations.map((location) => <option key={location} value={location}>{location}</option>)}
+                <SelectField value={draftLocationKey} onChange={(event) => setDraft({
+                  ...draft,
+                  locationCityKey: event.target.value || null,
+                  locationName: locationNameForKey(event.target.value, availableLocations)
+                })}>
+                  {availableLocations.map((location) => <option key={location.key || 'wild'} value={location.key}>{location.name}</option>)}
                 </SelectField>
               </label>
             </div>

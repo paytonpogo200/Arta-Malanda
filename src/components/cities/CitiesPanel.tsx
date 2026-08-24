@@ -512,6 +512,12 @@ function sameCityName(left: string | null | undefined, right: string | null | un
   return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
 }
 
+function characterInCity(character: Character | null | undefined, city: City | null | undefined) {
+  if (!character || !city) return false;
+  if (character.locationCityKey) return character.locationCityKey === city.key;
+  return sameCityName(character.locationName, city.name);
+}
+
 function catalogKeyForName(name: string) {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
@@ -848,12 +854,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
   const managingVendor = payload.vendors.find((vendor) => vendor.id === managingVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
+  const activeCityKey = selectedCity?.key ?? '';
   const cityLocked = Boolean(selectedCity?.locked);
-  const shopperInCity = sameCityName(selectedShopper?.locationName, selectedCity?.name);
+  const shopperInCity = characterInCity(selectedShopper, selectedCity);
   const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
-  const cityProjects = useMemo(() => payload.constructionProjects
-    .filter((project) => project.cityKey === selectedCity?.key && project.status === 'active')
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [payload.constructionProjects, selectedCity?.key]);
+  const cityProjects = payload.constructionProjects
+    .filter((project) => project.cityKey === activeCityKey && project.status === 'active')
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   const canContribute = Boolean(selectedShopper && selectedCity && selectedCity.showUnderConstruction && !cityLocked && shopperInCity);
   const constructionCatalogItems = useMemo(() => itemCatalog
     .filter((item) => item.type !== 'pet' && item.type !== 'storage')
@@ -923,11 +930,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     : [];
   const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key));
 
-  const cityVendors = useMemo(() => payload.vendors
-    .filter((vendor) => vendor.cityKey === selectedCity?.key)
+  const cityVendors = payload.vendors
+    .filter((vendor) => vendor.cityKey === activeCityKey)
     .filter(activeCityVendor)
     .filter((vendor) => isDm || !vendor.hidden)
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)), [selectedCity?.key, isDm, payload.vendors]);
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 
   const loadCities = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);

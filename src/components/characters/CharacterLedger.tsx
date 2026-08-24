@@ -12,7 +12,7 @@ import { armorDefenseBase } from '@/features/characters/stats';
 import { normalizeCitiesPayload } from '@/features/cities/data';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { CLASS_TEMPLATES } from '@/lib/constants/classes';
-import type { Character, ClassTemplate, Profile } from '@/lib/types';
+import type { Character, City, ClassTemplate, Profile } from '@/lib/types';
 
 type CreationDraft = {
   name: string;
@@ -39,7 +39,7 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
   const [profiles, setProfiles] = useState<CampaignProfile[]>([]);
   const [classes, setClasses] = useState<ClassTemplate[]>(CLASS_TEMPLATES);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const [locationOptions, setLocationOptions] = useState<string[]>(['Calostrynn']);
+  const [locationOptions, setLocationOptions] = useState<City[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<CreationDraft>(EMPTY_DRAFT);
@@ -88,14 +88,13 @@ export function CharacterLedger({ profile }: { profile: Profile }) {
       const response = await fetch('/api/cities', { cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'Cities could not be loaded.');
-      const cityNames = normalizeCitiesPayload(payload)
+      const cities = normalizeCitiesPayload(payload)
         .cities
         .slice()
-        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
-        .map((city) => city.name);
-      if (cityNames.length) setLocationOptions(cityNames);
+        .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+      if (cities.length) setLocationOptions(cities);
     } catch {
-      setLocationOptions((current) => current.length ? current : ['Calostrynn']);
+      setLocationOptions((current) => current);
     }
   }, []);
 
