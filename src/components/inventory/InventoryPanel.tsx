@@ -12,6 +12,7 @@ import { SelectField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
+import { matchesCatalogNameSearch } from '@/features/catalog/search';
 import { CURRENCY_SYSTEMS, formatCurrencyValue, normalizeCurrencySystemKey } from '@/features/cities/data';
 import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
@@ -424,9 +425,9 @@ export function InventoryPanel({
   const storageItems = useMemo(() => items.filter(isActiveStorage), [items]);
   const nearbyWagonItemIds = useMemo(() => new Set(nearbyWagonItems.map((item) => item.id)), [nearbyWagonItems]);
   const filteredCatalog = useMemo(() => {
-    const search = catalogSearch.trim().toLowerCase();
+    const search = catalogSearch.trim();
     const source = search
-      ? catalog.filter((item) => `${item.name} ${item.type} ${item.rarity} ${item.category} ${item.properties.join(' ')}`.toLowerCase().includes(search))
+      ? catalog.filter((item) => matchesCatalogNameSearch(item, search))
       : catalog;
     return source.slice(0, 80);
   }, [catalog, catalogSearch]);

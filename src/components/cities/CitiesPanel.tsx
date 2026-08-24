@@ -8,6 +8,7 @@ import { Card, SoftCard } from '@/components/ui/Card';
 import { ColorField, SelectField, TextAreaField, TextField } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
+import { matchesCatalogNameSearch } from '@/features/catalog/search';
 import { CURRENCY_SYSTEMS, composeCurrencyValue, currencyUnitsForSystem, decomposeCurrencyValue, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey, type CitiesPayload } from '@/features/cities/data';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
@@ -858,29 +859,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     .filter((item) => item.type !== 'pet' && item.type !== 'storage')
     .sort((a, b) => a.name.localeCompare(b.name)), [itemCatalog]);
   const filteredConstructionCatalog = useMemo(() => {
-    const query = catalogSearch.trim().toLowerCase();
+    const query = catalogSearch.trim();
     if (!query) return constructionCatalogItems;
-    return constructionCatalogItems.filter((item) => [
-      item.name,
-      item.type,
-      item.rarity,
-      item.category,
-      item.notes,
-      item.properties.join(' ')
-    ].join(' ').toLowerCase().includes(query));
+    return constructionCatalogItems.filter((item) => matchesCatalogNameSearch(item, query));
   }, [catalogSearch, constructionCatalogItems]);
   const filteredProductCatalog = useMemo(() => {
     const source = [...itemCatalog].sort((a, b) => a.name.localeCompare(b.name));
-    const query = catalogSearch.trim().toLowerCase();
+    const query = catalogSearch.trim();
     if (!query) return source;
-    return source.filter((item) => [
-      item.name,
-      item.type,
-      item.rarity,
-      item.category,
-      item.notes,
-      item.properties.join(' ')
-    ].join(' ').toLowerCase().includes(query));
+    return source.filter((item) => matchesCatalogNameSearch(item, query));
   }, [catalogSearch, itemCatalog]);
   const blacksmithMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'blacksmith'), [payload.vendors]);
   const armoryMaterials = useMemo(() => forgeMaterialProducts(payload.vendors, 'armory'), [payload.vendors]);
@@ -2861,7 +2848,6 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
                     background: constructionProgressGradient(city)
                   }}
                 />
-                <div className="pointer-events-none absolute inset-x-2 top-1 h-px rounded-full bg-white/25" />
               </div>
               {project.complete ? (
                 <div

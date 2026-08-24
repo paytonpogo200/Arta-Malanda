@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ComponentType, type ReactNode } from 'react';
 import { BookOpen, Compass, Landmark, LogOut, Map, PawPrint, ScrollText, Settings2, Shield, Swords } from 'lucide-react';
+import { DailyRewardsHub } from '@/components/app-shell/DailyRewardsHub';
 import { NotificationHub } from '@/components/app-shell/NotificationHub';
 import type { DashboardStatePayload } from '@/features/dashboard/state';
 import { normalizeDashboardState } from '@/features/dashboard/state';
@@ -48,7 +49,11 @@ function useDashboardState() {
   const [state, setState] = useState<DashboardStatePayload>({
     activeBattle: false,
     activeBattleId: null,
-    notifications: []
+    notifications: [],
+    dailyRewards: {
+      available: false,
+      today: ''
+    }
   });
 
   const refresh = useCallback(async () => {
@@ -60,7 +65,9 @@ function useDashboardState() {
         if (
           current.activeBattle === payload.activeBattle &&
           current.activeBattleId === payload.activeBattleId &&
-          current.notifications.length === payload.notifications.length
+          current.notifications.length === payload.notifications.length &&
+          current.dailyRewards.available === payload.dailyRewards.available &&
+          current.dailyRewards.today === payload.dailyRewards.today
         ) {
           return current;
         }
@@ -121,6 +128,7 @@ export function DashboardShell({ profile, activeTab, onTabChange, children }: Da
           </div>
 
           <div className="flex gap-2">
+            <DailyRewardsHub profile={profile} available={state.dailyRewards.available} onRefresh={refresh} />
             <NotificationHub profile={profile} notices={state.notifications} onRefresh={refresh} />
             <button
               type="button"

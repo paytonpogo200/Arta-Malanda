@@ -13810,6 +13810,469 @@ as $$
   )
 $$;
 
+-- Daily Efforts rewards.
+create table if not exists public.daily_reward_schedule (
+  id uuid primary key default gen_random_uuid(),
+  reward_date date not null unique,
+  reward_kind text not null default 'none' check (reward_kind in ('none', 'item', 'currency')),
+  item_catalog_id uuid references public.item_catalog(id) on delete set null,
+  currency_unit_id uuid references public.currency_units(id) on delete set null,
+  quantity numeric(12,1) not null default 0 check (quantity >= 0),
+  updated_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.daily_reward_claims (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  reward_date date not null,
+  schedule_id uuid references public.daily_reward_schedule(id) on delete set null,
+  character_id uuid references public.characters(id) on delete set null,
+  reward_kind text not null check (reward_kind in ('item', 'currency')),
+  item_catalog_id uuid references public.item_catalog(id) on delete set null,
+  currency_unit_id uuid references public.currency_units(id) on delete set null,
+  quantity numeric(12,1) not null default 1,
+  claimed_at timestamptz not null default now(),
+  unique (user_id, reward_date)
+);
+
+alter table public.daily_reward_schedule enable row level security;
+alter table public.daily_reward_claims enable row level security;
+revoke all on public.daily_reward_schedule from anon, authenticated;
+revoke all on public.daily_reward_claims from anon, authenticated;
+
+drop trigger if exists daily_reward_schedule_touch_updated_at on public.daily_reward_schedule;
+create trigger daily_reward_schedule_touch_updated_at
+before update on public.daily_reward_schedule
+for each row execute function public.touch_updated_at();
+
+create or replace function public.daily_reward_today()
+returns date
+language sql
+stable
+as $$
+  select (now() at time zone 'America/New_York')::date
+$$;
+
+create or replace function public.daily_reward_week_start(p_date date)
+returns date
+language sql
+immutable
+as $$
+  select p_date - extract(dow from p_date)::int
+$$;
+
+create or replace function public.currency_unit_record_to_json(p_unit public.currency_units)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_unit.id,
+    'systemKey', p_unit.currency_system_key,
+    'key', p_unit.unit_key,
+    'name', p_unit.name,
+    'symbol', p_unit.symbol,
+    'order', p_unit.unit_order
+  )
+$$;
+
+create or replace function public.daily_reward_entry_to_json(
+  p_reward_date date,
+  p_profile public.profiles
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_today date := public.daily_reward_today();
+  v_week_start date := public.daily_reward_week_start(public.daily_reward_today());
+  v_schedule public.daily_reward_schedule%rowtype;
+  v_claim public.daily_reward_claims%rowtype;
+  v_item public.item_catalog%rowtype;
+  v_currency public.currency_units%rowtype;
+  v_has_reward boolean := false;
+  v_status text := 'empty';
+begin
+  select * into v_schedule
+  from public.daily_reward_schedule
+  where reward_date = p_reward_date;
+
+  if v_schedule.id is not null and v_schedule.reward_kind in ('item', 'currency') then
+    v_has_reward := true;
+  end if;
+
+  select * into v_claim
+  from public.daily_reward_claims
+  where user_id = p_profile.id
+    and reward_date = p_reward_date;
+
+  if v_schedule.item_catalog_id is not null then
+    select * into v_item from public.item_catalog where id = v_schedule.item_catalog_id;
+  end if;
+
+  if v_schedule.currency_unit_id is not null then
+    select * into v_currency from public.currency_units where id = v_schedule.currency_unit_id;
+  end if;
+
+  v_status := case
+    when v_claim.id is not null then 'received'
+    when not v_has_reward then 'empty'
+    when p_reward_date < v_today then 'missed'
+    when p_reward_date = v_today then 'available'
+    else 'upcoming'
+  end;
+
+  return jsonb_build_object(
+    'date', p_reward_date,
+    'dayOfWeek', extract(dow from p_reward_date)::int,
+    'dayName', trim(to_char(p_reward_date, 'Day')),
+    'weekOffset', case when p_reward_date >= v_week_start + 7 then 1 else 0 end,
+    'scheduleId', v_schedule.id,
+    'rewardKind', coalesce(v_schedule.reward_kind, 'none'),
+    'quantity', coalesce(v_schedule.quantity, 0),
+    'item', case when v_item.id is not null then public.catalog_record_to_json(v_item) else null end,
+    'currency', case when v_currency.id is not null then public.currency_unit_record_to_json(v_currency) else null end,
+    'status', v_status,
+    'available', v_status = 'available'
+  );
+end;
+$$;
+
+create or replace function public.get_daily_rewards(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_today date := public.daily_reward_today();
+  v_week_start date := public.daily_reward_week_start(public.daily_reward_today());
+begin
+  select * into v_profile
+  from public.profile_from_campaign_session(p_session_token);
+
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  return jsonb_build_object(
+    'today', v_today,
+    'currentWeekStart', v_week_start,
+    'nextWeekStart', v_week_start + 7,
+    'available', exists (
+      select 1
+      from public.daily_reward_schedule s
+      where s.reward_date = v_today
+        and s.reward_kind in ('item', 'currency')
+        and not exists (
+          select 1 from public.daily_reward_claims c
+          where c.user_id = v_profile.id
+            and c.reward_date = v_today
+        )
+    ),
+    'rewards', (
+      select coalesce(jsonb_agg(public.daily_reward_entry_to_json(day_value::date, v_profile) order by day_value), '[]'::jsonb)
+      from generate_series(v_week_start, v_week_start + 13, interval '1 day') as days(day_value)
+    ),
+    'characters', (
+      select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
+      from public.characters c
+      where c.kind = 'player'::public.character_kind
+        and (v_profile.role = 'dm'::public.user_role or c.owner_user_id = v_profile.id)
+    ),
+    'catalog', (
+      select coalesce(jsonb_agg(public.catalog_record_to_json(i) order by i.category, i.display_order, i.item_name), '[]'::jsonb)
+      from public.item_catalog i
+      where i.is_active
+    ),
+    'currencyUnits', (
+      select coalesce(jsonb_agg(public.currency_unit_record_to_json(u) order by u.currency_system_key, u.unit_order), '[]'::jsonb)
+      from public.currency_units u
+    )
+  );
+end;
+$$;
+
+create or replace function public.update_daily_reward_schedule(
+  p_session_token text,
+  p_rewards jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_today date := public.daily_reward_today();
+  v_week_start date := public.daily_reward_week_start(public.daily_reward_today());
+  v_rewards jsonb := case when jsonb_typeof(coalesce(p_rewards, '[]'::jsonb)) = 'array' then coalesce(p_rewards, '[]'::jsonb) else '[]'::jsonb end;
+  v_entry jsonb;
+  v_reward_date date;
+  v_kind text;
+  v_item_catalog_id uuid;
+  v_currency_unit_id uuid;
+  v_quantity numeric;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can edit daily rewards.'; end if;
+
+  for v_entry in select * from jsonb_array_elements(v_rewards) loop
+    v_reward_date := nullif(coalesce(v_entry->>'date', v_entry->>'rewardDate', ''), '')::date;
+    if v_reward_date is null then
+      continue;
+    end if;
+    if v_reward_date < v_week_start or v_reward_date > v_week_start + 13 then
+      raise exception 'Daily rewards can only be scheduled for this week or next week.';
+    end if;
+
+    v_kind := lower(trim(coalesce(v_entry->>'rewardKind', v_entry->>'reward_kind', 'none')));
+    if v_kind not in ('none', 'item', 'currency') then
+      v_kind := 'none';
+    end if;
+
+    v_item_catalog_id := null;
+    v_currency_unit_id := null;
+    v_quantity := case when v_kind = 'none' then 0 else greatest(1, coalesce(nullif(v_entry->>'quantity', '')::numeric, 1)) end;
+
+    if v_kind = 'item' then
+      v_item_catalog_id := nullif(coalesce(v_entry->>'itemCatalogId', v_entry->>'item_catalog_id', ''), '')::uuid;
+      if v_item_catalog_id is null or not exists (select 1 from public.item_catalog where id = v_item_catalog_id and is_active) then
+        raise exception 'Choose a valid item for each item reward.';
+      end if;
+      v_quantity := public.assert_valid_item_quantity(
+        (select item_name from public.item_catalog where id = v_item_catalog_id),
+        (select item_type from public.item_catalog where id = v_item_catalog_id),
+        v_quantity
+      );
+    elsif v_kind = 'currency' then
+      v_currency_unit_id := nullif(coalesce(v_entry->>'currencyUnitId', v_entry->>'currency_unit_id', ''), '')::uuid;
+      if v_currency_unit_id is null or not exists (select 1 from public.currency_units where id = v_currency_unit_id) then
+        raise exception 'Choose a valid currency for each currency reward.';
+      end if;
+      v_quantity := floor(v_quantity)::int;
+    end if;
+
+    insert into public.daily_reward_schedule (
+      reward_date,
+      reward_kind,
+      item_catalog_id,
+      currency_unit_id,
+      quantity,
+      updated_by
+    )
+    values (
+      v_reward_date,
+      v_kind,
+      v_item_catalog_id,
+      v_currency_unit_id,
+      v_quantity,
+      v_profile.id
+    )
+    on conflict (reward_date) do update
+    set reward_kind = excluded.reward_kind,
+        item_catalog_id = excluded.item_catalog_id,
+        currency_unit_id = excluded.currency_unit_id,
+        quantity = excluded.quantity,
+        updated_by = excluded.updated_by,
+        updated_at = now();
+  end loop;
+
+  perform public.touch_app_live_update('dashboard', null);
+  return public.get_daily_rewards(p_session_token);
+end;
+$$;
+
+create or replace function public.claim_daily_reward(
+  p_session_token text,
+  p_reward_date date,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_schedule public.daily_reward_schedule%rowtype;
+  v_catalog public.item_catalog%rowtype;
+  v_currency public.currency_units%rowtype;
+  v_slot int;
+  v_quantity numeric;
+  v_item public.inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_storage_kind text;
+  v_storage_active boolean;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  if p_reward_date <> public.daily_reward_today() then
+    raise exception 'Only today''s daily reward can be claimed.';
+  end if;
+
+  select * into v_schedule
+  from public.daily_reward_schedule
+  where reward_date = p_reward_date
+  for update;
+
+  if v_schedule.id is null or v_schedule.reward_kind not in ('item', 'currency') then
+    raise exception 'No daily reward is scheduled today.';
+  end if;
+
+  if exists (
+    select 1 from public.daily_reward_claims
+    where user_id = v_profile.id
+      and reward_date = p_reward_date
+  ) then
+    raise exception 'You already claimed today''s daily reward.';
+  end if;
+
+  select * into v_character
+  from public.characters
+  where id = p_character_id
+    and kind = 'player'::public.character_kind;
+
+  if v_character.id is null then raise exception 'Choose a valid character for this reward.'; end if;
+  if v_profile.role <> 'dm'::public.user_role and v_character.owner_user_id is distinct from v_profile.id then
+    raise exception 'Choose one of your assigned characters for this reward.';
+  end if;
+
+  v_quantity := greatest(1, coalesce(v_schedule.quantity, 1));
+
+  if v_schedule.reward_kind = 'currency' then
+    select * into v_currency
+    from public.currency_units
+    where id = v_schedule.currency_unit_id;
+
+    if v_currency.id is null then raise exception 'Daily reward currency was not found.'; end if;
+
+    insert into public.character_wallet_balances (character_id, currency_unit_id, amount)
+    values (v_character.id, v_currency.id, floor(v_quantity)::int)
+    on conflict (character_id, currency_unit_id) do update
+    set amount = public.character_wallet_balances.amount + excluded.amount;
+  else
+    select * into v_catalog
+    from public.item_catalog
+    where id = v_schedule.item_catalog_id
+      and is_active;
+
+    if v_catalog.id is null then raise exception 'Daily reward item was not found.'; end if;
+
+    v_quantity := public.assert_valid_item_quantity(v_catalog.item_name, v_catalog.item_type, v_quantity);
+
+    if public.normalize_item_type(v_catalog.item_type) = 'pet' then
+      perform public.place_pet_item_for_character(
+        v_character.id,
+        v_catalog.item_name,
+        null,
+        v_catalog.notes,
+        v_catalog.rarity,
+        v_quantity,
+        false,
+        v_catalog.default_modifiers,
+        null,
+        null,
+        v_catalog.material,
+        0,
+        v_catalog.is_two_handed
+      );
+    elsif public.normalize_item_type(v_catalog.item_type) = 'storage' then
+      v_storage_kind := public.additional_storage_kind(v_catalog.item_name, v_catalog.item_type);
+      v_storage_active := v_storage_kind is null
+        or not public.character_storage_container_exists(v_character.id, v_catalog.item_name);
+      v_slot := case
+        when v_storage_active then public.next_storage_container_slot(v_character.id)
+        else public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots)
+      end;
+      if v_slot is null then raise exception 'Inventory full.'; end if;
+
+      insert into public.inventory_items (
+        character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
+        item_description, is_storage, storage_active, storage_capacity, modifiers, material, is_two_handed
+      )
+      values (
+        v_character.id, null, v_slot, v_catalog.item_name, public.normalize_item_type(v_catalog.item_type), v_catalog.rarity, 1,
+        v_catalog.notes, true, v_storage_active, greatest(1, coalesce(nullif(v_catalog.storage_capacity, 0), public.catalog_storage_capacity(v_catalog.item_name))),
+        v_catalog.default_modifiers, v_catalog.material, v_catalog.is_two_handed
+      );
+    else
+      select * into v_target
+      from public.inventory_items i
+      where i.character_id = v_character.id
+        and i.parent_item_id is null
+        and i.loadout_slot is null
+        and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_catalog.item_name))
+        and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_catalog.item_type)
+        and i.rarity = v_catalog.rarity
+        and i.is_storage = false
+        and coalesce(i.enchantment, '') = ''
+        and coalesce(i.rune_name, '') = ''
+        and coalesce(i.material, '') = coalesce(v_catalog.material, '')
+        and i.enhancement_count = 0
+        and i.is_two_handed = v_catalog.is_two_handed
+        and i.modifiers = v_catalog.default_modifiers
+        and public.item_catalog_stackable(v_catalog.item_name, v_catalog.item_type)
+      order by i.slot_index
+      limit 1;
+
+      if v_target.id is not null then
+        update public.inventory_items
+        set quantity = quantity + v_quantity
+        where id = v_target.id
+        returning * into v_item;
+      else
+        v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+        if v_slot is null then raise exception 'Inventory full.'; end if;
+
+        insert into public.inventory_items (
+          character_id, parent_item_id, slot_index, item_name, item_type, rarity, quantity,
+          item_description, is_storage, storage_capacity, modifiers, material, is_two_handed
+        )
+        values (
+          v_character.id, null, v_slot, v_catalog.item_name, public.normalize_item_type(v_catalog.item_type), v_catalog.rarity, v_quantity,
+          v_catalog.notes, false, 0, v_catalog.default_modifiers, v_catalog.material, v_catalog.is_two_handed
+        )
+        returning * into v_item;
+      end if;
+    end if;
+  end if;
+
+  insert into public.daily_reward_claims (
+    user_id,
+    reward_date,
+    schedule_id,
+    character_id,
+    reward_kind,
+    item_catalog_id,
+    currency_unit_id,
+    quantity
+  )
+  values (
+    v_profile.id,
+    p_reward_date,
+    v_schedule.id,
+    v_character.id,
+    v_schedule.reward_kind,
+    v_schedule.item_catalog_id,
+    v_schedule.currency_unit_id,
+    v_quantity
+  );
+
+  perform public.touch_app_live_update('dashboard', null);
+  perform public.touch_app_live_update('inventory', v_character.id::text);
+  return public.get_daily_rewards(p_session_token);
+end;
+$$;
+
 create or replace function public.get_dashboard_state(p_session_token text)
 returns jsonb
 language plpgsql
@@ -13841,6 +14304,23 @@ begin
       from public.campaign_notifications n
       where n.read_at is null
         and (n.recipient_user_id = v_profile.id or n.recipient_user_id is null)
+    ),
+    'dailyRewards', (
+      select jsonb_build_object(
+        'today', public.daily_reward_today(),
+        'available', exists (
+          select 1
+          from public.daily_reward_schedule s
+          where s.reward_date = public.daily_reward_today()
+            and s.reward_kind in ('item', 'currency')
+            and not exists (
+              select 1
+              from public.daily_reward_claims c
+              where c.user_id = v_profile.id
+                and c.reward_date = public.daily_reward_today()
+            )
+        )
+      )
     )
   );
 end;
@@ -15052,6 +15532,13 @@ $$;
 
 grant execute on function public.notification_record_to_json(public.campaign_notifications) to anon, authenticated;
 grant execute on function public.trade_offer_record_to_json(public.trade_offers) to anon, authenticated;
+grant execute on function public.daily_reward_today() to anon, authenticated;
+grant execute on function public.daily_reward_week_start(date) to anon, authenticated;
+grant execute on function public.currency_unit_record_to_json(public.currency_units) to anon, authenticated;
+grant execute on function public.daily_reward_entry_to_json(date, public.profiles) to anon, authenticated;
+grant execute on function public.get_daily_rewards(text) to anon, authenticated;
+grant execute on function public.update_daily_reward_schedule(text, jsonb) to anon, authenticated;
+grant execute on function public.claim_daily_reward(text, date, uuid) to anon, authenticated;
 grant execute on function public.mark_notification_read(text, uuid) to anon, authenticated;
 grant execute on function public.create_campaign_announcement(text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.get_trade_offers(text) to anon, authenticated;
@@ -16310,6 +16797,9 @@ grant execute on function public.update_campaign_character(text, uuid, jsonb) to
 grant execute on function public.delete_campaign_character(text, uuid) to anon, authenticated;
 grant execute on function public.set_character_gift_inventory_open(text, uuid, boolean) to anon, authenticated;
 grant execute on function public.get_dashboard_state(text) to anon, authenticated;
+grant execute on function public.get_daily_rewards(text) to anon, authenticated;
+grant execute on function public.update_daily_reward_schedule(text, jsonb) to anon, authenticated;
+grant execute on function public.claim_daily_reward(text, date, uuid) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;
 grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
@@ -17324,6 +17814,16 @@ drop trigger if exists app_live_campaign_notifications on public.campaign_notifi
 create trigger app_live_campaign_notifications
 after insert or update or delete on public.campaign_notifications
 for each row execute function public.touch_app_live_update_trigger('dashboard,notifications,trades');
+
+drop trigger if exists app_live_daily_reward_schedule on public.daily_reward_schedule;
+create trigger app_live_daily_reward_schedule
+after insert or update or delete on public.daily_reward_schedule
+for each row execute function public.touch_app_live_update_trigger('dashboard');
+
+drop trigger if exists app_live_daily_reward_claims on public.daily_reward_claims;
+create trigger app_live_daily_reward_claims
+after insert or update or delete on public.daily_reward_claims
+for each row execute function public.touch_app_live_update_trigger('dashboard,inventory');
 
 drop trigger if exists app_live_trade_offers on public.trade_offers;
 create trigger app_live_trade_offers

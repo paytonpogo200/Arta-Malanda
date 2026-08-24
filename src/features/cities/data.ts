@@ -33,7 +33,7 @@ function normalizeModifierMap(value: unknown): LoadoutModifiers {
   ) as LoadoutModifiers;
 }
 
-function normalizeItemCatalogEntry(value: unknown): ItemCatalogEntry {
+export function normalizeItemCatalogEntry(value: unknown): ItemCatalogEntry {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     id: String(source.id ?? ''),

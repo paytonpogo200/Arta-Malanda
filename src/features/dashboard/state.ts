@@ -13,12 +13,20 @@ export type DashboardStatePayload = {
   activeBattle: boolean;
   activeBattleId: string | null;
   notifications: DashboardNotice[];
+  dailyRewards: {
+    available: boolean;
+    today: string;
+  };
 };
 
 const EMPTY_DASHBOARD_STATE: DashboardStatePayload = {
   activeBattle: false,
   activeBattleId: null,
-  notifications: []
+  notifications: [],
+  dailyRewards: {
+    available: false,
+    today: ''
+  }
 };
 
 function normalizeNotice(value: unknown): DashboardNotice | null {
@@ -52,6 +60,10 @@ export function normalizeDashboardState(value: unknown): DashboardStatePayload {
     activeBattleId: source.activeBattleId ? String(source.activeBattleId) : null,
     notifications: Array.isArray(source.notifications)
       ? source.notifications.map(normalizeNotice).filter((notice): notice is DashboardNotice => Boolean(notice))
-      : []
+      : [],
+    dailyRewards: {
+      available: Boolean((source.dailyRewards as Record<string, unknown> | undefined)?.available),
+      today: String((source.dailyRewards as Record<string, unknown> | undefined)?.today ?? '')
+    }
   };
 }
