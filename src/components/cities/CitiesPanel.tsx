@@ -2787,6 +2787,14 @@ function CitySectionHeading({ label, city }: { label: string; city?: City }) {
   );
 }
 
+function constructionProgressPercent(project: CityConstructionProject) {
+  return Math.round(Math.max(0, Math.min(1, project.progress)) * 100);
+}
+
+function constructionProgressGradient(city: City) {
+  return `linear-gradient(90deg, ${city.primaryColor} 0%, color-mix(in srgb, ${city.primaryColor} 82%, ${city.secondaryColor}) 16%, color-mix(in srgb, ${city.primaryColor} 46%, ${city.secondaryColor}) 40%, ${city.secondaryColor} 62%, color-mix(in srgb, ${city.secondaryColor} 74%, ${city.accentColor}) 80%, ${city.accentColor} 100%)`;
+}
+
 function ConstructionSection({ city, projects, isDm, saving, canContribute, onCreate, onEdit, onEnd, onContribute }: {
   city: City;
   projects: CityConstructionProject[];
@@ -2808,7 +2816,9 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
         <Card><p className="text-sm font-bold text-[var(--muted)]">No active projects yet.</p></Card>
       ) : (
         <div className="grid gap-4">
-          {projects.map((project) => (
+          {projects.map((project) => {
+            const progressPercent = constructionProgressPercent(project);
+            return (
             <Card key={project.id} className="overflow-hidden">
               <div
                 className="relative -m-4 mb-4 overflow-hidden border-b p-4 sm:-m-5 sm:mb-5 sm:p-5"
@@ -2830,16 +2840,28 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
                 </div>
                 </div>
               </div>
-              <div className="h-4 overflow-hidden rounded-full border bg-black/35" style={{ borderColor: `${city.accentColor}55` }}>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="text-xs font-black uppercase tracking-[0.18em] text-[var(--muted)]">Progress</span>
+                <span
+                  className="rounded-full border bg-black/30 px-3 py-1 text-sm font-black"
+                  style={{ borderColor: `${city.accentColor}66`, color: progressPercent >= 100 ? city.accentColor : city.secondaryColor }}
+                >
+                  {progressPercent}%
+                </span>
+              </div>
+              <div className="relative h-5 overflow-hidden rounded-full border bg-black/40 shadow-inner" style={{ borderColor: `${city.accentColor}55` }}>
                 <div
-                  className="h-full rounded-full shadow-[0_0_18px_rgba(245,180,76,0.18)]"
+                  className="absolute inset-0 opacity-20"
+                  style={{ background: constructionProgressGradient(city) }}
+                />
+                <div
+                  className="absolute inset-0 rounded-full shadow-[0_0_22px_rgba(245,180,76,0.22)] transition-[clip-path] duration-300"
                   style={{
-                    width: '100%',
-                    transform: `scaleX(${Math.max(0, Math.min(1, project.progress))})`,
-                    transformOrigin: 'left center',
-                    background: `linear-gradient(90deg, ${city.primaryColor} 0%, ${city.primaryColor} 68%, ${city.secondaryColor} 88%, ${city.accentColor} 100%)`
+                    clipPath: `inset(0 ${100 - progressPercent}% 0 0)`,
+                    background: constructionProgressGradient(city)
                   }}
                 />
+                <div className="pointer-events-none absolute inset-x-2 top-1 h-px rounded-full bg-white/25" />
               </div>
               {project.complete ? (
                 <div
@@ -2854,7 +2876,8 @@ function ConstructionSection({ city, projects, isDm, saving, canContribute, onCr
                 </div>
               )}
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
