@@ -262,9 +262,10 @@ h3,
 .book-product-card {
   border-color: rgba(184, 132, 74, .78);
   background:
-    linear-gradient(90deg, rgba(255, 226, 162, .12) 0 2px, transparent 2px 7px),
+    linear-gradient(90deg, rgba(255, 226, 162, .14) 0 .35rem, rgba(73, 37, 16, .6) .35rem .55rem, transparent .55rem),
     radial-gradient(circle at 18% 18%, rgba(224, 166, 78, .18), transparent 32%),
     linear-gradient(145deg, rgba(77, 39, 18, .88), rgba(34, 18, 10, .96));
+  box-shadow: inset .45rem 0 rgba(13, 6, 2, .36), inset 0 0 0 1px rgba(255, 226, 162, .08);
 }
 
 .book-reader {
@@ -318,18 +319,72 @@ h3,
 }
 
 .book-cover-page {
+  position: relative;
+  overflow: hidden;
   display: grid;
-  place-items: center;
-  gap: 1rem;
+  align-content: start;
+  justify-items: center;
+  gap: 1.2rem;
   border: 1px solid rgba(57, 31, 14, .34);
   background:
-    radial-gradient(circle at 50% 20%, rgba(224, 166, 78, .24), transparent 36%),
-    linear-gradient(145deg, #4d2916, #25130a 76%);
+    radial-gradient(circle at 50% 9%, rgba(238, 185, 91, .32), transparent 25%),
+    linear-gradient(90deg, rgba(10, 5, 2, .58) 0 12%, transparent 12%),
+    linear-gradient(145deg, #5b3118, #351b0e 48%, #180c06 100%);
   color: var(--paper);
-  box-shadow: inset 0 0 0 7px rgba(224, 166, 78, .13), inset 0 0 38px rgba(0, 0, 0, .42);
+  box-shadow: inset 0 0 0 7px rgba(224, 166, 78, .13), inset 0 0 38px rgba(0, 0, 0, .42), inset 1.1rem 0 1.8rem rgba(0, 0, 0, .32);
+}
+
+.book-cover-page::before {
+  content: '';
+  position: absolute;
+  inset: 1rem;
+  border: 1px solid rgba(232, 183, 101, .5);
+  border-radius: .5rem;
+  box-shadow: inset 0 0 0 1px rgba(28, 13, 5, .5), 0 0 22px rgba(224, 166, 78, .14);
+}
+
+.book-cover-page::after {
+  content: '';
+  position: absolute;
+  inset: 1.45rem;
+  border: 1px solid rgba(232, 183, 101, .22);
+  border-radius: .35rem;
+}
+
+.book-cover-spine {
+  position: absolute;
+  inset: 0 auto 0 10%;
+  width: .18rem;
+  background: linear-gradient(180deg, transparent, rgba(232, 183, 101, .35), transparent);
+  box-shadow: .45rem 0 rgba(0, 0, 0, .16), -.45rem 0 rgba(232, 183, 101, .12);
+}
+
+.book-cover-corner {
+  position: absolute;
+  right: 1.3rem;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-color: rgba(232, 183, 101, .42);
+  opacity: .72;
+}
+
+.book-cover-corner-top {
+  top: 1.3rem;
+  border-top: 2px solid;
+  border-right: 2px solid;
+  border-top-right-radius: .45rem;
+}
+
+.book-cover-corner-bottom {
+  bottom: 1.3rem;
+  border-right: 2px solid;
+  border-bottom: 2px solid;
+  border-bottom-right-radius: .45rem;
 }
 
 .book-cover-ornament {
+  position: relative;
+  z-index: 1;
   display: grid;
   height: 4.5rem;
   width: 4.5rem;
@@ -338,6 +393,45 @@ h3,
   border: 1px solid rgba(224, 166, 78, .52);
   color: var(--brass);
   background: rgba(0, 0, 0, .18);
+  margin-top: clamp(1.3rem, 3vw, 2.4rem);
+}
+
+.book-cover-title-panel {
+  position: relative;
+  z-index: 1;
+  width: min(82%, 24rem);
+  min-width: 0;
+  border-block: 1px solid rgba(232, 183, 101, .35);
+  padding: clamp(1rem, 2.2vw, 1.6rem) .75rem;
+  text-align: center;
+}
+
+.book-cover-kicker {
+  margin: 0 0 .8rem;
+  color: rgba(232, 183, 101, .88);
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.book-cover-title {
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  hyphens: auto;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .45), 0 0 18px rgba(224, 166, 78, .18);
+}
+
+.book-cover-author {
+  margin-top: 1rem;
+  overflow-wrap: anywhere;
+  color: rgba(255, 240, 199, .76);
+  font-size: .86rem;
+  font-weight: 900;
 }
 
 .book-page-number {

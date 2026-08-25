@@ -47,17 +47,27 @@ function spreadStartForIndex(spreadIndex: number) {
   return spreadIndex <= 0 ? 0 : 1 + (spreadIndex - 1) * 2;
 }
 
-function BookCover({ title, author, label }: { title: string; author?: string; label?: string }) {
+function titleSizeClass(title: string) {
+  if (title.length > 46) return 'text-2xl sm:text-3xl';
+  if (title.length > 28) return 'text-3xl sm:text-4xl';
+  return 'text-4xl sm:text-5xl';
+}
+
+function BookCover({ title, author }: { title: string; author?: string; label?: string }) {
+  const displayTitle = title || 'Untitled Book';
+
   return (
     <div className="book-cover-page">
+      <div className="book-cover-spine" />
+      <div className="book-cover-corner book-cover-corner-top" />
+      <div className="book-cover-corner book-cover-corner-bottom" />
       <div className="book-cover-ornament">
         <BookOpen size={32} />
       </div>
-      <div className="min-w-0 text-center">
-        <p className="eyebrow">Bound Volume</p>
-        <h4 className="mt-3 break-words text-2xl font-black leading-tight">{title || 'Untitled Book'}</h4>
-        {author && <p className="mt-3 break-words text-sm font-black text-[var(--muted)]">By {author}</p>}
-        {label && <p className="mt-4 rounded-full border border-[var(--brass)]/35 bg-black/20 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">{label}</p>}
+      <div className="book-cover-title-panel">
+        <p className="book-cover-kicker">Bound Volume</p>
+        <h4 className={`book-cover-title ${titleSizeClass(displayTitle)}`}>{displayTitle}</h4>
+        {author && <p className="book-cover-author">By {author}</p>}
       </div>
     </div>
   );

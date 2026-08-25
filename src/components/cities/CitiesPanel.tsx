@@ -3228,6 +3228,16 @@ function BookPageEditor({ draft, onChange }: { draft: ProductDraft; onChange: (d
           </div>
         ))}
       </div>
+      <div className="sticky bottom-3 z-10 rounded-2xl border border-[var(--brass)]/30 bg-[#21140f]/95 p-2 shadow-[0_14px_34px_rgba(0,0,0,.35)] backdrop-blur">
+        <Button
+          type="button"
+          variant="primary"
+          className="w-full"
+          onClick={() => onChange({ ...draft, documentPages: [...draft.documentPages, ''] })}
+        >
+          <Plus className="mr-2 inline" size={15} /> Add page
+        </Button>
+      </div>
     </div>
   );
 }
@@ -4147,8 +4157,10 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   minCardWidth?: string;
 }) {
+  const bookOnlyGrid = products.length > 0 && products.every(isBookProduct);
+  const productMinWidth = bookOnlyGrid ? '10.5rem' : minCardWidth;
   return (
-    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${minCardWidth}), 1fr))` }}>
+    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${bookOnlyGrid ? 'auto-fill' : 'auto-fit'}, minmax(min(100%, ${productMinWidth}), ${bookOnlyGrid ? productMinWidth : '1fr'}))`, justifyContent: bookOnlyGrid ? 'start' : undefined }}>
       {products.map((product) => {
         const disabled = !isDisplayBook(product) && !hasUsableStock(product);
         const canOpen = isDm || isDisplayBook(product) || (!disabled && canShop);
@@ -4161,13 +4173,13 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             onClick={() => {
               if (canOpen) onSelectProduct(product);
             }}
-            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[8.25rem] p-2.5' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
+            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[8.25rem] w-full max-w-[10.5rem] justify-self-start p-2.5' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
           >
             <span className={`mb-2 block ${isDm ? 'pr-28' : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className="line-clamp-2 break-words font-black leading-tight">{product.name}</span>
+                  <span className={`${bookProduct ? 'text-sm' : ''} line-clamp-2 break-words font-black leading-tight`}>{product.name}</span>
                   <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : bookProduct ? `${product.rarity} book` : `${product.type} - ${product.rarity}`}</span>
                 </span>
               </span>
