@@ -4158,9 +4158,11 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   minCardWidth?: string;
 }) {
   const bookOnlyGrid = products.length > 0 && products.every(isBookProduct);
-  const productMinWidth = bookOnlyGrid ? '10.5rem' : minCardWidth;
+  const productGridStyle = bookOnlyGrid
+    ? undefined
+    : { gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, ${minCardWidth}), 1fr))` };
   return (
-    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${bookOnlyGrid ? 'auto-fill' : 'auto-fit'}, minmax(min(100%, ${productMinWidth}), ${bookOnlyGrid ? productMinWidth : '1fr'}))`, justifyContent: bookOnlyGrid ? 'start' : undefined }}>
+    <div className={`grid gap-3 ${bookOnlyGrid ? 'sm:grid-cols-2 xl:grid-cols-4' : ''}`} style={productGridStyle}>
       {products.map((product) => {
         const disabled = !isDisplayBook(product) && !hasUsableStock(product);
         const canOpen = isDm || isDisplayBook(product) || (!disabled && canShop);
@@ -4173,23 +4175,23 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             onClick={() => {
               if (canOpen) onSelectProduct(product);
             }}
-            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[8.25rem] w-full max-w-[10.5rem] justify-self-start p-2.5' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
+            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[12rem] w-full p-3' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
           >
-            <span className={`mb-2 block ${isDm ? 'pr-28' : ''}`}>
+            <span className={`mb-2 block ${isDm && !bookProduct ? 'pr-28' : isDm ? 'pr-9' : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className={`${bookProduct ? 'text-sm' : ''} line-clamp-2 break-words font-black leading-tight`}>{product.name}</span>
+                  <span className={`${bookProduct ? 'text-base' : ''} line-clamp-2 break-words font-black leading-tight`}>{product.name}</span>
                   <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : bookProduct ? `${product.rarity} book` : `${product.type} - ${product.rarity}`}</span>
                 </span>
               </span>
               {isDm && (
-                <span className="absolute right-2 top-2 flex gap-1">
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)] ${saving ? 'pointer-events-none opacity-50' : ''}`}>
+                <span className={`absolute right-2 top-2 gap-1 ${bookProduct ? 'grid' : 'flex'}`}>
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
                     {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
                   </span>
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/25 p-2 text-[var(--muted)] ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/10 p-2 text-[var(--red)] ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
+                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/15 text-[var(--red)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
                 </span>
               )}
             </span>
