@@ -8158,7 +8158,7 @@ as $$
   end
 $$;
 
-create or replace function public.market_product_record_to_json(p_product public.market_products)
+create or replace function public.market_product_record_to_json(p_product public.market_products, p_is_dm boolean default false)
 returns jsonb
 language sql
 stable
@@ -8181,8 +8181,8 @@ as $$
     'manaCost', p_product.mana_cost,
     'manaLabel', p_product.mana_label,
     'documentAuthor', p_product.document_author,
-    'documentContent', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and p_product.price_coin > 0 then '' else p_product.document_content end,
-    'documentPages', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and p_product.price_coin > 0 then '[]'::jsonb else coalesce(p_product.document_pages, '[]'::jsonb) end,
+    'documentContent', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and not coalesce(p_is_dm, false) then '' else p_product.document_content end,
+    'documentPages', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and not coalesce(p_is_dm, false) then '[]'::jsonb else coalesce(p_product.document_pages, '[]'::jsonb) end,
     'documentVisibility', p_product.document_visibility,
     'documentEditorUserId', p_product.document_editor_user_id,
     'available', p_product.is_available
@@ -8471,12 +8471,22 @@ join (values
   ('spell_registrar', 'Defensive Support Spells', 70),
   ('spell_registrar', 'Offensive Support Spells', 80),
   ('spell_registrar', 'Enhancement Spells', 90),
-  ('spell_registrar', 'Utility Spells', 100),
-  ('library', 'Government', 10),
-  ('library', 'Recreation', 20),
-  ('library', 'For Sale', 30)
+  ('spell_registrar', 'Utility Spells', 100)
 ) as seed(blueprint_type, section_name, display_order) on seed.blueprint_type = v.blueprint_type
 on conflict (vendor_id, section_key) do nothing;
+
+delete from public.shop_sections s
+using public.shop_vendors v
+where s.vendor_id = v.id
+  and v.blueprint_type = 'library'
+  and v.vendor_key <> 'calostrynn-library'
+  and s.section_name in ('Government', 'Recreation', 'For Sale')
+  and not exists (
+    select 1
+    from public.market_products p
+    where p.vendor_id = s.vendor_id
+      and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = s.section_name
+  );
 
 update public.market_products
 set document_pages = to_jsonb(array[document_content])
@@ -8540,7 +8550,7 @@ as $$
         and (p_is_dm or not s.is_hidden)
     ),
     'products', (
-      select coalesce(jsonb_agg(public.market_product_record_to_json(p) order by p.display_order, p.item_name), '[]'::jsonb)
+      select coalesce(jsonb_agg(public.market_product_record_to_json(p, p_is_dm) order by p.display_order, p.item_name), '[]'::jsonb)
       from public.market_products p
       where p.vendor_id = p_vendor.id
         and (p_is_dm or p.is_available)
@@ -8800,6 +8810,83 @@ begin
       v_is_two_handed := v_catalog.is_two_handed;
       v_storage_capacity := v_catalog.storage_capacity;
     end if;
+  end if;
+
+  if v_product.product_kind = 'document' then
+    if v_product.document_visibility = 'government' then
+      raise exception 'Display books can be read in the library, not purchased.';
+    end if;
+
+    v_quantity := 1;
+    if v_product.stock_quantity is not null and v_product.stock_quantity < 1 then
+      raise exception 'That book is no longer on the shelf.';
+    end if;
+
+    v_cost := v_product.price_coin;
+    v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
+    if v_wallet < v_cost then
+      raise exception 'Not enough currency.';
+    end if;
+
+    v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
+    if v_slot is null then
+      raise exception 'Inventory full.';
+    end if;
+
+    insert into public.inventory_items (
+      character_id,
+      parent_item_id,
+      slot_index,
+      item_name,
+      item_description,
+      item_type,
+      rarity,
+      quantity,
+      is_storage,
+      storage_capacity,
+      modifiers,
+      enchantment,
+      material,
+      enhancement_count,
+      is_two_handed,
+      potion_strength,
+      potion_property,
+      potion_quality
+    )
+    values (
+      v_character.id,
+      null,
+      v_slot,
+      v_item_name,
+      left(trim(concat_ws(E'\n\n', nullif(v_product.document_author, ''), coalesce(nullif(v_product.document_content, ''), (
+        select string_agg(page.value #>> '{}', E'\n\n--- page ---\n\n')
+        from jsonb_array_elements(coalesce(v_product.document_pages, '[]'::jsonb)) as page(value)
+      )))), 12000),
+      'quest',
+      v_product.rarity,
+      1,
+      false,
+      0,
+      '{}'::jsonb,
+      null,
+      '',
+      0,
+      false,
+      null,
+      null,
+      null
+    );
+
+    perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
+    perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
+
+    update public.market_products
+    set stock_quantity = 0,
+        is_available = false
+    where id = v_product.id;
+
+    return public.get_discovered_cities(p_session_token);
   end if;
 
   if public.normalize_item_type(v_product.item_type) = 'pet' then
@@ -12163,7 +12250,6 @@ $$;
 
 grant execute on function public.city_record_to_json(public.cities) to anon, authenticated;
 grant execute on function public.assert_valid_character_location(text) to anon, authenticated;
-grant execute on function public.market_product_record_to_json(public.market_products) to anon, authenticated;
 grant execute on function public.currency_coin_value(text) to anon, authenticated;
 grant execute on function public.currency_unit_value(text, text) to anon, authenticated;
 grant execute on function public.wallet_total_coin(uuid) to anon, authenticated;
@@ -12800,10 +12886,7 @@ begin
     ('spell_registrar', 'Defensive Support Spells', 70),
     ('spell_registrar', 'Offensive Support Spells', 80),
     ('spell_registrar', 'Enhancement Spells', 90),
-    ('spell_registrar', 'Utility Spells', 100),
-    ('library', 'Government', 10),
-    ('library', 'Recreation', 20),
-    ('library', 'For Sale', 30)
+    ('spell_registrar', 'Utility Spells', 100)
   ) as seed(blueprint_type, section_name, display_order)
   where seed.blueprint_type = v_blueprint
   on conflict (vendor_id, section_key) do nothing;
@@ -13142,6 +13225,7 @@ $$;
 
 grant execute on function public.safe_slug(text) to anon, authenticated;
 grant execute on function public.shop_section_record_to_json(public.shop_sections) to anon, authenticated;
+grant execute on function public.market_product_record_to_json(public.market_products, boolean) to anon, authenticated;
 grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
 grant execute on function public.create_shop_section(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_section(text, uuid, uuid, jsonb) to anon, authenticated;
