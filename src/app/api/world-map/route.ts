@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof File)) return NextResponse.json({ error: 'Choose an image to upload.' }, { status: 400 });
     if (!ALLOWED_IMAGE_TYPES.has(file.type)) return NextResponse.json({ error: 'Upload a PNG, JPEG, WEBP, or GIF image.' }, { status: 400 });
     if (file.size <= 0) return NextResponse.json({ error: 'The uploaded image was empty.' }, { status: 400 });
-    if (file.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: 'World map image must be 8 MB or smaller.' }, { status: 400 });
+    if (file.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: 'World map image must be 8 MB or smaller after map optimization.' }, { status: 400 });
 
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });

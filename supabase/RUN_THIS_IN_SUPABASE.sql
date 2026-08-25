@@ -17126,6 +17126,9 @@ begin
   values (v_profile.id, v_file_name, v_mime_type, v_image_data_url)
   returning * into v_map;
 
+  delete from public.world_map_uploads
+  where id <> v_map.id;
+
   return public.current_world_map_payload();
 end;
 $$;

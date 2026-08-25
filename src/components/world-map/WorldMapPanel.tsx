@@ -40,12 +40,96 @@ const PIN_TYPES: Array<{ type: WorldMapPinType; label: string; Icon: LucideIcon;
   { type: 'chest', label: 'Chest', Icon: Package, className: 'border-[#f59e0b] bg-[#3b2108] text-[#fed7aa]' }
 ];
 
+const WORLD_MAP_DIRECT_UPLOAD_BYTES = 3.5 * 1024 * 1024;
+const WORLD_MAP_SERVER_MAX_BYTES = 8 * 1024 * 1024;
+const WORLD_MAP_MAX_EDGE = 4096;
+const WORLD_MAP_MIN_EDGE = 1600;
+const WORLD_MAP_QUALITIES = [0.88, 0.82, 0.76, 0.7, 0.64, 0.58];
+
 function pinConfig(type: WorldMapPinType) {
   return PIN_TYPES.find((entry) => entry.type === type) ?? PIN_TYPES[0];
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('World map image could not be prepared.'));
+    }, type, quality);
+  });
+}
+
+async function loadWorldMapImage(file: File) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = objectUrl;
+    await image.decode();
+    return image;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function fittedImageSize(width: number, height: number, maxEdge: number) {
+  const sourceEdge = Math.max(width, height);
+  const targetEdge = Math.min(sourceEdge, maxEdge);
+  const scale = sourceEdge > 0 ? targetEdge / sourceEdge : 1;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
+  };
+}
+
+function optimizedMapFileName(fileName: string) {
+  const baseName = fileName.replace(/\.[^.]+$/, '').trim() || 'world-map';
+  return `${baseName}.jpg`;
+}
+
+async function prepareWorldMapUpload(file: File) {
+  if (file.size <= WORLD_MAP_DIRECT_UPLOAD_BYTES) return file;
+
+  const image = await loadWorldMapImage(file);
+  const sourceWidth = image.naturalWidth;
+  const sourceHeight = image.naturalHeight;
+  if (!sourceWidth || !sourceHeight) throw new Error('World map image could not be read.');
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('World map image could not be prepared.');
+
+  let bestBlob: Blob | null = null;
+  let maxEdge = Math.min(WORLD_MAP_MAX_EDGE, Math.max(sourceWidth, sourceHeight));
+
+  while (maxEdge >= WORLD_MAP_MIN_EDGE) {
+    const size = fittedImageSize(sourceWidth, sourceHeight, maxEdge);
+    canvas.width = size.width;
+    canvas.height = size.height;
+    context.fillStyle = '#1f1712';
+    context.fillRect(0, 0, size.width, size.height);
+    context.drawImage(image, 0, 0, size.width, size.height);
+
+    for (const quality of WORLD_MAP_QUALITIES) {
+      const blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+      if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+      if (blob.size <= WORLD_MAP_DIRECT_UPLOAD_BYTES) {
+        return new File([blob], optimizedMapFileName(file.name), { type: 'image/jpeg', lastModified: Date.now() });
+      }
+    }
+
+    maxEdge = Math.floor(maxEdge * 0.82);
+  }
+
+  if (bestBlob && bestBlob.size <= WORLD_MAP_SERVER_MAX_BYTES) {
+    return new File([bestBlob], optimizedMapFileName(file.name), { type: 'image/jpeg', lastModified: Date.now() });
+  }
+
+  throw new Error('That image is too large to prepare for the world map. Try exporting it as a JPG or WEBP first.');
 }
 
 export function WorldMapPanel({ profile }: { profile: Profile }) {
@@ -60,6 +144,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [uploadMessage, setUploadMessage] = useState('');
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(720);
@@ -154,11 +239,14 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
     event.target.value = '';
     if (!file || !isDm) return;
 
-    const form = new FormData();
-    form.set('image', file);
     setSaving(true);
     setError('');
+    setUploadMessage(file.size > WORLD_MAP_DIRECT_UPLOAD_BYTES ? 'Preparing large map image...' : 'Uploading world map...');
     try {
+      const preparedFile = await prepareWorldMapUpload(file);
+      const form = new FormData();
+      form.set('image', preparedFile);
+      setUploadMessage('Replacing world map...');
       const response = await fetch('/api/world-map', {
         method: 'POST',
         body: form
@@ -172,6 +260,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
       setError(uploadError instanceof Error ? uploadError.message : 'World map could not be updated.');
     } finally {
       setSaving(false);
+      setUploadMessage('');
     }
   }
 
@@ -378,6 +467,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
       </Card>
 
       {error && <p className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm font-black text-[var(--red)]">{error}</p>}
+      {uploadMessage && <p className="rounded-2xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3 text-sm font-black text-[var(--brass)]">{uploadMessage}</p>}
 
       {addMode && (
         <div className="flex items-center gap-2 rounded-2xl border border-[var(--brass)]/45 bg-[var(--brass)]/15 p-3 text-sm font-black text-[var(--brass)]">
