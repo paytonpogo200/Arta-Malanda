@@ -18,6 +18,7 @@ export type ItemType =
   | 'plant'
   | 'fabric'
   | 'tool'
+  | 'book'
   | 'quest'
   | 'spell book'
   | 'currency'

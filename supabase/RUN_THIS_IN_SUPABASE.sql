@@ -1840,6 +1840,7 @@ as $$
       'plant',
       'fabric',
       'tool',
+      'book',
       'quest',
       'spell book',
       'currency',
@@ -1901,7 +1902,7 @@ language sql
 stable
 as $$
   select case
-    when lower(trim(coalesce(p_item_type, ''))) in ('pet', 'storage', 'spell book') then false
+    when lower(trim(coalesce(p_item_type, ''))) in ('pet', 'storage', 'book', 'spell book') then false
     else coalesce((
       select c.is_stackable
       from public.item_catalog c
@@ -2148,10 +2149,10 @@ $$;
 do $$
 begin
   perform public.upsert_item_catalog_entry('Leather Armor', 'armor', 'Common', 'Armor', array['Starter armor', '-1 Vitality']::text[], 1, true, '{"vitality": -1}'::jsonb, 'Leather', false, 0, 'Starter armor. -1 Vitality while active.', true, 5);
-  perform public.upsert_item_catalog_entry('History Book', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A general history volume. Resolve its contents at the table.', true, 6);
-  perform public.upsert_item_catalog_entry('Alchemy Book', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'An alchemical study text. Resolve its contents at the table.', true, 7);
-  perform public.upsert_item_catalog_entry('Bestiary', 'quest', 'Common', 'Books', array['Table-resolved contents']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A creature reference volume. Resolve its contents at the table.', true, 8);
-  perform public.upsert_item_catalog_entry('Magical Research', 'quest', 'Rare', 'Books', array['Research voucher']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Choose a spell category at purchase to receive a rare magic spell book.', true, 9);
+  perform public.upsert_item_catalog_entry('History Book', 'book', 'Common', 'Books', array['Table-resolved contents']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A general history volume. Resolve its contents at the table.', true, 6);
+  perform public.upsert_item_catalog_entry('Alchemy Book', 'book', 'Common', 'Books', array['Table-resolved contents']::text[], 1, false, '{}'::jsonb, '', false, 0, 'An alchemical study text. Resolve its contents at the table.', true, 7);
+  perform public.upsert_item_catalog_entry('Bestiary', 'book', 'Common', 'Books', array['Table-resolved contents']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A creature reference volume. Resolve its contents at the table.', true, 8);
+  perform public.upsert_item_catalog_entry('Magical Research', 'book', 'Rare', 'Books', array['Research voucher']::text[], 1, false, '{}'::jsonb, '', false, 0, 'Choose a spell category at purchase to receive a rare magic spell book.', true, 9);
   perform public.upsert_item_catalog_entry(
     'Peaceful Restoration Spell Book',
     'spell book',
@@ -2168,16 +2169,16 @@ begin
     true,
     9
   );
-  perform public.upsert_item_catalog_entry('Ember Magic Spell Book', 'quest', 'Rare', 'Books', array['Ember research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Ember magic spell book from library research.', true, 10);
-  perform public.upsert_item_catalog_entry('Frost Magic Spell Book', 'quest', 'Rare', 'Books', array['Frost research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Frost magic spell book from library research.', true, 11);
-  perform public.upsert_item_catalog_entry('Lightning Magic Spell Book', 'quest', 'Rare', 'Books', array['Lightning research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Lightning magic spell book from library research.', true, 12);
-  perform public.upsert_item_catalog_entry('Earth Magic Spell Book', 'quest', 'Rare', 'Books', array['Earth research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Earth magic spell book from library research.', true, 13);
-  perform public.upsert_item_catalog_entry('Wind Magic Spell Book', 'quest', 'Rare', 'Books', array['Wind research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Wind magic spell book from library research.', true, 14);
-  perform public.upsert_item_catalog_entry('Energy Magic Spell Book', 'quest', 'Rare', 'Books', array['Energy research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Energy magic spell book from library research.', true, 15);
-  perform public.upsert_item_catalog_entry('Defensive Support Magic Spell Book', 'quest', 'Rare', 'Books', array['Defensive Support research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Defensive Support magic spell book from library research.', true, 16);
-  perform public.upsert_item_catalog_entry('Offensive Support Magic Spell Book', 'quest', 'Rare', 'Books', array['Offensive Support research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Offensive Support magic spell book from library research.', true, 17);
-  perform public.upsert_item_catalog_entry('Enhancement Magic Spell Book', 'quest', 'Rare', 'Books', array['Enhancement research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Enhancement magic spell book from library research.', true, 18);
-  perform public.upsert_item_catalog_entry('Utility Magic Spell Book', 'quest', 'Rare', 'Books', array['Utility research']::text[], 1, true, '{}'::jsonb, '', false, 0, 'A rare Utility magic spell book from library research.', true, 19);
+  perform public.upsert_item_catalog_entry('Ember Magic Spell Book', 'book', 'Rare', 'Books', array['Ember research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Ember magic spell book from library research.', true, 10);
+  perform public.upsert_item_catalog_entry('Frost Magic Spell Book', 'book', 'Rare', 'Books', array['Frost research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Frost magic spell book from library research.', true, 11);
+  perform public.upsert_item_catalog_entry('Lightning Magic Spell Book', 'book', 'Rare', 'Books', array['Lightning research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Lightning magic spell book from library research.', true, 12);
+  perform public.upsert_item_catalog_entry('Earth Magic Spell Book', 'book', 'Rare', 'Books', array['Earth research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Earth magic spell book from library research.', true, 13);
+  perform public.upsert_item_catalog_entry('Wind Magic Spell Book', 'book', 'Rare', 'Books', array['Wind research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Wind magic spell book from library research.', true, 14);
+  perform public.upsert_item_catalog_entry('Energy Magic Spell Book', 'book', 'Rare', 'Books', array['Energy research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Energy magic spell book from library research.', true, 15);
+  perform public.upsert_item_catalog_entry('Defensive Support Magic Spell Book', 'book', 'Rare', 'Books', array['Defensive Support research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Defensive Support magic spell book from library research.', true, 16);
+  perform public.upsert_item_catalog_entry('Offensive Support Magic Spell Book', 'book', 'Rare', 'Books', array['Offensive Support research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Offensive Support magic spell book from library research.', true, 17);
+  perform public.upsert_item_catalog_entry('Enhancement Magic Spell Book', 'book', 'Rare', 'Books', array['Enhancement research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Enhancement magic spell book from library research.', true, 18);
+  perform public.upsert_item_catalog_entry('Utility Magic Spell Book', 'book', 'Rare', 'Books', array['Utility research']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A rare Utility magic spell book from library research.', true, 19);
   perform public.upsert_item_catalog_entry('Waist Pouch', 'storage', 'Common', 'Market Storage', array['1 storage slot']::text[], 1, false, '{}'::jsonb, '', false, 1, 'A compact pouch with 1 storage slot.', true, 2000);
   perform public.upsert_item_catalog_entry('Back Bag', 'storage', 'Common', 'Market Storage', array['3 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 3, 'A back bag with 3 storage slots.', true, 2010);
   perform public.upsert_item_catalog_entry('Light Duffle', 'storage', 'Uncommon', 'Market Storage', array['6 storage slots']::text[], 1, false, '{}'::jsonb, '', false, 6, 'A light duffle with 6 storage slots.', true, 2020);
@@ -4139,6 +4140,67 @@ set item_type = 'potion',
     potion_property = null,
     potion_quality = null
 where lower(item_name) in ('empty flask', 'arcane nector');
+
+update public.item_catalog
+set item_type = 'book',
+    is_stackable = false,
+    quantity_step = 1
+where item_key in (
+  'history-book',
+  'alchemy-book',
+  'bestiary',
+  'magical-research',
+  'ember-magic-spell-book',
+  'frost-magic-spell-book',
+  'lightning-magic-spell-book',
+  'earth-magic-spell-book',
+  'wind-magic-spell-book',
+  'energy-magic-spell-book',
+  'defensive-support-magic-spell-book',
+  'offensive-support-magic-spell-book',
+  'enhancement-magic-spell-book',
+  'utility-magic-spell-book'
+);
+
+update public.inventory_items
+set item_type = 'book'
+where item_type = 'quest'
+  and public.catalog_key_for_name(item_name) in (
+    'history-book',
+    'alchemy-book',
+    'bestiary',
+    'magical-research',
+    'ember-magic-spell-book',
+    'frost-magic-spell-book',
+    'lightning-magic-spell-book',
+    'earth-magic-spell-book',
+    'wind-magic-spell-book',
+    'energy-magic-spell-book',
+    'defensive-support-magic-spell-book',
+    'offensive-support-magic-spell-book',
+    'enhancement-magic-spell-book',
+    'utility-magic-spell-book'
+  );
+
+update public.house_inventory_items
+set item_type = 'book'
+where item_type = 'quest'
+  and public.catalog_key_for_name(item_name) in (
+    'history-book',
+    'alchemy-book',
+    'bestiary',
+    'magical-research',
+    'ember-magic-spell-book',
+    'frost-magic-spell-book',
+    'lightning-magic-spell-book',
+    'earth-magic-spell-book',
+    'wind-magic-spell-book',
+    'energy-magic-spell-book',
+    'defensive-support-magic-spell-book',
+    'offensive-support-magic-spell-book',
+    'enhancement-magic-spell-book',
+    'utility-magic-spell-book'
+  );
 
 update public.inventory_items
 set item_description = left(trim(concat_ws(E'\n\n', nullif(trim(coalesce(item_description, '')), ''), trim(material))), 1500)
@@ -7514,6 +7576,49 @@ alter table public.market_products
   drop constraint if exists market_products_document_visibility_check,
   add constraint market_products_document_visibility_check check (document_visibility in ('government', 'for_sale'));
 
+update public.market_products
+set item_type = 'book'
+where product_kind = 'document'
+   or (
+    item_type = 'quest'
+    and public.catalog_key_for_name(item_name) in (
+      'history-book',
+      'alchemy-book',
+      'bestiary',
+      'magical-research',
+      'ember-magic-spell-book',
+      'frost-magic-spell-book',
+      'lightning-magic-spell-book',
+      'earth-magic-spell-book',
+      'wind-magic-spell-book',
+      'energy-magic-spell-book',
+      'defensive-support-magic-spell-book',
+      'offensive-support-magic-spell-book',
+      'enhancement-magic-spell-book',
+      'utility-magic-spell-book'
+    )
+  );
+
+update public.inventory_items
+set item_type = 'book'
+where item_type = 'quest'
+  and exists (
+    select 1
+    from public.market_products p
+    where p.product_kind = 'document'
+      and public.catalog_key_for_name(p.item_name) = public.catalog_key_for_name(inventory_items.item_name)
+  );
+
+update public.house_inventory_items
+set item_type = 'book'
+where item_type = 'quest'
+  and exists (
+    select 1
+    from public.market_products p
+    where p.product_kind = 'document'
+      and public.catalog_key_for_name(p.item_name) = public.catalog_key_for_name(house_inventory_items.item_name)
+  );
+
 create table if not exists public.shop_sections (
   id uuid primary key default gen_random_uuid(),
   vendor_id uuid not null references public.shop_vendors(id) on delete cascade,
@@ -7951,7 +8056,7 @@ where not exists (
 on conflict (product_key) do nothing;
 
 insert into public.market_products (vendor_id, product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, quantity_step, catalog_item_key, is_available, display_order)
-select v.id, seed.product_key, seed.item_name, seed.description, 'quest', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, 'Books', 1, seed.catalog_item_key, true, seed.display_order
+select v.id, seed.product_key, seed.item_name, seed.description, 'book', seed.rarity::public.item_rarity, seed.price_coin, seed.stock_quantity::numeric, 'Books', 1, seed.catalog_item_key, true, seed.display_order
 from public.shop_vendors v
 join (values
   ('library-history-book', 'History Book', 'A general history volume. Resolve its contents at the table.', 'Common', 100, null, 'history-book', 10),
@@ -8795,7 +8900,7 @@ begin
     end if;
 
     v_item_name := v_research_type || ' Magic Spell Book';
-    v_product.item_type := 'quest';
+    v_product.item_type := 'book';
     v_product.rarity := 'Rare'::public.item_rarity;
     v_quantity := 1;
 
@@ -8862,7 +8967,7 @@ begin
         select string_agg(page.value #>> '{}', E'\n\n--- page ---\n\n')
         from jsonb_array_elements(coalesce(v_product.document_pages, '[]'::jsonb)) as page(value)
       )))), 12000),
-      'quest',
+      'book',
       v_product.rarity,
       1,
       false,
@@ -9196,7 +9301,7 @@ begin
     document_pages = case
       when v_patch ? 'documentPages' and jsonb_typeof(v_patch->'documentPages') = 'array'
         then (
-          select coalesce(jsonb_agg(left(page.value #>> '{}', 6000)), '[]'::jsonb)
+          select coalesce(jsonb_agg(left(page.value #>> '{}', 950)), '[]'::jsonb)
           from jsonb_array_elements(v_patch->'documentPages') as page(value)
         )
       else document_pages
@@ -12994,7 +13099,7 @@ begin
     coalesce(v_patch->>'description', ''),
     case
       when v_kind = 'spell' then 'misc'
-      when v_kind = 'document' then 'quest'
+      when v_kind = 'document' then 'book'
       else public.normalize_item_type(coalesce(v_patch->>'type', 'misc'))
     end,
     coalesce(nullif(v_patch->>'rarity', ''), 'Common')::public.item_rarity,
@@ -13012,10 +13117,10 @@ begin
     case
       when v_patch ? 'documentPages' and jsonb_typeof(v_patch->'documentPages') = 'array'
         then (
-          select coalesce(jsonb_agg(left(page.value #>> '{}', 6000)), '[]'::jsonb)
+          select coalesce(jsonb_agg(left(page.value #>> '{}', 950)), '[]'::jsonb)
           from jsonb_array_elements(v_patch->'documentPages') as page(value)
         )
-      when length(trim(coalesce(v_patch->>'documentContent', ''))) > 0 then to_jsonb(array[left(coalesce(v_patch->>'documentContent', ''), 6000)])
+      when length(trim(coalesce(v_patch->>'documentContent', ''))) > 0 then to_jsonb(array[left(coalesce(v_patch->>'documentContent', ''), 950)])
       else '[]'::jsonb
     end,
     case when v_patch ? 'documentVisibility' and v_patch->>'documentVisibility' = 'government' then 'government' else 'for_sale' end,

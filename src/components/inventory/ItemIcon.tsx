@@ -50,6 +50,7 @@ export function ItemIcon({ type, size = 18 }: { type: ItemType; size?: number })
     potion: FlaskConical,
     plant: Leaf,
     tool: Wrench,
+    book: BookOpen,
     quest: ScrollText,
     'spell book': BookOpen,
     currency: Coins,

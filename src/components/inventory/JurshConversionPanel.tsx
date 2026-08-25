@@ -55,7 +55,7 @@ const EMPTY_STATE: ConversionState = {
   dragonScaleTotal: 0
 };
 
-const VALID_ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
+const VALID_ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'book', 'quest', 'spell book', 'currency', 'misc'];
 const VALID_RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
 
 function numberFrom(value: unknown, fallback = 0) {

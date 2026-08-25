@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2, Users } from 'lucide-react';
+import { BookReader, pagesFromBookContent } from '@/components/books/BookReader';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -93,6 +94,10 @@ function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
     && a.isTwoHanded === b.isTwoHanded
     && a.isAccessory === b.isAccessory
     && JSON.stringify(a.modifiers) === JSON.stringify(b.modifiers);
+}
+
+function isReadableBookItem(item: InventoryItem) {
+  return item.type === 'book';
 }
 
 function inferStorageCapacity(itemName: string) {
@@ -272,6 +277,7 @@ export function InventoryPanel({
   const [storagePermissions, setStoragePermissions] = useState<Record<string, boolean>>({});
   const [storagePermissionsLoading, setStoragePermissionsLoading] = useState(false);
   const [spellBookCastModal, setSpellBookCastModal] = useState<{ item: InventoryItem; targetCharacterId: string; casterOnFire: boolean } | null>(null);
+  const [bookSpread, setBookSpread] = useState(0);
   const inventoryLoadedRef = useRef(false);
   const loadedCharacterIdRef = useRef(character.id);
   useDragAutoScroll();
@@ -522,6 +528,7 @@ export function InventoryPanel({
     setCatalogSearch('');
     setAddMode(item ? 'custom' : 'catalog');
     setEnhanceOpen(false);
+    setBookSpread(0);
     setEnhanceStat('strength');
     setNotice('');
     const step = item ? quantityStepForItem(item) : 1;
@@ -1842,9 +1849,10 @@ export function InventoryPanel({
       )}
 
       {modal && (
-        <Modal title={modal.item ? (modal.item.displayName || modal.item.name) : 'Add item'} onClose={() => {
+        <Modal size={modal.item && isReadableBookItem(modal.item) ? 'wide' : 'default'} title={modal.item ? (modal.item.displayName || modal.item.name) : 'Add item'} onClose={() => {
           setItemActionModal(null);
           setModal(null);
+          setBookSpread(0);
         }}>
           {modal.item ? (
             <div className="space-y-3">
@@ -1869,7 +1877,18 @@ export function InventoryPanel({
                         </div>
                       </div>
                     )}
-                    {modal.item.itemDescription && !isPeacefulRestorationBook(modal.item) && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
+                    {isReadableBookItem(modal.item) && (
+                      <div className="mt-3">
+                        <BookReader
+                          title={modal.item.displayName || modal.item.name}
+                          pages={pagesFromBookContent(modal.item.itemDescription ?? '')}
+                          label={`${modal.item.rarity} Book`}
+                          spreadIndex={bookSpread}
+                          onSpreadChange={setBookSpread}
+                        />
+                      </div>
+                    )}
+                    {modal.item.itemDescription && !isReadableBookItem(modal.item) && !isPeacefulRestorationBook(modal.item) && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--paper)]">{modal.item.itemDescription}</p>}
                     {modalPotionEffect && (
                       <div className="mt-3 rounded-xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3 text-sm leading-6 text-[var(--paper)]">
                         <p className="text-xs font-black uppercase tracking-wider text-[#56e2c2]">Potion effect</p>

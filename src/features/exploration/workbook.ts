@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import type { ItemRarity, ItemType } from '@/lib/types';
 
 const RARITIES: ItemRarity[] = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary', 'Mythical'];
-const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'quest', 'currency', 'misc'];
+const ITEM_TYPES: ItemType[] = ['weapon', 'armor', 'shield', 'pet', 'accessory', 'storage', 'material', 'catalyst', 'rune', 'ore', 'potion', 'food', 'plant', 'fabric', 'tool', 'book', 'quest', 'spell book', 'currency', 'misc'];
 
 function text(value: unknown, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -90,6 +90,8 @@ export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): 
   const name = text(itemNameValue).toLowerCase();
   const combined = `${explicitType} ${name}`;
 
+  if (combined.includes('spell book')) return 'spell book';
+  if (combined.includes('book') || combined.includes('tome') || combined.includes('volume')) return 'book';
   if (combined.includes('coin') || combined.includes('currency') || combined.includes('callis') || combined.includes('callor')) return 'currency';
   if (combined.includes('rune')) return 'rune';
   if (ITEM_TYPES.includes(explicitType as ItemType)) return explicitType as ItemType;
@@ -104,7 +106,7 @@ export function categoryToItemType(typeValue: unknown, itemNameValue: unknown): 
   if (combined.includes('food') || combined.includes('ration') || combined.includes('meal')) return 'food';
   if (combined.includes('plant') || combined.includes('herb') || combined.includes('flower') || combined.includes('root')) return 'plant';
   if (combined.includes('fabric') || combined.includes('cloth') || combined.includes('leather') || combined.includes('clothing') || combined.includes('cloak')) return 'fabric';
-  if (combined.includes('scroll') || combined.includes('map') || combined.includes('lore') || combined.includes('tome')) return 'quest';
+  if (combined.includes('scroll') || combined.includes('map') || combined.includes('lore')) return 'quest';
   if (combined.includes('belt') || combined.includes('ring') || combined.includes('jewel') || combined.includes('jewlery') || combined.includes('jewelry') || combined.includes('gem') || combined.includes('rune') || combined.includes('upgrade')) return 'accessory';
   if (combined.includes('tool') || combined.includes('gear') || combined.includes('rope') || combined.includes('torch') || combined.includes('blanket') || combined.includes('cooking pot') || combined.includes('ink and paper') || combined.includes('lock') || combined.includes('hammer') || combined.includes('axe')) return 'tool';
   if (combined.includes('weapon') || combined.includes('sword') || combined.includes('bow') || combined.includes('dagger') || combined.includes('spear') || combined.includes('mace') || combined.includes('staff') || combined.includes('wand') || combined.includes('arrows')) return 'weapon';

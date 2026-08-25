@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
 import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { BookReader, BOOK_PAGE_MAX_CHARS, bookContentFromPages, pagesFromBookContent } from '@/components/books/BookReader';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
 import { Card, SoftCard } from '@/components/ui/Card';
@@ -270,9 +271,9 @@ function defaultProductDraft(vendor: ShopVendor, city?: City | null): ProductDra
       ? 'document'
       : 'item';
   return {
-    name: kind === 'spell' ? 'New Spell' : kind === 'document' ? 'New Document' : 'New Item',
+    name: kind === 'spell' ? 'New Spell' : kind === 'document' ? 'Untitled Book' : 'New Item',
     description: '',
-    type: 'misc',
+    type: kind === 'document' ? 'book' : 'misc',
     rarity: 'Common',
     priceCoin: 0,
     currencySystemKey,
@@ -372,12 +373,11 @@ function sectionRecordsForVendor(vendor: ShopVendor, extraSection = ''): ShopSec
 }
 
 function pagesFromDocumentContent(content: string) {
-  const pages = content.split(/\n\s*---+\s*page\s*---+\s*\n|\f/gi).map((page) => page.trim());
-  return pages.length ? pages : [''];
+  return pagesFromBookContent(content);
 }
 
 function documentContentFromPages(pages: string[]) {
-  return pages.map((page) => page.trim()).filter(Boolean).join('\n\n--- page ---\n\n');
+  return bookContentFromPages(pages);
 }
 
 function productDraftFromCatalogItem(vendor: ShopVendor, city: City | null | undefined, section: string, item: ItemCatalogEntry): ProductDraft {
@@ -525,6 +525,10 @@ function isSaleBook(product: MarketProduct) {
   return product.kind === 'document' && product.documentVisibility === 'for_sale';
 }
 
+function isBookProduct(product: MarketProduct) {
+  return product.kind === 'document' || product.type === 'book';
+}
+
 function purchaseActionLabel(product: MarketProduct) {
   if (isSaleBook(product)) return 'Buy book';
   if (product.type === 'pet') return 'Send to stable';
@@ -550,6 +554,7 @@ function spellManaBadgeText(product: MarketProduct) {
 }
 
 function productCardClass(product: MarketProduct) {
+  if (isBookProduct(product)) return `book-product-card ${rarityClass(product.rarity)}`;
   const spellType = spellTypeFromProductSection(product.section);
   return spellType ? spellTypeClass(spellType) : rarityClass(product.rarity);
 }
@@ -1068,6 +1073,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   useEffect(() => {
     void loadCities();
   }, [loadCities]);
+
+  useEffect(() => {
+    setBookPage(0);
+  }, [selectedProduct?.id]);
 
   useEffect(() => {
     if (!isDm) return;
@@ -1599,7 +1608,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ...draft,
       name: 'Untitled Book',
       description: '',
-      type: 'quest',
+      type: 'book',
       rarity: 'Rare',
       section,
       stockQuantity: 1,
@@ -2102,7 +2111,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {selectedProduct && (
-        <Modal title={selectedProduct.name} onClose={() => setSelectedProduct(null)}>
+        <Modal size={selectedProduct.kind === 'document' ? 'wide' : 'default'} title={selectedProduct.name} onClose={() => { setSelectedProduct(null); setBookPage(0); }}>
           <div className="space-y-4">
             <div className={`rounded-2xl border p-4 ${productCardClass(selectedProduct)}`}>
               <div className="flex items-center gap-3">
@@ -2120,34 +2129,18 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               )}
               {selectedProduct.kind === 'document' && (
                 <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm leading-6 text-[var(--paper)]">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-[var(--brass)]">{selectedProduct.documentAuthor ? `By ${selectedProduct.documentAuthor}` : 'Document'}</p>
                   {selectedProduct.documentVisibility === 'government' || selectedProduct.documentContent ? (
-                    <div className="mt-3 rounded-2xl border border-[var(--brass)]/25 bg-[linear-gradient(135deg,rgba(245,180,76,0.12),rgba(0,0,0,0.18))] p-4">
-                      <div className="mb-3 flex items-center justify-between gap-2">
-                        <span className="text-xs font-black uppercase tracking-wider text-[var(--muted)]">
-                          Page {Math.min(bookPage + 1, Math.max(1, (selectedProduct.documentPages.length || pagesFromDocumentContent(selectedProduct.documentContent).length)))} / {Math.max(1, selectedProduct.documentPages.length || pagesFromDocumentContent(selectedProduct.documentContent).length)}
-                        </span>
-                        <span className="rounded-full border border-[var(--line)] bg-black/25 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">
-                          {selectedProduct.documentVisibility === 'government' ? 'Government Book' : 'Book for Sale'}
-                        </span>
-                      </div>
-                      <p className="min-h-40 whitespace-pre-line rounded-xl border border-[var(--line)] bg-[#21140f]/70 p-4 text-sm leading-7">
-                        {(selectedProduct.documentPages.length ? selectedProduct.documentPages : pagesFromDocumentContent(selectedProduct.documentContent))[bookPage] || 'Blank page.'}
-                      </p>
-                      <div className="mt-3 grid grid-cols-2 gap-2">
-                        <Button variant="secondary" disabled={bookPage <= 0} onClick={() => setBookPage((page) => Math.max(0, page - 1))}>Previous page</Button>
-                        <Button
-                          variant="secondary"
-                          disabled={bookPage >= (selectedProduct.documentPages.length ? selectedProduct.documentPages.length : pagesFromDocumentContent(selectedProduct.documentContent).length) - 1}
-                          onClick={() => setBookPage((page) => Math.min((selectedProduct.documentPages.length ? selectedProduct.documentPages.length : pagesFromDocumentContent(selectedProduct.documentContent).length) - 1, page + 1))}
-                        >
-                          Next page
-                        </Button>
-                      </div>
-                      {canEditSelectedGovernmentBook && (
+                    <BookReader
+                      title={selectedProduct.name}
+                      author={selectedProduct.documentAuthor}
+                      pages={selectedProduct.documentPages.length ? selectedProduct.documentPages : pagesFromDocumentContent(selectedProduct.documentContent)}
+                      label={selectedProduct.documentVisibility === 'government' ? 'Display Book' : 'Book For Sale'}
+                      spreadIndex={bookPage}
+                      onSpreadChange={setBookPage}
+                      editableAction={canEditSelectedGovernmentBook ? (
                         <Button
                           variant="teal"
-                          className="mt-3 w-full"
+                          className="w-full"
                           onClick={() => {
                             const product = selectedProduct;
                             setSelectedProduct(null);
@@ -2157,8 +2150,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                         >
                           <Pencil className="mr-2 inline" size={15} /> Edit book pages
                         </Button>
-                      )}
-                    </div>
+                      ) : null}
+                    />
                   ) : (
                     <p className="mt-1 whitespace-pre-line">Contents unlock after purchase.</p>
                   )}
@@ -3208,20 +3201,24 @@ function BookPageEditor({ draft, onChange }: { draft: ProductDraft; onChange: (d
           <div key={index} className="rounded-2xl border border-[var(--line)] bg-[#21140f]/70 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="eyebrow">Page {index + 1}</p>
-              {draft.documentPages.length > 1 && (
-                <Button
-                  type="button"
-                  variant="danger"
-                  className="px-3 py-2 text-xs"
-                  onClick={() => onChange({ ...draft, documentPages: draft.documentPages.filter((_, pageIndex) => pageIndex !== index) })}
-                >
-                  <Trash2 className="mr-2 inline" size={13} /> Remove
-                </Button>
-              )}
+              <span className="flex items-center gap-2">
+                <span className={`text-[10px] font-black uppercase tracking-wider ${page.length > BOOK_PAGE_MAX_CHARS * 0.9 ? 'text-[var(--red)]' : 'text-[var(--muted)]'}`}>{page.length}/{BOOK_PAGE_MAX_CHARS}</span>
+                {draft.documentPages.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    className="px-3 py-2 text-xs"
+                    onClick={() => onChange({ ...draft, documentPages: draft.documentPages.filter((_, pageIndex) => pageIndex !== index) })}
+                  >
+                    <Trash2 className="mr-2 inline" size={13} /> Remove
+                  </Button>
+                )}
+              </span>
             </div>
             <TextAreaField
               rows={9}
               className="min-h-56 resize-y leading-7"
+              maxLength={BOOK_PAGE_MAX_CHARS}
               value={page}
               onChange={(event) => onChange({
                 ...draft,
@@ -4156,6 +4153,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
         const disabled = !isDisplayBook(product) && !hasUsableStock(product);
         const canOpen = isDm || isDisplayBook(product) || (!disabled && canShop);
         const manaBadge = spellManaBadgeText(product);
+        const bookProduct = isBookProduct(product);
         return (
           <button
             key={product.id}
@@ -4163,14 +4161,14 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             onClick={() => {
               if (canOpen) onSelectProduct(product);
             }}
-            className={`relative rounded-2xl border p-3 text-left transition active:scale-[0.99] ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
+            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[8.25rem] p-2.5' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
           >
             <span className={`mb-2 block ${isDm ? 'pr-28' : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className="block break-words font-black leading-tight">{product.name}</span>
-                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} · ${product.rarity}`}</span>
+                  <span className="line-clamp-2 break-words font-black leading-tight">{product.name}</span>
+                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : bookProduct ? `${product.rarity} book` : `${product.type} - ${product.rarity}`}</span>
                 </span>
               </span>
               {isDm && (
@@ -4183,7 +4181,9 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
                 </span>
               )}
             </span>
-            <p className="line-clamp-2 min-h-8 text-xs text-[var(--muted)]">{productEffectText(product) || product.description}</p>
+            <p className={`${bookProduct ? 'line-clamp-1 min-h-4' : 'line-clamp-2 min-h-8'} text-xs text-[var(--muted)]`}>
+              {bookProduct ? product.documentAuthor || product.description || 'Readable volume' : productEffectText(product) || product.description}
+            </p>
             {manaBadge && (
               <span className="mt-2 inline-flex rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--brass)]">
                 Mana: {manaBadge}
