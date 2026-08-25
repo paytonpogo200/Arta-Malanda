@@ -4168,6 +4168,49 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
         const canOpen = isDm || isDisplayBook(product) || (!disabled && canShop);
         const manaBadge = spellManaBadgeText(product);
         const bookProduct = isBookProduct(product);
+        const dmControls = isDm ? (
+          <span className={`absolute right-2 top-2 gap-1 ${bookProduct ? 'grid' : 'flex'}`}>
+            <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
+              {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
+            </span>
+            <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
+            <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/15 text-[var(--red)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
+          </span>
+        ) : null;
+        if (bookProduct) {
+          return (
+            <button
+              key={product.id}
+              type="button"
+              onClick={() => {
+                if (canOpen) onSelectProduct(product);
+              }}
+              className={`book-product-card relative flex min-h-[12rem] w-full flex-col justify-between rounded-2xl border p-4 text-center transition active:scale-[0.99] ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
+            >
+              {dmControls}
+              <span className="mx-auto mt-1 grid h-10 w-10 place-items-center rounded-xl border border-[var(--brass)]/35 bg-black/25 text-[var(--brass)]">
+                <ItemIcon type={product.type} size={20} />
+              </span>
+              <span className="mx-auto mt-3 block w-full max-w-[15rem] px-2">
+                <span className="line-clamp-3 break-words text-lg font-black leading-tight">{product.name}</span>
+                {(product.documentAuthor || product.description) && (
+                  <span className="mt-2 block line-clamp-2 break-words text-xs font-bold text-[var(--muted)]">
+                    {product.documentAuthor ? `By ${product.documentAuthor}` : product.description}
+                  </span>
+                )}
+              </span>
+              <span className="mt-4 block text-xs font-black">
+                {isDisplayBook(product) ? (
+                  <span className="text-[var(--muted)]">Read in library</span>
+                ) : (
+                  <span className="text-[var(--brass)]">{formatProductPrice(product)}</span>
+                )}
+              </span>
+              {disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">{unavailableReason(product)}</span>}
+              {!canShop && !disabled && !isDisplayBook(product) && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">Unavailable from current location</span>}
+            </button>
+          );
+        }
         return (
           <button
             key={product.id}
@@ -4175,28 +4218,20 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             onClick={() => {
               if (canOpen) onSelectProduct(product);
             }}
-            className={`relative rounded-2xl border text-left transition active:scale-[0.99] ${bookProduct ? 'min-h-[12rem] w-full p-3' : 'p-3'} ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
+            className={`relative rounded-2xl border p-3 text-left transition active:scale-[0.99] ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
           >
-            <span className={`mb-2 block ${isDm && !bookProduct ? 'pr-28' : isDm ? 'pr-9' : ''}`}>
+            <span className={`mb-2 block ${isDm ? 'pr-28' : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className={`${bookProduct ? 'text-base' : ''} line-clamp-2 break-words font-black leading-tight`}>{product.name}</span>
-                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : bookProduct ? `${product.rarity} book` : `${product.type} - ${product.rarity}`}</span>
+                  <span className="line-clamp-2 break-words font-black leading-tight">{product.name}</span>
+                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} - ${product.rarity}`}</span>
                 </span>
               </span>
-              {isDm && (
-                <span className={`absolute right-2 top-2 gap-1 ${bookProduct ? 'grid' : 'flex'}`}>
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
-                    {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </span>
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
-                  <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/15 text-[var(--red)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
-                </span>
-              )}
+              {dmControls}
             </span>
-            <p className={`${bookProduct ? 'line-clamp-1 min-h-4' : 'line-clamp-2 min-h-8'} text-xs text-[var(--muted)]`}>
-              {bookProduct ? product.documentAuthor || product.description || 'Readable volume' : productEffectText(product) || product.description}
+            <p className="line-clamp-2 min-h-8 text-xs text-[var(--muted)]">
+              {productEffectText(product) || product.description}
             </p>
             {manaBadge && (
               <span className="mt-2 inline-flex rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-[var(--brass)]">
@@ -4212,7 +4247,6 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
               <span className="text-[var(--brass)]">{formatProductPrice(product)}</span>
               <span className="text-[var(--muted)]">{product.stockQuantity === null ? 'Stock ∞' : `Stock ${product.stockQuantity}`}</span>
             </span>
-            {isDisplayBook(product) && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--teal)]">Public display book</span>}
             {disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">{unavailableReason(product)}</span>}
             {!canShop && !disabled && <span className="mt-2 block text-[10px] font-black uppercase text-[var(--muted)]">Unavailable from current location</span>}
           </button>
