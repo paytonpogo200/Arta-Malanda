@@ -59,7 +59,8 @@ function labelClasses(value: number) {
 
 function ownerLabel(profile: CampaignProfile | undefined) {
   if (!profile) return 'Unassigned';
-  return profile.displayName || profile.username || 'Player';
+  const label = profile.displayName || profile.username || 'Player';
+  return profile.role === 'dm' ? `DM - ${label}` : label;
 }
 
 function isJurshBlacksmith(character: Character, profiles: CampaignProfile[]) {

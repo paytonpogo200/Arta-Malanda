@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type MouseEvent, type PointerEvent, type WheelEvent } from 'react';
-import { Flag, ImageUp, Loader2, LocateFixed, Map, MapPin, Minus, MousePointer2, Package, Plus, Puzzle, Skull, Sprout, Swords, Trash2, type LucideIcon } from 'lucide-react';
+import { Flag, ImageUp, Loader2, LocateFixed, Map as MapIcon, MapPin, Minus, MousePointer2, Package, Plus, Puzzle, Skull, Sprout, Swords, Trash2, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { TextAreaField } from '@/components/ui/Field';
@@ -21,6 +21,14 @@ type DragState = {
   startY: number;
   originX: number;
   originY: number;
+};
+
+type PinchState = {
+  distance: number;
+  zoom: number;
+  offset: { x: number; y: number };
+  centerX: number;
+  centerY: number;
 };
 
 const PIN_TYPES: Array<{ type: WorldMapPinType; label: string; Icon: LucideIcon; className: string }> = [
@@ -45,6 +53,8 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const touchPointersRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<PinchState | null>(null);
   const [map, setMap] = useState<WorldMapImage | null>(null);
   const [pins, setPins] = useState<WorldMapPin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,6 +183,26 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
     });
   }
 
+  function zoomToward(nextZoom: number, clientX: number, clientY: number) {
+    const frame = frameRef.current;
+    if (!frame) {
+      changeZoom(nextZoom - zoom);
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    const clampedZoom = clamp(Number(nextZoom.toFixed(2)), 1, 3);
+    setOffset((current) => {
+      const localX = clientX - rect.left - rect.width / 2;
+      const localY = clientY - rect.top - rect.height / 2;
+      const zoomRatio = clampedZoom / zoom;
+      return clampOffset({
+        x: current.x - localX * (zoomRatio - 1),
+        y: current.y - localY * (zoomRatio - 1)
+      }, clampedZoom);
+    });
+    setZoom(clampedZoom);
+  }
+
   function resetView() {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
@@ -201,7 +231,21 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (addMode || zoom <= 1 || (event.target as HTMLElement).closest('[data-map-pin]')) return;
+    if (event.pointerType === 'touch') {
+      touchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touchPointersRef.current.size === 2) {
+        const [first, second] = Array.from(touchPointersRef.current.values());
+        pinchRef.current = {
+          distance: Math.hypot(second.x - first.x, second.y - first.y),
+          zoom,
+          offset,
+          centerX: (first.x + second.x) / 2,
+          centerY: (first.y + second.y) / 2
+        };
+        setDrag(null);
+      }
+    }
+    if (addMode || zoom <= 1 || (event.target as HTMLElement).closest('[data-map-pin]') || touchPointersRef.current.size > 1) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     setDrag({
@@ -214,6 +258,25 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   }
 
   function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'touch' && touchPointersRef.current.has(event.pointerId)) {
+      touchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pinchRef.current && touchPointersRef.current.size >= 2) {
+        event.preventDefault();
+        const [first, second] = Array.from(touchPointersRef.current.values());
+        const distance = Math.max(24, Math.hypot(second.x - first.x, second.y - first.y));
+        const nextZoom = clamp(pinchRef.current.zoom * (distance / Math.max(24, pinchRef.current.distance)), 1, 3);
+        const centerX = (first.x + second.x) / 2;
+        const centerY = (first.y + second.y) / 2;
+        const driftX = centerX - pinchRef.current.centerX;
+        const driftY = centerY - pinchRef.current.centerY;
+        setZoom(nextZoom);
+        setOffset(clampOffset({
+          x: pinchRef.current.offset.x + driftX,
+          y: pinchRef.current.offset.y + driftY
+        }, nextZoom));
+        return;
+      }
+    }
     if (!drag || drag.pointerId !== event.pointerId) return;
     setOffset(clampOffset({
       x: drag.originX + event.clientX - drag.startX,
@@ -222,13 +285,18 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
   }
 
   function handlePointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'touch') {
+      touchPointersRef.current.delete(event.pointerId);
+      if (touchPointersRef.current.size < 2) pinchRef.current = null;
+    }
     if (drag?.pointerId === event.pointerId) setDrag(null);
   }
 
   function handleWheel(event: WheelEvent<HTMLDivElement>) {
     if (!map) return;
     event.preventDefault();
-    changeZoom(event.deltaY > 0 ? -0.15 : 0.15);
+    event.stopPropagation();
+    zoomToward(zoom + (event.deltaY > 0 ? -0.15 : 0.15), event.clientX, event.clientY);
   }
 
   async function savePin() {
@@ -280,7 +348,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[var(--brass)]/45 bg-[var(--brass)]/15 text-[var(--brass)] shadow-[0_0_22px_rgba(245,180,76,0.14)]">
-              <Map size={24} />
+              <MapIcon size={24} />
             </span>
             <div className="min-w-0">
               <p className="eyebrow">Campaign Atlas</p>
@@ -332,6 +400,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
               onPointerCancel={handlePointerUp}
+              onWheelCapture={handleWheel}
               onWheel={handleWheel}
               onDoubleClick={() => changeZoom(0.35)}
             >
@@ -373,7 +442,7 @@ export function WorldMapPanel({ profile }: { profile: Profile }) {
             </div>
           ) : (
             <div className="grid min-h-[18rem] place-items-center gap-3 text-center text-[var(--muted)]">
-              <Map size={52} className="text-[var(--brass)]" />
+              <MapIcon size={52} className="text-[var(--brass)]" />
               {isDm && <Button variant="secondary" onClick={() => fileInputRef.current?.click()}>Upload World Map</Button>}
             </div>
           )}

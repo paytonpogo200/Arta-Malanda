@@ -324,6 +324,21 @@ export type MarketProduct = {
   manaLabel: string;
   documentAuthor: string;
   documentContent: string;
+  documentPages: string[];
+  documentVisibility: 'government' | 'for_sale';
+  documentEditorUserId: string | null;
+};
+
+export type ShopSection = {
+  id: string;
+  vendorId: string;
+  key: string;
+  name: string;
+  npcName: string;
+  roleLabel: string;
+  hidden: boolean;
+  order: number;
+  productCount: number;
 };
 
 export type ShopVendor = {
@@ -339,6 +354,7 @@ export type ShopVendor = {
   custom: boolean;
   hidden: boolean;
   order: number;
+  sections: ShopSection[];
   products: MarketProduct[];
 };
 

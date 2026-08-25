@@ -1322,6 +1322,15 @@ begin
       select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
       from public.characters c
       where c.kind = 'player'
+        and (
+          v_profile.role = 'dm'::public.user_role
+          or not exists (
+            select 1
+            from public.profiles owner_profile
+            where owner_profile.id = c.owner_user_id
+              and owner_profile.role = 'dm'::public.user_role
+          )
+        )
     )
   );
 end;
@@ -1502,6 +1511,7 @@ begin
   returning * into v_character;
 
   perform public.ensure_character_starter_armor(v_character.id);
+  perform public.ensure_dm_testing_wallet(v_character.id);
 
   return public.character_record_to_json(v_character);
 end;
@@ -1619,6 +1629,8 @@ begin
     location_name = case when v_location is not null then v_location.location_name else location_name end
   where id = p_character_id
   returning * into v_character;
+
+  perform public.ensure_dm_testing_wallet(v_character.id);
 
   return public.character_record_to_json(v_character);
 end;
@@ -2692,6 +2704,8 @@ begin
   if not exists (select 1 from public.characters where id = p_character_id) then
     raise exception 'Character not found.';
   end if;
+
+  perform public.ensure_dm_testing_wallet(p_character_id);
 
   return jsonb_build_object(
     'items', (
@@ -7486,6 +7500,9 @@ alter table public.market_products
   add column if not exists product_kind text not null default 'item',
   add column if not exists document_author text not null default '',
   add column if not exists document_content text not null default '',
+  add column if not exists document_pages jsonb not null default '[]'::jsonb,
+  add column if not exists document_visibility text not null default 'for_sale',
+  add column if not exists document_editor_user_id uuid references public.profiles(id) on delete set null,
   add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
   add column if not exists mana_label text not null default '';
 
@@ -7493,10 +7510,39 @@ alter table public.market_products
   drop constraint if exists market_products_currency_system_key_check,
   add constraint market_products_currency_system_key_check check (currency_system_key in ('calostrynn', 'common'));
 
+alter table public.market_products
+  drop constraint if exists market_products_document_visibility_check,
+  add constraint market_products_document_visibility_check check (document_visibility in ('government', 'for_sale'));
+
+create table if not exists public.shop_sections (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references public.shop_vendors(id) on delete cascade,
+  section_key text not null,
+  section_name text not null,
+  npc_name text not null default '',
+  role_label text not null default '',
+  is_hidden boolean not null default false,
+  display_order int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint shop_sections_name_not_blank check (length(trim(section_name)) > 0),
+  constraint shop_sections_vendor_key_unique unique (vendor_id, section_key)
+);
+
+create index if not exists shop_sections_vendor_idx on public.shop_sections(vendor_id);
+
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
   applied_at timestamptz not null default now()
 );
+
+create or replace function public.safe_slug(p_value text)
+returns text
+language sql
+immutable
+as $$
+  select coalesce(nullif(regexp_replace(lower(trim(coalesce(p_value, ''))), '[^a-z0-9]+', '-', 'g'), ''), 'entry')
+$$;
 
 insert into public.app_data_repairs (repair_key)
 select 'calostrynn-shop-defaults-preexisting-2026-08-24'
@@ -7528,10 +7574,12 @@ where lower(item_name) in ('empty flask', 'arcane nector')
 
 alter table public.cities enable row level security;
 alter table public.shop_vendors enable row level security;
+alter table public.shop_sections enable row level security;
 alter table public.market_products enable row level security;
 
 revoke all on public.cities from anon, authenticated;
 revoke all on public.shop_vendors from anon, authenticated;
+revoke all on public.shop_sections from anon, authenticated;
 revoke all on public.market_products from anon, authenticated;
 
 drop trigger if exists cities_touch_updated_at on public.cities;
@@ -7542,6 +7590,11 @@ for each row execute function public.touch_updated_at();
 drop trigger if exists shop_vendors_touch_updated_at on public.shop_vendors;
 create trigger shop_vendors_touch_updated_at
 before update on public.shop_vendors
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists shop_sections_touch_updated_at on public.shop_sections;
+create trigger shop_sections_touch_updated_at
+before update on public.shop_sections
 for each row execute function public.touch_updated_at();
 
 drop trigger if exists market_products_touch_updated_at on public.market_products;
@@ -8128,7 +8181,10 @@ as $$
     'manaCost', p_product.mana_cost,
     'manaLabel', p_product.mana_label,
     'documentAuthor', p_product.document_author,
-    'documentContent', case when p_product.product_kind = 'document' and p_product.price_coin > 0 then '' else p_product.document_content end,
+    'documentContent', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and p_product.price_coin > 0 then '' else p_product.document_content end,
+    'documentPages', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and p_product.price_coin > 0 then '[]'::jsonb else coalesce(p_product.document_pages, '[]'::jsonb) end,
+    'documentVisibility', p_product.document_visibility,
+    'documentEditorUserId', p_product.document_editor_user_id,
     'available', p_product.is_available
   )
 $$;
@@ -8283,6 +8339,40 @@ begin
 end;
 $$;
 
+create or replace function public.ensure_dm_testing_wallet(p_character_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_owner public.profiles%rowtype;
+  v_floor int := 9999 * 10000;
+begin
+  if p_character_id is null then
+    return;
+  end if;
+
+  select p.* into v_owner
+  from public.characters c
+  join public.profiles p on p.id = c.owner_user_id
+  where c.id = p_character_id
+    and p.role = 'dm'::public.user_role;
+
+  if v_owner.id is null then
+    return;
+  end if;
+
+  if public.wallet_total_currency(p_character_id, 'calostrynn') < v_floor then
+    perform public.set_wallet_from_currency_value(p_character_id, 'calostrynn', v_floor);
+  end if;
+
+  if public.wallet_total_currency(p_character_id, 'common') < v_floor then
+    perform public.set_wallet_from_currency_value(p_character_id, 'common', v_floor);
+  end if;
+end;
+$$;
+
 alter table public.shop_vendors
 add column if not exists npc_name text not null default 'Shopkeeper',
 add column if not exists blueprint_type text not null default 'market',
@@ -8297,12 +8387,19 @@ alter table public.market_products
   add column if not exists product_kind text not null default 'item',
   add column if not exists document_author text not null default '',
   add column if not exists document_content text not null default '',
+  add column if not exists document_pages jsonb not null default '[]'::jsonb,
+  add column if not exists document_visibility text not null default 'for_sale',
+  add column if not exists document_editor_user_id uuid references public.profiles(id) on delete set null,
   add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
   add column if not exists mana_label text not null default '';
 
 alter table public.market_products
   drop constraint if exists market_products_product_kind_check,
   add constraint market_products_product_kind_check check (product_kind in ('item', 'spell', 'document', 'service'));
+
+alter table public.market_products
+  drop constraint if exists market_products_document_visibility_check,
+  add constraint market_products_document_visibility_check check (document_visibility in ('government', 'for_sale'));
 
 update public.shop_vendors
 set blueprint_type = 'market'
@@ -8332,6 +8429,92 @@ set product_kind = case
 end
 where not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24');
 
+insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+select
+  p.vendor_id,
+  public.safe_slug(coalesce(nullif(trim(p.shop_section), ''), 'Wares')),
+  coalesce(nullif(trim(p.shop_section), ''), 'Wares'),
+  coalesce(min(p.display_order), 0)
+from public.market_products p
+group by p.vendor_id, coalesce(nullif(trim(p.shop_section), ''), 'Wares')
+on conflict (vendor_id, section_key) do update
+set section_name = excluded.section_name,
+    display_order = least(public.shop_sections.display_order, excluded.display_order);
+
+insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+select v.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order
+from public.shop_vendors v
+join (values
+  ('market', 'Wares', 10),
+  ('blacksmith', 'Material Scales', 10),
+  ('blacksmith', 'Runes', 20),
+  ('blacksmith', 'Light Weapons', 100),
+  ('blacksmith', 'Medium Weapons', 110),
+  ('blacksmith', 'Heavy Weapons', 120),
+  ('blacksmith', 'Magecraft Commissions', 130),
+  ('blacksmith', 'Shield Creation', 140),
+  ('blacksmith', 'Mythril Services', 200),
+  ('blacksmith', 'Dragon Scale Refining', 210),
+  ('armory', 'Material Scales', 10),
+  ('armory', 'Armor Creation', 100),
+  ('armory', 'Mythril Services', 200),
+  ('armory', 'Dragon Scale Refining', 210),
+  ('brewery', 'Brewing Supplies', 10),
+  ('brewery', 'Finished Potions', 20),
+  ('brewery', 'Brew Potion', 100),
+  ('spell_registrar', 'Ember Spells', 10),
+  ('spell_registrar', 'Frost Spells', 20),
+  ('spell_registrar', 'Lightning Spells', 30),
+  ('spell_registrar', 'Earth Spells', 40),
+  ('spell_registrar', 'Wind Spells', 50),
+  ('spell_registrar', 'Energy Spells', 60),
+  ('spell_registrar', 'Defensive Support Spells', 70),
+  ('spell_registrar', 'Offensive Support Spells', 80),
+  ('spell_registrar', 'Enhancement Spells', 90),
+  ('spell_registrar', 'Utility Spells', 100),
+  ('library', 'Government', 10),
+  ('library', 'Recreation', 20),
+  ('library', 'For Sale', 30)
+) as seed(blueprint_type, section_name, display_order) on seed.blueprint_type = v.blueprint_type
+on conflict (vendor_id, section_key) do nothing;
+
+update public.market_products
+set document_pages = to_jsonb(array[document_content])
+where product_kind = 'document'
+  and jsonb_array_length(coalesce(document_pages, '[]'::jsonb)) = 0
+  and length(trim(coalesce(document_content, ''))) > 0;
+
+update public.market_products
+set document_visibility = case
+  when lower(coalesce(shop_section, '')) = 'government' then 'government'
+  else 'for_sale'
+end
+where product_kind = 'document'
+  and document_visibility not in ('government', 'for_sale');
+
+create or replace function public.shop_section_record_to_json(p_section public.shop_sections)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'id', p_section.id,
+    'vendorId', p_section.vendor_id,
+    'key', p_section.section_key,
+    'name', p_section.section_name,
+    'npcName', p_section.npc_name,
+    'roleLabel', p_section.role_label,
+    'hidden', p_section.is_hidden,
+    'order', p_section.display_order,
+    'productCount', (
+      select count(*)::int
+      from public.market_products p
+      where p.vendor_id = p_section.vendor_id
+        and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = p_section.section_name
+    )
+  )
+$$;
+
 create or replace function public.shop_vendor_record_to_json(p_vendor public.shop_vendors, p_is_dm boolean default false)
 returns jsonb
 language sql
@@ -8350,6 +8533,12 @@ as $$
     'custom', p_vendor.is_custom,
     'hidden', p_vendor.is_hidden,
     'order', p_vendor.display_order,
+    'sections', (
+      select coalesce(jsonb_agg(public.shop_section_record_to_json(s) order by s.display_order, s.section_name), '[]'::jsonb)
+      from public.shop_sections s
+      where s.vendor_id = p_vendor.id
+        and (p_is_dm or not s.is_hidden)
+    ),
     'products', (
       select coalesce(jsonb_agg(public.market_product_record_to_json(p) order by p.display_order, p.item_name), '[]'::jsonb)
       from public.market_products p
@@ -8375,6 +8564,15 @@ begin
   end if;
 
   return jsonb_build_object(
+    'profiles', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', p.id,
+        'username', p.username::text,
+        'displayName', p.display_name,
+        'role', p.role
+      ) order by p.display_name), '[]'::jsonb)
+      from public.profiles p
+    ),
     'characters', (
       select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
       from public.characters c
@@ -8511,6 +8709,7 @@ begin
 
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
     perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -8554,6 +8753,7 @@ begin
 
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
     perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
 
     if v_product.stock_quantity is not null then
       update public.market_products
@@ -8625,6 +8825,7 @@ begin
   if public.normalize_item_type(v_product.item_type) = 'pet' then
     perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
     perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
     perform public.place_pet_item_in_stable_for_character(
       v_character.id,
       v_item_name,
@@ -8791,6 +8992,7 @@ begin
 
   perform public.set_wallet_from_currency_value(v_character.id, v_product.currency_system_key, v_wallet - v_cost);
   perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
+  perform public.ensure_dm_testing_wallet(v_character.id);
 
   if v_product.stock_quantity is not null then
     update public.market_products
@@ -8847,6 +9049,7 @@ declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_product public.market_products%rowtype;
+  v_document_editor boolean := false;
   v_spell_type text;
   v_spell_key text;
 begin
@@ -8855,8 +9058,28 @@ begin
     raise exception 'Invalid or expired session.';
   end if;
 
-  if v_profile.role <> 'dm'::public.user_role then
+  select * into v_product
+  from public.market_products
+  where id = p_product_id;
+
+  if v_product.id is null then
+    raise exception 'Shop product not found.';
+  end if;
+
+  v_document_editor := v_product.product_kind = 'document'
+    and v_product.document_visibility = 'government'
+    and v_product.document_editor_user_id = v_profile.id;
+
+  if v_profile.role <> 'dm'::public.user_role and not v_document_editor then
     raise exception 'Only the Dungeon Master can change shop stock.';
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role then
+    v_patch := jsonb_strip_nulls(jsonb_build_object(
+      'documentAuthor', v_patch->'documentAuthor',
+      'documentContent', v_patch->'documentContent',
+      'documentPages', v_patch->'documentPages'
+    ));
   end if;
 
   update public.market_products
@@ -8883,6 +9106,23 @@ begin
     end,
     document_author = case when v_patch ? 'documentAuthor' then left(trim(coalesce(v_patch->>'documentAuthor', '')), 160) else document_author end,
     document_content = case when v_patch ? 'documentContent' then left(coalesce(v_patch->>'documentContent', ''), 12000) else document_content end,
+    document_pages = case
+      when v_patch ? 'documentPages' and jsonb_typeof(v_patch->'documentPages') = 'array'
+        then (
+          select coalesce(jsonb_agg(left(page.value #>> '{}', 6000)), '[]'::jsonb)
+          from jsonb_array_elements(v_patch->'documentPages') as page(value)
+        )
+      else document_pages
+    end,
+    document_visibility = case
+      when v_patch ? 'documentVisibility' and v_patch->>'documentVisibility' = 'government' then 'government'
+      when v_patch ? 'documentVisibility' then 'for_sale'
+      else document_visibility
+    end,
+    document_editor_user_id = case
+      when v_patch ? 'documentEditorUserId' then nullif(v_patch->>'documentEditorUserId', '')::uuid
+      else document_editor_user_id
+    end,
     quantity_step = case
       when lower(coalesce(nullif(trim(v_patch->>'name'), ''), item_name)) in ('bronze scale', 'iron scale', 'steel scale', 'mythril scale', 'vaylium scale', 'dragonscale scale') then 1
       when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5
@@ -8893,8 +9133,11 @@ begin
   where id = p_product_id
   returning * into v_product;
 
-  if v_product.id is null then
-    raise exception 'Shop product not found.';
+  if v_patch ? 'section' then
+    insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+    values (v_product.vendor_id, public.safe_slug(v_product.shop_section), v_product.shop_section, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = v_product.vendor_id), 10))
+    on conflict (vendor_id, section_key) do update
+    set section_name = excluded.section_name;
   end if;
 
   if v_product.product_kind = 'spell' then
@@ -11028,6 +11271,7 @@ begin
     v_wallet := public.wallet_total_currency(v_character.id, v_currency_system);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
     perform public.set_wallet_from_currency_value(v_character.id, v_currency_system, v_wallet - v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
 
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
@@ -11238,6 +11482,7 @@ begin
     v_wallet := public.wallet_total_currency(v_character.id, v_currency_system);
     if v_wallet < v_cost then raise exception 'Not enough currency.'; end if;
     perform public.set_wallet_from_currency_value(v_character.id, v_currency_system, v_wallet - v_cost);
+    perform public.ensure_dm_testing_wallet(v_character.id);
 
     v_slot := public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots);
     if v_slot is null then raise exception 'Inventory full.'; end if;
@@ -11926,6 +12171,7 @@ grant execute on function public.wallet_total_currency(uuid, text) to anon, auth
 grant execute on function public.set_wallet_from_coin_value(uuid, int) to anon, authenticated;
 grant execute on function public.set_wallet_from_currency_value(uuid, text, int) to anon, authenticated;
 grant execute on function public.credit_character_wallet_value(uuid, text, int) to anon, authenticated;
+grant execute on function public.ensure_dm_testing_wallet(uuid) to anon, authenticated;
 grant execute on function public.get_discovered_cities(text) to anon, authenticated;
 grant execute on function public.purchase_market_product(text, uuid, uuid, numeric, text) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
@@ -12479,6 +12725,9 @@ begin
       product_kind,
       document_author,
       document_content,
+      document_pages,
+      document_visibility,
+      document_editor_user_id,
       is_available,
       display_order
     )
@@ -12498,6 +12747,9 @@ begin
       p.product_kind,
       p.document_author,
       p.document_content,
+      p.document_pages,
+      p.document_visibility,
+      p.document_editor_user_id,
       p.is_available,
       p.display_order
     from public.market_products p
@@ -12509,6 +12761,52 @@ begin
       price_coin = 0
   where vendor_id = v_vendor.id
     and v_vendor.city_key <> 'calostrynn';
+
+  insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+  select v_vendor.id, public.safe_slug(coalesce(nullif(trim(p.shop_section), ''), 'Wares')), coalesce(nullif(trim(p.shop_section), ''), 'Wares'), coalesce(min(p.display_order), 0)
+  from public.market_products p
+  where p.vendor_id = v_vendor.id
+  group by coalesce(nullif(trim(p.shop_section), ''), 'Wares')
+  on conflict (vendor_id, section_key) do update
+  set section_name = excluded.section_name,
+      display_order = least(public.shop_sections.display_order, excluded.display_order);
+
+  insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+  select v_vendor.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order
+  from (values
+    ('market', 'Wares', 10),
+    ('blacksmith', 'Material Scales', 10),
+    ('blacksmith', 'Runes', 20),
+    ('blacksmith', 'Light Weapons', 100),
+    ('blacksmith', 'Medium Weapons', 110),
+    ('blacksmith', 'Heavy Weapons', 120),
+    ('blacksmith', 'Magecraft Commissions', 130),
+    ('blacksmith', 'Shield Creation', 140),
+    ('blacksmith', 'Mythril Services', 200),
+    ('blacksmith', 'Dragon Scale Refining', 210),
+    ('armory', 'Material Scales', 10),
+    ('armory', 'Armor Creation', 100),
+    ('armory', 'Mythril Services', 200),
+    ('armory', 'Dragon Scale Refining', 210),
+    ('brewery', 'Brewing Supplies', 10),
+    ('brewery', 'Finished Potions', 20),
+    ('brewery', 'Brew Potion', 100),
+    ('spell_registrar', 'Ember Spells', 10),
+    ('spell_registrar', 'Frost Spells', 20),
+    ('spell_registrar', 'Lightning Spells', 30),
+    ('spell_registrar', 'Earth Spells', 40),
+    ('spell_registrar', 'Wind Spells', 50),
+    ('spell_registrar', 'Energy Spells', 60),
+    ('spell_registrar', 'Defensive Support Spells', 70),
+    ('spell_registrar', 'Offensive Support Spells', 80),
+    ('spell_registrar', 'Enhancement Spells', 90),
+    ('spell_registrar', 'Utility Spells', 100),
+    ('library', 'Government', 10),
+    ('library', 'Recreation', 20),
+    ('library', 'For Sale', 30)
+  ) as seed(blueprint_type, section_name, display_order)
+  where seed.blueprint_type = v_blueprint
+  on conflict (vendor_id, section_key) do nothing;
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -12600,6 +12898,9 @@ begin
     mana_label,
     document_author,
     document_content,
+    document_pages,
+    document_visibility,
+    document_editor_user_id,
     is_available,
     display_order
   )
@@ -12625,9 +12926,25 @@ begin
     case when v_kind = 'spell' then greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0))::text || ' mana' else '' end,
     left(trim(coalesce(v_patch->>'documentAuthor', '')), 160),
     left(coalesce(v_patch->>'documentContent', ''), 12000),
+    case
+      when v_patch ? 'documentPages' and jsonb_typeof(v_patch->'documentPages') = 'array'
+        then (
+          select coalesce(jsonb_agg(left(page.value #>> '{}', 6000)), '[]'::jsonb)
+          from jsonb_array_elements(v_patch->'documentPages') as page(value)
+        )
+      when length(trim(coalesce(v_patch->>'documentContent', ''))) > 0 then to_jsonb(array[left(coalesce(v_patch->>'documentContent', ''), 6000)])
+      else '[]'::jsonb
+    end,
+    case when v_patch ? 'documentVisibility' and v_patch->>'documentVisibility' = 'government' then 'government' else 'for_sale' end,
+    nullif(v_patch->>'documentEditorUserId', '')::uuid,
     coalesce((v_patch->>'available')::boolean, true),
     coalesce((select max(display_order) + 10 from public.market_products where vendor_id = p_vendor_id), 10)
   );
+
+  insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
+  values (p_vendor_id, public.safe_slug(v_section), v_section, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10))
+  on conflict (vendor_id, section_key) do update
+  set section_name = excluded.section_name;
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -12662,6 +12979,102 @@ begin
 end;
 $$;
 
+create or replace function public.create_shop_section(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_vendor public.shop_vendors%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_name text := coalesce(nullif(trim(v_patch->>'name'), ''), 'Wares');
+begin
+  perform public.require_dm_profile(p_session_token);
+
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null then raise exception 'Shop not found.'; end if;
+
+  insert into public.shop_sections (
+    vendor_id,
+    section_key,
+    section_name,
+    npc_name,
+    role_label,
+    is_hidden,
+    display_order
+  )
+  values (
+    p_vendor_id,
+    public.safe_slug(v_name),
+    v_name,
+    left(trim(coalesce(v_patch->>'npcName', '')), 120),
+    left(trim(coalesce(v_patch->>'roleLabel', '')), 120),
+    coalesce((v_patch->>'hidden')::boolean, false),
+    coalesce(nullif(v_patch->>'order', '')::int, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10))
+  )
+  on conflict (vendor_id, section_key) do update
+  set section_name = excluded.section_name,
+      npc_name = excluded.npc_name,
+      role_label = excluded.role_label,
+      is_hidden = excluded.is_hidden,
+      display_order = excluded.display_order;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.update_shop_section(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_section_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_section public.shop_sections%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_name text;
+begin
+  perform public.require_dm_profile(p_session_token);
+
+  select * into v_section
+  from public.shop_sections
+  where id = p_section_id
+    and vendor_id = p_vendor_id;
+
+  if v_section.id is null then raise exception 'Shop section not found.'; end if;
+
+  v_name := case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), v_section.section_name) else v_section.section_name end;
+
+  update public.shop_sections
+  set section_key = public.safe_slug(v_name),
+      section_name = v_name,
+      npc_name = case when v_patch ? 'npcName' then left(trim(coalesce(v_patch->>'npcName', '')), 120) else npc_name end,
+      role_label = case when v_patch ? 'roleLabel' then left(trim(coalesce(v_patch->>'roleLabel', '')), 120) else role_label end,
+      is_hidden = case when v_patch ? 'hidden' then coalesce((v_patch->>'hidden')::boolean, false) else is_hidden end,
+      display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
+  where id = v_section.id;
+
+  if v_name <> v_section.section_name then
+    update public.market_products
+    set shop_section = v_name
+    where vendor_id = p_vendor_id
+      and coalesce(nullif(trim(shop_section), ''), 'Wares') = v_section.section_name;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
 create or replace function public.delete_market_section(
   p_session_token text,
   p_vendor_id uuid,
@@ -12689,6 +13102,10 @@ begin
   delete from public.market_products
   where vendor_id = p_vendor_id
     and coalesce(nullif(trim(shop_section), ''), 'Wares') = v_section;
+
+  delete from public.shop_sections
+  where vendor_id = p_vendor_id
+    and section_name = v_section;
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -12724,7 +13141,10 @@ end;
 $$;
 
 grant execute on function public.safe_slug(text) to anon, authenticated;
+grant execute on function public.shop_section_record_to_json(public.shop_sections) to anon, authenticated;
 grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
+grant execute on function public.create_shop_section(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.update_shop_section(text, uuid, uuid, jsonb) to anon, authenticated;
 grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.delete_market_product(text, uuid) to anon, authenticated;
 grant execute on function public.delete_market_section(text, uuid, text) to anon, authenticated;
@@ -13183,6 +13603,7 @@ begin
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
 
   v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  perform public.ensure_dm_testing_wallet(v_character.id);
 
   select * into v_item
   from public.inventory_items
@@ -16803,6 +17224,9 @@ grant execute on function public.get_daily_rewards(text) to anon, authenticated;
 grant execute on function public.update_daily_reward_schedule(text, jsonb) to anon, authenticated;
 grant execute on function public.claim_daily_reward(text, date, uuid) to anon, authenticated;
 grant execute on function public.shop_vendor_record_to_json(public.shop_vendors, boolean) to anon, authenticated;
+grant execute on function public.shop_section_record_to_json(public.shop_sections) to anon, authenticated;
+grant execute on function public.create_shop_section(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.update_shop_section(text, uuid, uuid, jsonb) to anon, authenticated;
 grant execute on function public.is_currency_loot_item(public.loot_items) to anon, authenticated;
 grant execute on function public.loot_item_record_to_json(public.loot_items) to anon, authenticated;
 grant execute on function public.get_exploration_state(text) to anon, authenticated;
@@ -17003,6 +17427,11 @@ for each row execute function public.touch_app_live_update_trigger('dashboard,ci
 drop trigger if exists app_live_shop_vendors on public.shop_vendors;
 create trigger app_live_shop_vendors
 after insert or update or delete on public.shop_vendors
+for each row execute function public.touch_app_live_update_trigger('cities,assets');
+
+drop trigger if exists app_live_shop_sections on public.shop_sections;
+create trigger app_live_shop_sections
+after insert or update or delete on public.shop_sections
 for each row execute function public.touch_app_live_update_trigger('cities,assets');
 
 drop trigger if exists app_live_market_products on public.market_products;
@@ -18077,6 +18506,15 @@ begin
   end if;
 
   return jsonb_build_object(
+    'profiles', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', p.id,
+        'username', p.username::text,
+        'displayName', p.display_name,
+        'role', p.role
+      ) order by p.display_name), '[]'::jsonb)
+      from public.profiles p
+    ),
     'characters', (
       select coalesce(jsonb_agg(public.character_record_to_json(c) order by c.name), '[]'::jsonb)
       from public.characters c

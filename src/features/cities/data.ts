@@ -1,8 +1,9 @@
-import { normalizeCharacter } from '@/features/characters/data';
+import { normalizeCharacter, normalizeProfile } from '@/features/characters/data';
 import { ITEM_TYPES } from '@/features/inventory/data';
-import type { Character, City, CityConstructionProject, CityConstructionRequirement, ItemCatalogEntry, ItemRarity, ItemType, LoadoutModifiers, MarketProduct, ShopVendor } from '@/lib/types';
+import type { Character, City, CityConstructionProject, CityConstructionRequirement, ItemCatalogEntry, ItemRarity, ItemType, LoadoutModifiers, MarketProduct, Profile, ShopSection, ShopVendor } from '@/lib/types';
 
 export type CitiesPayload = {
+  profiles: Profile[];
   characters: Character[];
   cities: City[];
   vendors: ShopVendor[];
@@ -169,6 +170,11 @@ export function normalizeConstructionProject(value: unknown): CityConstructionPr
 export function normalizeProduct(value: unknown): MarketProduct {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const kind = source.kind === 'spell' || source.kind === 'document' || source.kind === 'service' ? source.kind : 'item';
+  const rawPages = Array.isArray(source.documentPages)
+    ? source.documentPages
+    : Array.isArray(source.document_pages)
+      ? source.document_pages
+      : [];
   return {
     id: String(source.id ?? ''),
     vendorId: String(source.vendorId ?? ''),
@@ -188,7 +194,25 @@ export function normalizeProduct(value: unknown): MarketProduct {
     manaCost: Math.max(0, numberFrom(source.manaCost, 0)),
     manaLabel: String(source.manaLabel ?? ''),
     documentAuthor: String(source.documentAuthor ?? ''),
-    documentContent: String(source.documentContent ?? '')
+    documentContent: String(source.documentContent ?? ''),
+    documentPages: rawPages.map(String),
+    documentVisibility: source.documentVisibility === 'government' || source.document_visibility === 'government' ? 'government' : 'for_sale',
+    documentEditorUserId: source.documentEditorUserId || source.document_editor_user_id ? String(source.documentEditorUserId ?? source.document_editor_user_id) : null
+  };
+}
+
+export function normalizeShopSection(value: unknown): ShopSection {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    id: String(source.id ?? ''),
+    vendorId: String(source.vendorId ?? ''),
+    key: String(source.key ?? ''),
+    name: String(source.name ?? 'Wares'),
+    npcName: String(source.npcName ?? ''),
+    roleLabel: String(source.roleLabel ?? ''),
+    hidden: Boolean(source.hidden),
+    order: numberFrom(source.order, 0),
+    productCount: Math.max(0, numberFrom(source.productCount, 0))
   };
 }
 
@@ -214,6 +238,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
     custom: Boolean(source.custom),
     hidden: Boolean(source.hidden),
     order: numberFrom(source.order, 0),
+    sections: Array.isArray(source.sections) ? source.sections.map(normalizeShopSection).filter((section) => section.id || section.name) : [],
     products: Array.isArray(source.products) ? source.products.map(normalizeProduct).filter((product) => product.id) : []
   };
 }
@@ -221,6 +246,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
 export function normalizeCitiesPayload(value: unknown): CitiesPayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
+    profiles: Array.isArray(source.profiles) ? source.profiles.map(normalizeProfile).filter((profile) => profile.id) : [],
     characters: Array.isArray(source.characters) ? source.characters.map(normalizeCharacter).filter((character) => character.id) : [],
     cities: Array.isArray(source.cities) ? source.cities.map(normalizeCity).filter((city) => city.key) : [],
     vendors: Array.isArray(source.vendors) ? source.vendors.map(normalizeVendor).filter((vendor) => vendor.id) : [],
