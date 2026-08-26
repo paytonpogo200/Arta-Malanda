@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
-import { BookOpen, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Eye, Loader2, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Modal } from '@/components/ui/Modal';
@@ -26,6 +26,7 @@ function SpellCard({
   canActivate,
   onUse,
   onToggle,
+  onDelete,
   onInspect
 }: {
   entry: CharacterSpell;
@@ -34,6 +35,7 @@ function SpellCard({
   canActivate: boolean;
   onUse: (entry: CharacterSpell) => void;
   onToggle: (entry: CharacterSpell, active: boolean) => void;
+  onDelete: (entry: CharacterSpell) => void;
   onInspect: (entry: CharacterSpell) => void;
 }) {
   return (
@@ -59,12 +61,20 @@ function SpellCard({
           <Eye className="mr-2 inline" size={14} /> Inspect
         </Button>
         {canManage && (entry.active ? (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2 sm:grid-cols-3">
               <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => onUse(entry)}>Use spell</Button>
               <Button variant="secondary" className="px-3 py-2 text-xs" disabled={activeBattle} onClick={() => onToggle(entry, false)}>Bench</Button>
+              <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => onDelete(entry)}>
+                <Trash2 className="mr-1 inline" size={13} /> Delete
+              </Button>
             </div>
           ) : (
-            <Button variant="teal" className="px-3 py-2 text-xs" disabled={activeBattle || !canActivate} onClick={() => onToggle(entry, true)}>{canActivate ? 'Activate' : 'No open slot'}</Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="teal" className="px-3 py-2 text-xs" disabled={activeBattle || !canActivate} onClick={() => onToggle(entry, true)}>{canActivate ? 'Activate' : 'No open slot'}</Button>
+              <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => onDelete(entry)}>
+                <Trash2 className="mr-1 inline" size={13} /> Delete
+              </Button>
+            </div>
           ))}
       </div>
     </article>
@@ -291,6 +301,28 @@ export function SpellsPanel({
     void patchSpell(entry, { active });
   }
 
+  async function deleteSpell(entry: CharacterSpell) {
+    if (!canManage) return;
+    const confirmed = window.confirm(`Delete ${entry.spell.name} from ${character.name}?`);
+    if (!confirmed) return;
+    setSaving(true);
+    setError('');
+    try {
+      const normalized = await replaceFromResponse(await fetch(`/api/characters/spells/${entry.id}`, {
+        method: 'DELETE'
+      }), 'Spell could not be deleted.');
+      if (inspectedOwnedSpell?.id === entry.id) {
+        setInspectedOwnedSpell(null);
+        setEditingSpell(false);
+      }
+      setGrantSpellId((current) => current || normalized.catalog[0]?.id || '');
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Spell could not be deleted.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function toggleGrantType(type: string) {
     setExpandedGrantTypes((current) => {
       const next = new Set(current);
@@ -389,7 +421,7 @@ export function SpellsPanel({
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">{activeOnly ? 'Active spells' : 'Active slots'} {activeSpells.length}/{character.spellSlots}</h3></div>
             {activeOnly ? (
               <div className="grid gap-2 sm:grid-cols-2">
-                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
+                {activeSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onDelete={deleteSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
                 {enchantedSpells.map(({ item, spell }) => <EnchantedSpellCard key={`${item.id}:${spell.id}`} item={item} spell={spell} canManage={canManage} onUse={useEnchantedSpell} onInspect={(spellValue) => { setInspectedSpell(spellValue); setInspectedOwnedSpell(null); setEditingSpell(false); }} />)}
                 {!activeSpells.length && !enchantedSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">No active spells slotted.</div>}
               </div>
@@ -399,7 +431,7 @@ export function SpellsPanel({
                   const entry = activeSlots.get(slot) ?? unplacedActiveSpells[slot - activeSlotCount];
                   return entry ? (
                     <div key={entry.id} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)}>
-                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />
+                      <SpellCard entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onDelete={deleteSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />
                     </div>
                   ) : (
                     <div key={slot} onDragOver={dragOverSpell} onDrop={(event) => dropSpellToActive(event, slot)} className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Empty slot</div>
@@ -413,7 +445,7 @@ export function SpellsPanel({
             <details className="rounded-2xl border border-[var(--line)] bg-black/10">
               <summary className="cursor-pointer list-none p-3 font-black">Inactive spells; {inactiveSpells.length}</summary>
               <div onDragOver={dragOverSpell} onDrop={dropSpellToInactive} className="grid min-h-24 gap-2 border-t border-[var(--line)] p-3 sm:grid-cols-2">
-                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
+                {inactiveSpells.map((entry) => <SpellCard key={entry.id} entry={entry} canManage={canManage} activeBattle={activeBattle} canActivate={canActivateInactive} onUse={useSpell} onToggle={toggleSpell} onDelete={deleteSpell} onInspect={(spellEntry) => { setInspectedOwnedSpell(spellEntry); setInspectedSpell(null); setEditingSpell(false); }} />)}
                 {!inactiveSpells.length && <div className="rounded-2xl border border-dashed border-[var(--line)] bg-black/10 p-4 text-center text-sm text-[var(--muted)]">Drop spells here to bench them.</div>}
               </div>
             </details>
@@ -493,7 +525,12 @@ export function SpellsPanel({
               {inspectedOwnedSpell.spell.details || inspectedOwnedSpell.spell.summary || 'No spell description entered yet.'}
             </div>
             {canManage && !editingSpell && (
-              <Button variant="teal" type="button" onClick={() => setEditingSpell(true)}>Edit owned spell</Button>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button variant="teal" type="button" onClick={() => setEditingSpell(true)}>Edit owned spell</Button>
+                <Button variant="danger" type="button" disabled={saving} onClick={() => deleteSpell(inspectedOwnedSpell)}>
+                  <Trash2 className="mr-2 inline" size={15} /> Delete spell
+                </Button>
+              </div>
             )}
             {canManage && editingSpell && (
               <div className="grid gap-3 rounded-xl border border-[var(--line)] bg-black/20 p-3">

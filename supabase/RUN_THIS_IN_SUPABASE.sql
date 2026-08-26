@@ -13621,6 +13621,34 @@ begin
 end;
 $$;
 
+create or replace function public.delete_character_spell(
+  p_session_token text,
+  p_character_spell_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_entry public.character_spells%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_entry from public.character_spells where id = p_character_spell_id;
+  if v_entry.id is null then raise exception 'Character spell not found.'; end if;
+
+  perform public.assert_inventory_access(v_profile, v_entry.character_id, false);
+
+  delete from public.character_spells
+  where id = p_character_spell_id;
+
+  return public.get_character_spells(p_session_token, v_entry.character_id);
+end;
+$$;
+
 create or replace function public.use_character_spell(
   p_session_token text,
   p_character_spell_id uuid
@@ -13898,6 +13926,7 @@ grant execute on function public.get_character_spells(text, uuid) to anon, authe
 grant execute on function public.grant_character_spell(text, uuid, uuid) to anon, authenticated;
 grant execute on function public.update_character_spell_details(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_character_spell_state(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.delete_character_spell(text, uuid) to anon, authenticated;
 grant execute on function public.use_character_spell(text, uuid) to anon, authenticated;
 grant execute on function public.use_inventory_enchantment_spell(text, uuid, uuid, uuid) to anon, authenticated;
 grant execute on function public.use_spell_book_item(text, uuid, uuid, uuid, int, boolean) to anon, authenticated;
