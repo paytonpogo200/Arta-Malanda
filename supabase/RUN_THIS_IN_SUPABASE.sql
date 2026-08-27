@@ -7641,6 +7641,9 @@ create table if not exists public.app_data_repairs (
   applied_at timestamptz not null default now()
 );
 
+alter table public.app_data_repairs enable row level security;
+revoke all on public.app_data_repairs from anon, authenticated;
+
 create or replace function public.safe_slug(p_value text)
 returns text
 language sql

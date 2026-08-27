@@ -32,6 +32,14 @@ function lineNumberAt(source, index) {
 }
 
 const sql = fs.readFileSync(sqlPath, 'utf8');
+const createdPublicTables = new Set(
+  Array.from(sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-zA-Z0-9_]+)/gi))
+    .map((match) => match[1])
+);
+const rlsEnabledPublicTables = new Set(
+  Array.from(sql.matchAll(/alter\s+table\s+public\.([a-zA-Z0-9_]+)\s+enable\s+row\s+level\s+security/gi))
+    .map((match) => match[1])
+);
 const definitions = new Map();
 const firstDefinitionLines = new Map();
 const definitionPattern = /create\s+or\s+replace\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:returns|language)\b/gi;
@@ -79,6 +87,9 @@ for (const filePath of walkFiles(srcRoot)) {
 
 const missingDefinitions = Array.from(rpcCalls).filter((name) => !definitions.has(name)).sort();
 const missingGrants = Array.from(rpcCalls).filter((name) => !grants.has(name)).sort();
+const missingRlsTables = Array.from(createdPublicTables)
+  .filter((name) => !rlsEnabledPublicTables.has(name))
+  .sort();
 const failures = [];
 const destructiveSeedPatterns = [
   {
@@ -124,6 +135,10 @@ if (missingDefinitions.length) {
 
 if (missingGrants.length) {
   failures.push(`RPC calls without execute grants:\n${missingGrants.map((name) => `- ${name}`).join('\n')}`);
+}
+
+if (missingRlsTables.length) {
+  failures.push(`Public tables without row-level security:\n${missingRlsTables.map((name) => `- ${name}`).join('\n')}`);
 }
 
 if (grantsWithoutDefinitions.length) {
