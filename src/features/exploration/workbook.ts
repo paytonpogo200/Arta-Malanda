@@ -72,7 +72,7 @@ function rarity(value: unknown): ItemRarity {
 
 function inferredConversion(name: string) {
   const normalized = name.toLowerCase();
-  const material = ['dragonscale', 'vaylium', 'mythril', 'steel'].find((entry) => normalized.startsWith(entry));
+  const material = ['dragonscale', 'vaylium', 'mythril', 'steel', 'iron'].find((entry) => normalized.startsWith(entry));
   if (!material) return { scaleItem: '', scaleQuantity: 0 };
   const scaleItem = `${material.charAt(0).toUpperCase()}${material.slice(1)} Scale`;
   const scaleQuantity = normalized.includes('dagger')
@@ -248,7 +248,7 @@ export function parseLootWorkbook(buffer: Buffer) {
       difficulties: difficulties.length ? difficulties : [1, 2, 3, 4, 5],
       poolSizes: poolSizes.length ? poolSizes : ['Night Encounter', 'Small Cave', 'Medium Cave', 'Large Cave', 'Dragon Lair', 'Tower Floor', 'Base'],
       roomTypes: roomTypes.length ? roomTypes : ['Normal', 'Secret Room', 'Tower Boss Room'],
-      luckPotionOptions: luckPotionOptions.length ? luckPotionOptions : ['None', 'Lesser', 'Greater', 'Greatest'],
+      luckPotionOptions: Array.from(new Set(['None', ...(luckPotionOptions.length ? luckPotionOptions : ['Lesser', 'Greater', 'Greatest'])])),
       baseRollsByPoolSize: parseBaseRolls(rollFormula, poolSizes),
       poolMultipliers: parseSwitchMultipliers(multiplierFormula, '$B$3', poolSizes),
       roomMultipliers: parseSwitchMultipliers(multiplierFormula, '$B$4', roomTypes),
