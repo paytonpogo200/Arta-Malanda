@@ -208,7 +208,8 @@ export function parseLootWorkbook(buffer: Buffer) {
     const typeValue = getColumn(row, lootHeaders, ['Type', 'Category', 'Item Type'], 1);
     const type = categoryToItemType(typeValue, name);
     const pool = `${typeLabel(type)} Catalog`;
-    const minQuantity = Math.max(0.5, number(getColumn(row, lootHeaders, ['Min Qty', 'Min Quantity', 'Minimum Quantity'], 7), 1));
+    const quantityFloor = type === 'material' || type === 'ore' ? 0.5 : 1;
+    const minQuantity = Math.max(quantityFloor, number(getColumn(row, lootHeaders, ['Min Qty', 'Min Quantity', 'Minimum Quantity'], 7), 1));
     const inferred = inferredConversion(name);
     const convertScaleItem = text(getColumn(row, lootHeaders, ['Convert Material', 'Convert Scale Item', 'Convert Scale', 'Scale Item'], 12), inferred.scaleItem);
     const convertScaleNumber = optionalNumber(getColumn(row, lootHeaders, ['Convert Scale Number', 'Convert Scale Quantity', 'Scale Quantity'], 13), inferred.scaleQuantity);
@@ -227,7 +228,7 @@ export function parseLootWorkbook(buffer: Buffer) {
       rarity: rarity(getColumn(row, lootHeaders, ['Rarity'], 5)),
       weight: Math.max(0, number(getColumn(row, lootHeaders, ['Loot Pool Weight', 'Weight', 'Base Weight'], 6), 1)),
       minQuantity,
-      maxQuantity: Math.max(minQuantity, number(getColumn(row, lootHeaders, ['Max Qty', 'Max Quantity', 'Maximum Quantity'], 8), minQuantity)),
+      maxQuantity: Math.max(minQuantity, quantityFloor, number(getColumn(row, lootHeaders, ['Max Qty', 'Max Quantity', 'Maximum Quantity'], 8), minQuantity)),
       towerBaseOnly: booleanValue(getColumn(row, lootHeaders, ['Tower and Base Only', 'Tower Base Only'], 9)),
       stackable: booleanValueDefault(getColumn(row, lootHeaders, ['Stackable', 'Is Stackable'], 10), true),
       convertible: isConvertible,
