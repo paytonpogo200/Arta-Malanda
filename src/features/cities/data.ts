@@ -210,6 +210,7 @@ export function normalizeShopSection(value: unknown): ShopSection {
     name: String(source.name ?? 'Wares'),
     npcName: String(source.npcName ?? ''),
     roleLabel: String(source.roleLabel ?? ''),
+    slotCount: Math.max(0, numberFrom(source.slotCount, 0)),
     hidden: Boolean(source.hidden),
     order: numberFrom(source.order, 0),
     productCount: Math.max(0, numberFrom(source.productCount, 0))
@@ -223,6 +224,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
     || source.blueprintType === 'brewery'
     || source.blueprintType === 'spell_registrar'
     || source.blueprintType === 'library'
+    || source.blueprintType === 'stable'
     ? source.blueprintType
     : 'market';
   return {

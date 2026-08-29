@@ -337,6 +337,7 @@ export type ShopSection = {
   name: string;
   npcName: string;
   roleLabel: string;
+  slotCount: number;
   hidden: boolean;
   order: number;
   productCount: number;
@@ -350,7 +351,7 @@ export type ShopVendor = {
   npcName: string;
   facility: string;
   category: string;
-  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library';
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
   payoutCharacterId: string | null;
   custom: boolean;
   hidden: boolean;

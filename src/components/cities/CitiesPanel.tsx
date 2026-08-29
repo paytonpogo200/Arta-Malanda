@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, PawPrint, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
 import { BookReader, BOOK_PAGE_MAX_CHARS, bookContentFromPages, pagesFromBookContent } from '@/components/books/BookReader';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
@@ -49,6 +49,7 @@ type SectionDraft = {
   name: string;
   npcName: string;
   roleLabel: string;
+  slotCount: number;
   hidden: boolean;
   order: number;
 };
@@ -58,7 +59,7 @@ type VendorDraft = {
   npcName: string;
   facility: string;
   category: string;
-  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library';
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
   payoutCharacterId: string;
   hidden: boolean;
   order: number;
@@ -270,16 +271,17 @@ function defaultProductDraft(vendor: ShopVendor, city?: City | null): ProductDra
     : vendor.blueprintType === 'library'
       ? 'document'
       : 'item';
+  const stableProduct = vendor.blueprintType === 'stable';
   return {
-    name: kind === 'spell' ? 'New Spell' : kind === 'document' ? 'Untitled Book' : 'New Item',
+    name: kind === 'spell' ? 'New Spell' : kind === 'document' ? 'Untitled Book' : stableProduct ? 'New Animal' : 'New Item',
     description: '',
-    type: kind === 'document' ? 'book' : 'misc',
+    type: kind === 'document' ? 'book' : stableProduct ? 'pet' : 'misc',
     rarity: 'Common',
     priceCoin: 0,
     currencySystemKey,
-    stockQuantity: 0,
+    stockQuantity: stableProduct ? 1 : 0,
     available: true,
-    section: vendor.blueprintType === 'library' ? '' : kind === 'spell' ? 'Utility Spells' : 'Wares',
+    section: vendor.blueprintType === 'library' ? '' : kind === 'spell' ? 'Utility Spells' : stableProduct ? 'For Sale' : 'Wares',
     quantityStep: 1,
     kind,
     documentAuthor: '',
@@ -298,11 +300,21 @@ const SHOP_BLUEPRINTS: Array<{ key: VendorDraft['blueprintType']; label: string;
   { key: 'armory', label: 'Armory', facility: 'Armory', category: 'Armor Services', description: 'Copies the Calostrynn armory structure and keeps armor crafting services available.' },
   { key: 'brewery', label: 'Brewery', facility: 'Brewery', category: 'Alchemy Services', description: 'Uses the Calostrynn brewery style with editable sale sections.' },
   { key: 'spell_registrar', label: 'Spell Registrar', facility: 'Spell Registrar', category: 'Spells', description: 'Category-based spell shop for existing or custom spells.' },
-  { key: 'library', label: 'Library', facility: 'Library', category: 'Documents', description: 'Blank book shelves for DM-authored display books and one-of-a-kind sale books.' }
+  { key: 'library', label: 'Library', facility: 'Library', category: 'Documents', description: 'Blank book shelves for DM-authored display books and one-of-a-kind sale books.' },
+  { key: 'stable', label: 'Stable', facility: 'Stable', category: 'Animal Services', description: 'Animal stalls for sale and rent, with pet purchases sent straight to the stable.' }
 ];
 
 function blueprintInfo(blueprint: VendorDraft['blueprintType']) {
   return SHOP_BLUEPRINTS.find((entry) => entry.key === blueprint) ?? SHOP_BLUEPRINTS[0];
+}
+
+function BlueprintIcon({ blueprint, size = 18 }: { blueprint: VendorDraft['blueprintType']; size?: number }) {
+  if (blueprint === 'stable') return <PawPrint size={size} />;
+  if (blueprint === 'spell_registrar') return <WandSparkles size={size} />;
+  if (blueprint === 'library') return <ItemIcon type="book" size={size} />;
+  if (blueprint === 'blacksmith') return <Hammer size={size} />;
+  if (blueprint === 'armory') return <ItemIcon type="armor" size={size} />;
+  return <Store size={size} />;
 }
 
 function blueprintSections(blueprint: VendorDraft['blueprintType']) {
@@ -311,6 +323,7 @@ function blueprintSections(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'brewery') return ['Brewing Supplies', 'Finished Potions', 'Brew Potion'];
   if (blueprint === 'spell_registrar') return [...SPELL_SERVICE_SECTIONS];
   if (blueprint === 'library') return [];
+  if (blueprint === 'stable') return ['For Sale', 'For Rent'];
   return ['Wares'];
 }
 
@@ -318,6 +331,7 @@ function defaultSectionForBlueprint(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'library') return '';
   if (blueprint === 'spell_registrar') return 'Utility Spells';
   if (blueprint === 'brewery') return 'Finished Potions';
+  if (blueprint === 'stable') return 'For Sale';
   return 'Wares';
 }
 
@@ -365,6 +379,7 @@ function sectionRecordsForVendor(vendor: ShopVendor, extraSection = ''): ShopSec
       name,
       npcName: '',
       roleLabel: '',
+      slotCount: 0,
       hidden: false,
       order: 9000 + index,
       productCount: vendor.products.filter((product) => productSection(product) === name).length
@@ -391,7 +406,7 @@ function productDraftFromCatalogItem(vendor: ShopVendor, city: City | null | und
     quantityStep: item.quantityStep,
     catalogItemKey: item.key,
     kind: 'item',
-    stockQuantity: 0
+    stockQuantity: vendor.blueprintType === 'stable' ? 1 : 0
   };
 }
 
@@ -476,8 +491,9 @@ function normalizeBrewResult(value: unknown): BrewResult | null {
 function productCountText(vendor: ShopVendor) {
   const visible = vendor.products.filter((product) => product.available).length;
   const total = vendor.products.length;
-  if (!total) return 'No wares listed';
-  return visible === total ? `${total} wares` : `${visible}/${total} visible wares`;
+  const label = isStableVendor(vendor) ? 'animal' : 'ware';
+  if (!total) return `No ${label}s listed`;
+  return visible === total ? `${total} ${label}${total === 1 ? '' : 's'}` : `${visible}/${total} visible ${label}${total === 1 ? '' : 's'}`;
 }
 
 function isBlacksmithVendor(vendor: ShopVendor) {
@@ -503,6 +519,10 @@ function isSpellVendor(vendor: ShopVendor) {
 function isLibraryVendor(vendor: ShopVendor) {
   const searchable = `${vendor.key} ${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase();
   return searchable.includes('library');
+}
+
+function isStableVendor(vendor: ShopVendor) {
+  return vendor.blueprintType === 'stable' || `${vendor.key} ${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase().includes('stable');
 }
 
 function isSpellProduct(product: MarketProduct) {
@@ -947,12 +967,16 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     if (!query) return constructionCatalogItems;
     return constructionCatalogItems.filter((item) => matchesCatalogNameSearch(item, query));
   }, [catalogSearch, constructionCatalogItems]);
+  const editedProductVendor = editProduct ? payload.vendors.find((vendor) => vendor.id === editProduct.vendorId) || null : null;
+  const activeProductCatalogVendor = creatingProductForVendor || managingVendor || editedProductVendor || selectedVendor;
   const filteredProductCatalog = useMemo(() => {
-    const source = [...itemCatalog].sort((a, b) => a.name.localeCompare(b.name));
+    const source = itemCatalog
+      .filter((item) => !activeProductCatalogVendor || !isStableVendor(activeProductCatalogVendor) || item.type === 'pet')
+      .sort((a, b) => a.name.localeCompare(b.name));
     const query = catalogSearch.trim();
     if (!query) return source;
     return source.filter((item) => matchesCatalogNameSearch(item, query));
-  }, [catalogSearch, itemCatalog]);
+  }, [activeProductCatalogVendor, catalogSearch, itemCatalog]);
   const filteredSpellCatalog = useMemo(() => {
     const source = [...spellCatalog].sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
     const query = catalogSearch.trim().toLowerCase();
@@ -1026,18 +1050,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       && editProduct.documentVisibility === 'government'
       && editProduct.documentEditorUserId === profile.id
   );
-  let productEditorVendor: ShopVendor | null = null;
-  if (creatingProductForVendor) {
-    productEditorVendor = creatingProductForVendor;
-  } else if (editProduct) {
-    productEditorVendor = payload.vendors.find((vendor) => vendor.id === editProduct.vendorId) ?? null;
-  } else if (managingVendor) {
-    productEditorVendor = managingVendor;
-  } else {
-    productEditorVendor = selectedVendor;
-  }
+  const productEditorVendor = activeProductCatalogVendor;
   const productEditorSections = productEditorVendor ? sectionRecordsForVendor(productEditorVendor) : manageSections;
-  const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key));
+  const productEditorIsStable = Boolean(productEditorVendor && isStableVendor(productEditorVendor));
+  const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key) && (!managingVendor || !isStableVendor(managingVendor) || item.type === 'pet'));
   const selectedBulkSpells = spellCatalog.filter((spell) => bulkCatalogKeys.includes(spell.key));
 
   const cityVendors = payload.vendors
@@ -1424,9 +1440,14 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   async function addCatalogProductsToSection(vendor: ShopVendor, section: string) {
     if (!isDm || !selectedCity || bulkCatalogKeys.length === 0) return;
-    const selectedItems = vendor.blueprintType === 'spell_registrar' ? [] : itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key));
+    const selectedItems = vendor.blueprintType === 'spell_registrar' ? [] : itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key) && (!isStableVendor(vendor) || item.type === 'pet'));
     const selectedSpells = vendor.blueprintType === 'spell_registrar' ? spellCatalog.filter((spell) => bulkCatalogKeys.includes(spell.key)) : [];
     if (selectedItems.length === 0 && selectedSpells.length === 0) return;
+    const stableSection = isStableVendor(vendor) ? sectionRecordsForVendor(vendor).find((entry) => entry.name === section) ?? null : null;
+    if (stableSection?.slotCount && selectedItems.length > Math.max(0, stableSection.slotCount - stableSection.productCount)) {
+      setError(`${stableSection.name} only has ${Math.max(0, stableSection.slotCount - stableSection.productCount)} open stable slot${Math.max(0, stableSection.slotCount - stableSection.productCount) === 1 ? '' : 's'}.`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -1628,6 +1649,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       name: '',
       npcName: vendor.npcName,
       roleLabel: vendor.facility,
+      slotCount: vendor.blueprintType === 'stable' ? 6 : 0,
       hidden: false,
       order: (vendor.sections.reduce((max, section) => Math.max(max, section.order), 0) || 0) + 10
     });
@@ -1639,6 +1661,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       name: section.name,
       npcName: section.npcName,
       roleLabel: section.roleLabel,
+      slotCount: section.slotCount,
       hidden: section.hidden,
       order: section.order
     });
@@ -1673,9 +1696,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       setBookPublishStep(true);
       return;
     }
-    const draftToSave = productDraft.kind === 'document'
-      ? { ...productDraft, documentContent: documentContentFromPages(productDraft.documentPages) }
+    const stableDraft = productEditorVendor && isStableVendor(productEditorVendor) && productDraft.kind !== 'document'
+      ? {
+          ...productDraft,
+          kind: 'item' as const,
+          type: 'pet' as const,
+          quantityStep: 1,
+          stockQuantity: Math.max(0, productDraft.stockQuantity || 0),
+          section: productDraft.section || defaultSectionForBlueprint('stable')
+        }
       : productDraft;
+    const draftToSave = stableDraft.kind === 'document'
+      ? { ...stableDraft, documentContent: documentContentFromPages(stableDraft.documentPages) }
+      : stableDraft;
     if (creatingProductForVendor) {
       setSaving(true);
       setError('');
@@ -2093,6 +2126,20 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           onEditProduct={openProductEdit}
           onDeleteProduct={(product) => void deleteProduct(product)}
           onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Library stock could not be changed.')}
+        />
+      ) : isStableVendor(selectedVendor) ? (
+        <StablePage
+          vendor={selectedVendor}
+          isDm={isDm}
+          saving={saving}
+          canShop={canShop}
+          onSelectProduct={(product) => {
+            setSelectedProduct(product);
+            setQuantity(1);
+          }}
+          onEditProduct={openProductEdit}
+          onDeleteProduct={(product) => void deleteProduct(product)}
+          onPatchProduct={(product, patch) => void patchProduct(product, patch, 'Stable listing could not be changed.')}
         />
       ) : (
         <ShopPage
@@ -2602,7 +2649,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                           <span className="min-w-0">
                             <span className="block break-words text-sm font-black">{section.name}</span>
                             <span className="mt-1 block text-xs font-bold text-[var(--muted)]">
-                              {section.npcName || section.roleLabel ? `${[section.npcName, section.roleLabel].filter(Boolean).join(' - ')} - ` : ''}{count} product{count === 1 ? '' : 's'}
+                              {section.npcName || section.roleLabel ? `${[section.npcName, section.roleLabel].filter(Boolean).join(' - ')} - ` : ''}
+                              {isStableVendor(managingVendor) && section.slotCount > 0 ? `${count}/${section.slotCount} stable slot${section.slotCount === 1 ? '' : 's'}` : `${count} product${count === 1 ? '' : 's'}`}
                             </span>
                           </span>
                           <span className="flex shrink-0 items-center gap-1">
@@ -2634,6 +2682,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                             name: section,
                             npcName: managingVendor.npcName,
                             roleLabel: managingVendor.facility,
+                            slotCount: managingVendor.blueprintType === 'stable' ? 6 : 0,
                             hidden: false,
                             order: (managingVendor.sections.reduce((max, entry) => Math.max(max, entry.order), 0) || 0) + 10
                           })}
@@ -2651,7 +2700,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   <div>
                     <p className="eyebrow">Section Inventory</p>
                     <h3 className="mt-1 text-xl font-black">{activeManageSection || 'No section selected'}</h3>
-                    <p className="mt-1 text-xs font-bold text-[var(--muted)]">{managingVendor.blueprintType === 'library' ? 'Write books, then publish them to a saved section.' : 'Products here use the same cards players see while shopping.'}</p>
+                    <p className="mt-1 text-xs font-bold text-[var(--muted)]">{managingVendor.blueprintType === 'library' ? 'Write books, then publish them to a saved section.' : isStableVendor(managingVendor) ? 'Animals listed here are sent straight to the buyer stable.' : 'Products here use the same cards players see while shopping.'}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {managingVendor.blueprintType === 'library' ? (
@@ -2661,7 +2710,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     ) : (
                       <>
                         <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => { setBulkProductPickerOpen(true); setBulkCatalogKeys([]); setCatalogSearch(''); }} disabled={saving || !activeManageSection}>
-                          <PackageCheck className="mr-2 inline" size={13} /> {managingVendor.blueprintType === 'spell_registrar' ? 'Add spells' : 'Add catalog items'}
+                          <PackageCheck className="mr-2 inline" size={13} /> {managingVendor.blueprintType === 'spell_registrar' ? 'Add spells' : isStableVendor(managingVendor) ? 'Add animals' : 'Add catalog items'}
                         </Button>
                         <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openProductCreate(managingVendor, activeManageSection)} disabled={saving || !activeManageSection}>
                           <Plus className="mr-2 inline" size={13} /> Custom product
@@ -2701,11 +2750,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {managingVendor && selectedCity && bulkProductPickerOpen && (
-        <Modal size="wide" title={`${managingVendor.blueprintType === 'spell_registrar' ? 'Add Spells' : 'Add Items'} to ${activeManageSection}`} onClose={() => { setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
+        <Modal size="wide" title={`${managingVendor.blueprintType === 'spell_registrar' ? 'Add Spells' : isStableVendor(managingVendor) ? 'Add Animals' : 'Add Items'} to ${activeManageSection}`} onClose={() => { setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
           <div className="grid gap-4">
             <label className="relative block">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
-              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder={managingVendor.blueprintType === 'spell_registrar' ? 'Search spell database' : 'Search item catalog'} autoFocus />
+              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder={managingVendor.blueprintType === 'spell_registrar' ? 'Search spell database' : isStableVendor(managingVendor) ? 'Search pet catalog' : 'Search item catalog'} autoFocus />
             </label>
             <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -2739,7 +2788,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     </div>
                   )
                 ) : filteredProductCatalog.length === 0 ? (
-                  <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">No catalog items match that search.</div>
+                  <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">{isStableVendor(managingVendor) ? 'No pets match that search.' : 'No catalog items match that search.'}</div>
                 ) : (
                   <div className="grid gap-2 sm:grid-cols-2">
                     {filteredProductCatalog.map((item) => {
@@ -2765,7 +2814,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               </div>
             </div>
             <Button variant="primary" disabled={saving || bulkCatalogKeys.length === 0} onClick={() => void addCatalogProductsToSection(managingVendor, activeManageSection)}>
-              <PackageCheck className="mr-2 inline" size={15} /> Add {bulkCatalogKeys.length || ''} {managingVendor.blueprintType === 'spell_registrar' ? 'spell' : 'item'}{bulkCatalogKeys.length === 1 ? '' : 's'}
+              <PackageCheck className="mr-2 inline" size={15} /> Add {bulkCatalogKeys.length || ''} {managingVendor.blueprintType === 'spell_registrar' ? 'spell' : isStableVendor(managingVendor) ? 'animal' : 'item'}{bulkCatalogKeys.length === 1 ? '' : 's'}
             </Button>
           </div>
         </Modal>
@@ -2791,6 +2840,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Section order</span>
                 <NumberInput min={0} step={1} value={sectionDraft.order} onValueChange={(order) => setSectionDraft({ ...sectionDraft, order })} />
               </label>
+              {managingVendor.blueprintType === 'stable' && (
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Stable slots</span>
+                  <NumberInput min={0} max={200} step={1} value={sectionDraft.slotCount} onValueChange={(slotCount) => setSectionDraft({ ...sectionDraft, slotCount })} />
+                </label>
+              )}
               <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
                 <input type="checkbox" checked={!sectionDraft.hidden} onChange={(event) => setSectionDraft({ ...sectionDraft, hidden: !event.target.checked })} />
                 Visible in shop
@@ -2825,7 +2880,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                         className={`rounded-2xl border p-3 text-left transition ${selected ? 'border-[var(--brass)] bg-[var(--brass)]/12' : 'border-[var(--line)] bg-black/15 hover:border-[var(--brass)]/50'}`}
                       >
                         <span className="flex items-start gap-3">
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><Store size={18} /></span>
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><BlueprintIcon blueprint={blueprint.key} /></span>
                           <span className="min-w-0">
                             <span className="flex items-center gap-2 font-black">{blueprint.label}{selected && <CheckCircle2 size={15} className="text-[var(--brass)]" />}</span>
                             <span className="mt-1 block text-xs font-bold leading-5 text-[var(--muted)]">{blueprint.description}</span>
@@ -2855,6 +2910,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   <option value="brewery">Brewery</option>
                   <option value="spell_registrar">Spell Registrar</option>
                   <option value="library">Library</option>
+                  <option value="stable">Stable</option>
                 </SelectField>
               </label>
               <label>
@@ -2971,10 +3027,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     </label>
                     <label>
                       <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Sale kind</span>
-                      <SelectField value={productDraft.kind} onChange={(event) => setProductDraft({ ...productDraft, kind: event.target.value as ProductDraft['kind'] })}>
-                        <option value="item">Item</option>
-                        <option value="spell">Spell</option>
-                        <option value="service">Service only</option>
+                      <SelectField value={productEditorIsStable ? 'item' : productDraft.kind} onChange={(event) => setProductDraft({ ...productDraft, kind: event.target.value as ProductDraft['kind'] })} disabled={productEditorIsStable}>
+                        <option value="item">{productEditorIsStable ? 'Animal' : 'Item'}</option>
+                        {!productEditorIsStable && <option value="spell">Spell</option>}
+                        {!productEditorIsStable && <option value="service">Service only</option>}
                       </SelectField>
                     </label>
                     {(productDraft.kind === 'item' || productDraft.kind === 'spell') && (
@@ -2988,14 +3044,16 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                       >
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--brass)]/35 bg-[var(--brass)]/10 text-[var(--brass)]"><PackageCheck size={17} /></span>
                         <span className="min-w-0">
-                          <span className="block truncate font-black">{productDraft.catalogItemKey ? 'Database linked' : productDraft.kind === 'spell' ? 'Choose spell' : 'Choose catalog item'}</span>
-                          <span className="block text-xs font-bold text-[var(--muted)]">{productDraft.catalogItemKey || (productDraft.kind === 'spell' ? 'Spell database' : 'Item catalog')}</span>
+                          <span className="block truncate font-black">{productDraft.catalogItemKey ? 'Database linked' : productDraft.kind === 'spell' ? 'Choose spell' : productEditorIsStable ? 'Choose animal' : 'Choose catalog item'}</span>
+                          <span className="block text-xs font-bold text-[var(--muted)]">{productDraft.catalogItemKey || (productDraft.kind === 'spell' ? 'Spell database' : productEditorIsStable ? 'Pet catalog' : 'Item catalog')}</span>
                         </span>
                       </button>
                     )}
                     <label>
                       <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Type</span>
-                      <SelectField value={productDraft.type} onChange={(event) => setProductDraft({ ...productDraft, type: event.target.value as ItemType })}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
+                      <SelectField value={productEditorIsStable ? 'pet' : productDraft.type} onChange={(event) => setProductDraft({ ...productDraft, type: event.target.value as ItemType })} disabled={productEditorIsStable}>
+                        {(productEditorIsStable ? ['pet'] : ITEM_TYPES).map((type) => <option key={type} value={type}>{type}</option>)}
+                      </SelectField>
                     </label>
                     <label>
                       <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Rarity</span>
@@ -3055,11 +3113,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {productDraft && productCatalogPickerOpen && (
-        <Modal size="wide" title={productDraft.kind === 'spell' ? 'Choose Shop Spell' : 'Choose Shop Item'} onClose={() => setProductCatalogPickerOpen(false)}>
+        <Modal size="wide" title={productDraft.kind === 'spell' ? 'Choose Shop Spell' : productEditorIsStable ? 'Choose Stable Animal' : 'Choose Shop Item'} onClose={() => setProductCatalogPickerOpen(false)}>
           <div className="grid gap-4">
             <label className="relative block">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
-              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder={productDraft.kind === 'spell' ? 'Search spell database' : 'Search item catalog'} autoFocus />
+              <TextField className="pl-10" value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder={productDraft.kind === 'spell' ? 'Search spell database' : productEditorIsStable ? 'Search pet catalog' : 'Search item catalog'} autoFocus />
             </label>
             <div className="max-h-[60vh] overflow-y-auto rounded-2xl border border-[var(--line)] bg-black/15 p-2">
               {productDraft.kind === 'spell' ? (
@@ -3097,7 +3155,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   </div>
                 )
               ) : filteredProductCatalog.length === 0 ? (
-                <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">No catalog items match that search.</div>
+                <div className="rounded-xl border border-[var(--line)] bg-black/20 p-4 text-sm font-bold text-[var(--muted)]">{productEditorIsStable ? 'No pets match that search.' : 'No catalog items match that search.'}</div>
               ) : (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {filteredProductCatalog.map((item) => (
@@ -3400,7 +3458,7 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onManage, onEdit
       >
         <span className="flex items-start gap-3">
           <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[var(--brass)]/45 bg-[var(--brass)]/15 text-[var(--brass)] shadow-[0_0_22px_rgba(245,180,76,0.14)]">
-            <Store size={22} />
+            <BlueprintIcon blueprint={vendor.blueprintType} size={22} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="eyebrow">{vendor.facility}</span>
@@ -3449,7 +3507,9 @@ function ShopSectionHeader({ section }: { section: ShopSection }) {
           )}
           <h3 className="text-sm font-black uppercase tracking-wider">{section.name}</h3>
         </div>
-        <span className="text-xs font-black text-[var(--muted)]">{section.productCount} listed</span>
+        <span className="text-xs font-black text-[var(--muted)]">
+          {section.slotCount > 0 ? `${section.productCount}/${section.slotCount} slots` : `${section.productCount} listed`}
+        </span>
       </div>
     </div>
   );
@@ -3486,6 +3546,60 @@ function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduc
           )}
         </Card>
       ))}
+    </div>
+  );
+}
+
+function StablePage(props: {
+  vendor: ShopVendor;
+  isDm: boolean;
+  saving: boolean;
+  canShop: boolean;
+  onSelectProduct: (product: MarketProduct) => void;
+  onEditProduct: (product: MarketProduct) => void;
+  onDeleteProduct: (product: MarketProduct) => void;
+  onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
+}) {
+  const groups = sectionProductGroups(props.vendor);
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <div className="flex items-center gap-3">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[#c99f65]/45 bg-[#c99f65]/15 text-[#d9b987]">
+            <PawPrint size={24} />
+          </span>
+          <div>
+            <p className="eyebrow">Stable Services</p>
+            <h3 className="text-2xl font-black">{props.vendor.name}</h3>
+          </div>
+        </div>
+      </Card>
+
+      {groups.map(([section, products]) => {
+        const visibleSlots = Math.max(section.slotCount, products.length);
+        const emptySlots = Math.max(0, visibleSlots - products.length);
+        return (
+          <Card key={section.id || section.name}>
+            <ShopSectionHeader section={section} />
+            <div className="grid gap-3">
+              {products.length ? (
+                <ProductGrid {...props} products={products} minCardWidth="13rem" />
+              ) : (
+                <EmptyShopSection label="No animals are listed in this section yet." />
+              )}
+              {emptySlots > 0 && (
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 13rem), 1fr))' }}>
+                  {Array.from({ length: emptySlots }, (_, index) => (
+                    <div key={`${section.id || section.name}-empty-${index}`} className="grid min-h-28 place-items-center rounded-2xl border border-dashed border-[#c99f65]/35 bg-black/10 p-4 text-center text-xs font-black uppercase tracking-wider text-[var(--muted)]">
+                      Empty stall
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Card>
+        );
+      })}
     </div>
   );
 }

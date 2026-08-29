@@ -7626,6 +7626,7 @@ create table if not exists public.shop_sections (
   section_name text not null,
   npc_name text not null default '',
   role_label text not null default '',
+  slot_count int not null default 0 check (slot_count >= 0 and slot_count <= 200),
   is_hidden boolean not null default false,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -7635,6 +7636,13 @@ create table if not exists public.shop_sections (
 );
 
 create index if not exists shop_sections_vendor_idx on public.shop_sections(vendor_id);
+
+alter table public.shop_sections
+  add column if not exists slot_count int not null default 0;
+
+alter table public.shop_sections
+  drop constraint if exists shop_sections_slot_count_check,
+  add constraint shop_sections_slot_count_check check (slot_count >= 0 and slot_count <= 200);
 
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
@@ -8489,7 +8497,7 @@ add column if not exists is_custom boolean not null default false;
 
 alter table public.shop_vendors
   drop constraint if exists shop_vendors_blueprint_type_check,
-  add constraint shop_vendors_blueprint_type_check check (blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library'));
+  add constraint shop_vendors_blueprint_type_check check (blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable'));
 
 alter table public.market_products
   add column if not exists product_kind text not null default 'item',
@@ -8549,38 +8557,40 @@ on conflict (vendor_id, section_key) do update
 set section_name = excluded.section_name,
     display_order = least(public.shop_sections.display_order, excluded.display_order);
 
-insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
-select v.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order
+insert into public.shop_sections (vendor_id, section_key, section_name, display_order, slot_count)
+select v.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order, seed.slot_count
 from public.shop_vendors v
 join (values
-  ('market', 'Wares', 10),
-  ('blacksmith', 'Material Scales', 10),
-  ('blacksmith', 'Runes', 20),
-  ('blacksmith', 'Light Weapons', 100),
-  ('blacksmith', 'Medium Weapons', 110),
-  ('blacksmith', 'Heavy Weapons', 120),
-  ('blacksmith', 'Magecraft Commissions', 130),
-  ('blacksmith', 'Shield Creation', 140),
-  ('blacksmith', 'Mythril Services', 200),
-  ('blacksmith', 'Dragon Scale Refining', 210),
-  ('armory', 'Material Scales', 10),
-  ('armory', 'Armor Creation', 100),
-  ('armory', 'Mythril Services', 200),
-  ('armory', 'Dragon Scale Refining', 210),
-  ('brewery', 'Brewing Supplies', 10),
-  ('brewery', 'Finished Potions', 20),
-  ('brewery', 'Brew Potion', 100),
-  ('spell_registrar', 'Ember Spells', 10),
-  ('spell_registrar', 'Frost Spells', 20),
-  ('spell_registrar', 'Lightning Spells', 30),
-  ('spell_registrar', 'Earth Spells', 40),
-  ('spell_registrar', 'Wind Spells', 50),
-  ('spell_registrar', 'Energy Spells', 60),
-  ('spell_registrar', 'Defensive Support Spells', 70),
-  ('spell_registrar', 'Offensive Support Spells', 80),
-  ('spell_registrar', 'Enhancement Spells', 90),
-  ('spell_registrar', 'Utility Spells', 100)
-) as seed(blueprint_type, section_name, display_order) on seed.blueprint_type = v.blueprint_type
+  ('market', 'Wares', 10, 0),
+  ('blacksmith', 'Material Scales', 10, 0),
+  ('blacksmith', 'Runes', 20, 0),
+  ('blacksmith', 'Light Weapons', 100, 0),
+  ('blacksmith', 'Medium Weapons', 110, 0),
+  ('blacksmith', 'Heavy Weapons', 120, 0),
+  ('blacksmith', 'Magecraft Commissions', 130, 0),
+  ('blacksmith', 'Shield Creation', 140, 0),
+  ('blacksmith', 'Mythril Services', 200, 0),
+  ('blacksmith', 'Dragon Scale Refining', 210, 0),
+  ('armory', 'Material Scales', 10, 0),
+  ('armory', 'Armor Creation', 100, 0),
+  ('armory', 'Mythril Services', 200, 0),
+  ('armory', 'Dragon Scale Refining', 210, 0),
+  ('brewery', 'Brewing Supplies', 10, 0),
+  ('brewery', 'Finished Potions', 20, 0),
+  ('brewery', 'Brew Potion', 100, 0),
+  ('spell_registrar', 'Ember Spells', 10, 0),
+  ('spell_registrar', 'Frost Spells', 20, 0),
+  ('spell_registrar', 'Lightning Spells', 30, 0),
+  ('spell_registrar', 'Earth Spells', 40, 0),
+  ('spell_registrar', 'Wind Spells', 50, 0),
+  ('spell_registrar', 'Energy Spells', 60, 0),
+  ('spell_registrar', 'Defensive Support Spells', 70, 0),
+  ('spell_registrar', 'Offensive Support Spells', 80, 0),
+  ('spell_registrar', 'Enhancement Spells', 90, 0),
+  ('spell_registrar', 'Utility Spells', 100, 0),
+  ('stable', 'For Sale', 10, 6),
+  ('stable', 'For Rent', 20, 6)
+) as seed(blueprint_type, section_name, display_order, slot_count) on seed.blueprint_type = v.blueprint_type
 on conflict (vendor_id, section_key) do nothing;
 
 delete from public.shop_sections s
@@ -8622,6 +8632,7 @@ as $$
     'name', p_section.section_name,
     'npcName', p_section.npc_name,
     'roleLabel', p_section.role_label,
+    'slotCount', p_section.slot_count,
     'hidden', p_section.is_hidden,
     'order', p_section.display_order,
     'productCount', (
@@ -8875,7 +8886,11 @@ begin
 
     if v_product.stock_quantity is not null then
       update public.market_products
-      set stock_quantity = greatest(0, stock_quantity - 1)
+      set stock_quantity = greatest(0, stock_quantity - 1),
+          is_available = case
+            when v_vendor.blueprint_type = 'stable' and greatest(0, stock_quantity - 1) <= 0 then false
+            else is_available
+          end
       where id = v_product.id;
     end if;
 
@@ -9039,7 +9054,11 @@ begin
 
     if v_product.stock_quantity is not null then
       update public.market_products
-      set stock_quantity = greatest(0, stock_quantity - 1)
+      set stock_quantity = greatest(0, stock_quantity - 1),
+          is_available = case
+            when v_vendor.blueprint_type = 'stable' and greatest(0, stock_quantity - 1) <= 0 then false
+            else is_available
+          end
       where id = v_product.id;
     end if;
 
@@ -9244,9 +9263,12 @@ declare
   v_profile public.profiles%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_product public.market_products%rowtype;
+  v_vendor public.shop_vendors%rowtype;
   v_document_editor boolean := false;
   v_spell_type text;
   v_spell_key text;
+  v_next_section text;
+  v_section public.shop_sections%rowtype;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -9260,6 +9282,10 @@ begin
   if v_product.id is null then
     raise exception 'Shop product not found.';
   end if;
+
+  select * into v_vendor
+  from public.shop_vendors
+  where id = v_product.vendor_id;
 
   v_document_editor := v_product.product_kind = 'document'
     and v_product.document_visibility = 'government'
@@ -9275,6 +9301,33 @@ begin
       'documentContent', v_patch->'documentContent',
       'documentPages', v_patch->'documentPages'
     ));
+  end if;
+
+  if v_vendor.blueprint_type = 'stable' then
+    v_next_section := case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'For Sale') else v_product.shop_section end;
+    select * into v_section
+    from public.shop_sections
+    where vendor_id = v_product.vendor_id
+      and section_name = v_next_section;
+
+    if v_section.id is not null
+      and v_section.slot_count > 0
+      and v_next_section <> v_product.shop_section
+      and (
+        select count(*)::int
+        from public.market_products p
+        where p.vendor_id = v_product.vendor_id
+          and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = v_next_section
+      ) >= v_section.slot_count
+    then
+      raise exception 'That stable section has no open listing slots.';
+    end if;
+
+    v_patch := v_patch || jsonb_build_object(
+      'kind', 'item',
+      'type', 'pet',
+      'quantityStep', 1
+    );
   end if;
 
   update public.market_products
@@ -12587,7 +12640,7 @@ begin
     facility = case when v_patch ? 'facility' then coalesce(nullif(trim(v_patch->>'facility'), ''), facility) else facility end,
     category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
     blueprint_type = case
-      when v_patch ? 'blueprintType' and v_patch->>'blueprintType' in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library') then v_patch->>'blueprintType'
+      when v_patch ? 'blueprintType' and v_patch->>'blueprintType' in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable') then v_patch->>'blueprintType'
       else blueprint_type
     end,
     payout_character_id = case
@@ -12861,7 +12914,7 @@ declare
 begin
   v_profile := public.require_dm_profile(p_session_token);
 
-  if v_blueprint not in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library') then
+  if v_blueprint not in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable') then
     raise exception 'Unsupported shop blueprint.';
   end if;
 
@@ -12968,37 +13021,39 @@ begin
   set section_name = excluded.section_name,
       display_order = least(public.shop_sections.display_order, excluded.display_order);
 
-  insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
-  select v_vendor.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order
+  insert into public.shop_sections (vendor_id, section_key, section_name, display_order, slot_count)
+  select v_vendor.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order, seed.slot_count
   from (values
-    ('market', 'Wares', 10),
-    ('blacksmith', 'Material Scales', 10),
-    ('blacksmith', 'Runes', 20),
-    ('blacksmith', 'Light Weapons', 100),
-    ('blacksmith', 'Medium Weapons', 110),
-    ('blacksmith', 'Heavy Weapons', 120),
-    ('blacksmith', 'Magecraft Commissions', 130),
-    ('blacksmith', 'Shield Creation', 140),
-    ('blacksmith', 'Mythril Services', 200),
-    ('blacksmith', 'Dragon Scale Refining', 210),
-    ('armory', 'Material Scales', 10),
-    ('armory', 'Armor Creation', 100),
-    ('armory', 'Mythril Services', 200),
-    ('armory', 'Dragon Scale Refining', 210),
-    ('brewery', 'Brewing Supplies', 10),
-    ('brewery', 'Finished Potions', 20),
-    ('brewery', 'Brew Potion', 100),
-    ('spell_registrar', 'Ember Spells', 10),
-    ('spell_registrar', 'Frost Spells', 20),
-    ('spell_registrar', 'Lightning Spells', 30),
-    ('spell_registrar', 'Earth Spells', 40),
-    ('spell_registrar', 'Wind Spells', 50),
-    ('spell_registrar', 'Energy Spells', 60),
-    ('spell_registrar', 'Defensive Support Spells', 70),
-    ('spell_registrar', 'Offensive Support Spells', 80),
-    ('spell_registrar', 'Enhancement Spells', 90),
-    ('spell_registrar', 'Utility Spells', 100)
-  ) as seed(blueprint_type, section_name, display_order)
+    ('market', 'Wares', 10, 0),
+    ('blacksmith', 'Material Scales', 10, 0),
+    ('blacksmith', 'Runes', 20, 0),
+    ('blacksmith', 'Light Weapons', 100, 0),
+    ('blacksmith', 'Medium Weapons', 110, 0),
+    ('blacksmith', 'Heavy Weapons', 120, 0),
+    ('blacksmith', 'Magecraft Commissions', 130, 0),
+    ('blacksmith', 'Shield Creation', 140, 0),
+    ('blacksmith', 'Mythril Services', 200, 0),
+    ('blacksmith', 'Dragon Scale Refining', 210, 0),
+    ('armory', 'Material Scales', 10, 0),
+    ('armory', 'Armor Creation', 100, 0),
+    ('armory', 'Mythril Services', 200, 0),
+    ('armory', 'Dragon Scale Refining', 210, 0),
+    ('brewery', 'Brewing Supplies', 10, 0),
+    ('brewery', 'Finished Potions', 20, 0),
+    ('brewery', 'Brew Potion', 100, 0),
+    ('spell_registrar', 'Ember Spells', 10, 0),
+    ('spell_registrar', 'Frost Spells', 20, 0),
+    ('spell_registrar', 'Lightning Spells', 30, 0),
+    ('spell_registrar', 'Earth Spells', 40, 0),
+    ('spell_registrar', 'Wind Spells', 50, 0),
+    ('spell_registrar', 'Energy Spells', 60, 0),
+    ('spell_registrar', 'Defensive Support Spells', 70, 0),
+    ('spell_registrar', 'Offensive Support Spells', 80, 0),
+    ('spell_registrar', 'Enhancement Spells', 90, 0),
+    ('spell_registrar', 'Utility Spells', 100, 0),
+    ('stable', 'For Sale', 10, 6),
+    ('stable', 'For Rent', 20, 6)
+  ) as seed(blueprint_type, section_name, display_order, slot_count)
   where seed.blueprint_type = v_blueprint
   on conflict (vendor_id, section_key) do nothing;
 
@@ -13026,6 +13081,7 @@ declare
   v_currency text;
   v_spell_type text;
   v_spell_key text;
+  v_section_record public.shop_sections%rowtype;
 begin
   v_profile := public.require_dm_profile(p_session_token);
   select * into v_vendor from public.shop_vendors where id = p_vendor_id;
@@ -13038,6 +13094,32 @@ begin
     else 'item'
   end;
   v_currency := case when v_vendor.city_key = 'calostrynn' then 'calostrynn' else 'common' end;
+
+  if v_vendor.blueprint_type = 'stable' then
+    v_kind := 'item';
+    v_section := coalesce(nullif(trim(v_patch->>'section'), ''), 'For Sale');
+
+    if public.normalize_item_type(coalesce(v_patch->>'type', 'pet')) <> 'pet' then
+      raise exception 'Stable listings can only sell or rent pets.';
+    end if;
+
+    select * into v_section_record
+    from public.shop_sections
+    where vendor_id = p_vendor_id
+      and section_name = v_section;
+
+    if v_section_record.id is not null
+      and v_section_record.slot_count > 0
+      and (
+        select count(*)::int
+        from public.market_products p
+        where p.vendor_id = p_vendor_id
+          and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = v_section
+      ) >= v_section_record.slot_count
+    then
+      raise exception 'That stable section has no open listing slots.';
+    end if;
+  end if;
 
   if v_kind = 'spell' then
     v_spell_type := case
@@ -13106,15 +13188,20 @@ begin
     case
       when v_kind = 'spell' then 'misc'
       when v_kind = 'document' then 'book'
+      when v_vendor.blueprint_type = 'stable' then 'pet'
       else public.normalize_item_type(coalesce(v_patch->>'type', 'misc'))
     end,
     coalesce(nullif(v_patch->>'rarity', ''), 'Common')::public.item_rarity,
     greatest(0, coalesce(nullif(v_patch->>'priceCoin', '')::int, 0)),
     case when v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'calostrynn' then 'calostrynn' else v_currency end,
-    case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else null end,
+    case
+      when v_vendor.blueprint_type = 'stable' then greatest(0, coalesce(nullif(v_patch->>'stockQuantity', '')::numeric, 1))
+      when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric)
+      else null
+    end,
     coalesce(nullif(v_patch->>'catalogItemKey', ''), case when v_kind = 'spell' then v_spell_key else public.catalog_key_for_name(v_name) end),
     v_section,
-    case when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 else 1 end,
+    case when v_vendor.blueprint_type = 'stable' then 1 when v_patch ? 'quantityStep' and (v_patch->>'quantityStep')::numeric = 0.5 then 0.5 else 1 end,
     v_kind,
     case when v_kind = 'spell' then greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0)) else 0 end,
     case when v_kind = 'spell' then greatest(0, coalesce(nullif(v_patch->>'manaCost', '')::int, 0))::text || ' mana' else '' end,
@@ -13199,6 +13286,7 @@ begin
     section_name,
     npc_name,
     role_label,
+    slot_count,
     is_hidden,
     display_order
   )
@@ -13208,6 +13296,7 @@ begin
     v_name,
     left(trim(coalesce(v_patch->>'npcName', '')), 120),
     left(trim(coalesce(v_patch->>'roleLabel', '')), 120),
+    greatest(0, least(200, coalesce(nullif(v_patch->>'slotCount', '')::int, 0))),
     coalesce((v_patch->>'hidden')::boolean, false),
     coalesce(nullif(v_patch->>'order', '')::int, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10))
   )
@@ -13215,6 +13304,7 @@ begin
   set section_name = excluded.section_name,
       npc_name = excluded.npc_name,
       role_label = excluded.role_label,
+      slot_count = excluded.slot_count,
       is_hidden = excluded.is_hidden,
       display_order = excluded.display_order;
 
@@ -13254,6 +13344,7 @@ begin
       section_name = v_name,
       npc_name = case when v_patch ? 'npcName' then left(trim(coalesce(v_patch->>'npcName', '')), 120) else npc_name end,
       role_label = case when v_patch ? 'roleLabel' then left(trim(coalesce(v_patch->>'roleLabel', '')), 120) else role_label end,
+      slot_count = case when v_patch ? 'slotCount' then greatest(0, least(200, (v_patch->>'slotCount')::int)) else slot_count end,
       is_hidden = case when v_patch ? 'hidden' then coalesce((v_patch->>'hidden')::boolean, false) else is_hidden end,
       display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
   where id = v_section.id;
