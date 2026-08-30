@@ -13764,6 +13764,8 @@ declare
   v_section_name text := coalesce(nullif(trim(p_section), ''), 'Wares');
   v_section_type text := 'standard';
   v_product_kind text := 'item';
+  v_can_manage boolean := false;
+  v_can_price_stable boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -13774,7 +13776,9 @@ begin
   if v_vendor.id is null then
     raise exception 'Shop not found.';
   end if;
-  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+  v_can_manage := public.profile_can_manage_shop_vendor(v_profile, v_vendor);
+  v_can_price_stable := public.profile_can_price_stable_vendor(v_profile, v_vendor);
+  if not v_can_manage and not v_can_price_stable then
     raise exception 'You do not have permission to stock this shop.';
   end if;
   if v_vendor.payout_character_id is null then
@@ -13817,6 +13821,9 @@ begin
   v_section_type := v_section.section_type;
 
   if v_vendor.blueprint_type = 'stable' then
+    if v_section_type <> 'holding' then
+      raise exception 'Animals must be added to Holding Pens first. Move them to sale or rent after pricing.';
+    end if;
     if v_section.slot_count > 0
       and (
         select count(*)::int
@@ -13826,6 +13833,20 @@ begin
       ) >= v_section.slot_count
     then
       raise exception 'That stable section has no open listing slots.';
+    end if;
+  else
+    if not exists (
+      select 1
+      from public.market_products p
+      where p.vendor_id = p_vendor_id
+        and p.is_available
+        and public.normalize_item_type(p.item_type) = public.normalize_item_type(v_item.item_type)
+        and (
+          coalesce(nullif(p.catalog_item_key, ''), public.catalog_key_for_name(p.item_name)) = public.catalog_key_for_name(v_item.item_name)
+          or lower(public.normalize_item_name(p.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+        )
+    ) then
+      raise exception 'That item is not actively listed by this shop.';
     end if;
   end if;
 

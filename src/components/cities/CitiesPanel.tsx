@@ -1121,10 +1121,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     canManageVendor(vendor) || canPriceStableVendor(vendor)
   ), [canManageVendor, canPriceStableVendor]);
   const canStockVendor = useCallback((vendor: ShopVendor | null | undefined) => (
-    Boolean(vendor?.payoutCharacterId && (isDm || (!isStableVendor(vendor) && isShopkeeperForVendor(vendor))))
+    Boolean(vendor?.payoutCharacterId && (isDm || isShopkeeperForVendor(vendor)))
   ), [isDm, isShopkeeperForVendor]);
   const stockKeeper = payoutCharacterForVendor(stockingVendor);
-  const stockSections = stockingVendor ? sectionRecordsForVendor(stockingVendor).filter((section) => !section.hidden) : [];
+  const stockSections = stockingVendor
+    ? sectionRecordsForVendor(stockingVendor).filter((section) => !section.hidden && (!isStableVendor(stockingVendor) || section.sectionType === 'holding'))
+    : [];
+  const stockableProductKeys = stockingVendor ? new Set(stockingVendor.products
+    .filter((product) => product.available)
+    .flatMap((product) => [product.catalogItemKey, catalogKeyForName(product.name)].filter(Boolean))) : new Set<string>();
   const stockableItems = stockingVendor ? (() => {
     const childParentIds = new Set(stockInventory.items.map((item) => item.parentItemId).filter(Boolean));
     return stockInventory.items.filter((item) => {
@@ -1132,7 +1137,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       if (item.type === 'currency') return false;
       if (item.isStorage && childParentIds.has(item.id)) return false;
       if (isStableVendor(stockingVendor)) return item.type === 'pet';
-      return item.type !== 'pet';
+      if (!stockableProductKeys.has(catalogKeyForName(item.name))) return false;
+      return true;
     });
   })() : [];
 
@@ -1582,7 +1588,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? 'Shopkeeper inventory could not be loaded.');
       setStockInventory(normalizeCharacterInventoryPayload(body));
-      const firstSection = sectionRecordsForVendor(vendor).find((section) => !section.hidden)?.name ?? defaultSectionForBlueprint(vendor.blueprintType);
+      const firstSection = sectionRecordsForVendor(vendor)
+        .find((section) => !section.hidden && (!isStableVendor(vendor) || section.sectionType === 'holding'))
+        ?.name ?? (isStableVendor(vendor) ? 'Holding Pens' : defaultSectionForBlueprint(vendor.blueprintType));
       setStockSelection((current) => current ? { ...current, section: current.section || firstSection } : null);
     } catch (stockError) {
       setError(stockError instanceof Error ? stockError.message : 'Shopkeeper inventory could not be loaded.');
@@ -1846,6 +1854,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     const draftToSave = stableDraft.kind === 'document'
       ? { ...stableDraft, documentContent: documentContentFromPages(stableDraft.documentPages) }
       : stableDraft;
+    if (productEditorVendor && isStableVendor(productEditorVendor) && draftToSave.kind !== 'document') {
+      const section = sectionRecordsForVendor(productEditorVendor).find((entry) => entry.name === draftToSave.section) ?? null;
+      if (section && section.sectionType !== 'holding' && draftToSave.priceCoin <= 0) {
+        setError('Set a price before moving an animal into a sale or rental section.');
+        return;
+      }
+    }
     if (creatingProductForVendor) {
       setSaving(true);
       setError('');
@@ -2032,7 +2047,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to City</Button>}
-            {selectedVendor && canStockVendor(selectedVendor) && <Button variant="teal" onClick={() => void openStockInventory(selectedVendor)} disabled={saving}><PackageCheck className="mr-2 inline" size={15} /> Add inventory</Button>}
+            {selectedVendor && canStockVendor(selectedVendor) && <Button variant="teal" onClick={() => void openStockInventory(selectedVendor)} disabled={saving}><PackageCheck className="mr-2 inline" size={15} /> {isStableVendor(selectedVendor) ? 'Add animal' : 'Add inventory'}</Button>}
             {selectedVendor && canOpenManageVendor(selectedVendor) && <Button variant="secondary" onClick={() => { setManagingVendorId(selectedVendor.id); setManageSection(sectionRecordsForVendor(selectedVendor)[0]?.name ?? 'Wares'); }} disabled={saving}><Settings className="mr-2 inline" size={15} /> {canManageVendor(selectedVendor) ? 'Manage shop' : 'Manage prices'}</Button>}
             {selectedVendor && !canManageVendor(selectedVendor) && canRenameStableVendor(selectedVendor) && <Button variant="secondary" onClick={() => openVendorEdit(selectedVendor)} disabled={saving}><Pencil className="mr-2 inline" size={15} /> Rename stable</Button>}
             {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
@@ -2378,14 +2393,16 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <p className="eyebrow">Shopkeeper Stock</p>
               <h3 className="mt-1 text-2xl font-black">{stockKeeper?.name ?? 'Shopkeeper inventory'}</h3>
               <p className="mt-1 text-sm font-bold text-[var(--muted)]">
-                Choose one carried item, set the amount and global price, then move it into this shop.
+                {isStableVendor(stockingVendor)
+                  ? 'Choose one animal to move into Holding Pens. Price it later when it moves to sale or rent.'
+                  : 'Choose one carried item that is already listed by this shop, set the amount and global price, then move it into stock.'}
               </p>
             </div>
             {stockLoading ? (
               <div className="grid h-32 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><RefreshCw className="animate-spin" size={18} /></div>
             ) : stockableItems.length === 0 ? (
               <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4 text-sm font-bold text-[var(--muted)]">
-                No eligible inventory is available to stock. Equipped items, currency, pets in non-stables, and filled storage are kept out of this flow.
+                No eligible inventory is available to stock. This only shows items already listed by this shop; stable stocking only shows animals for Holding Pens.
               </div>
             ) : (
               <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
