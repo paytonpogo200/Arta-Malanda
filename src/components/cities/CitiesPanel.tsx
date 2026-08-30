@@ -13,7 +13,7 @@ import { matchesCatalogNameSearch } from '@/features/catalog/search';
 import { CURRENCY_SYSTEMS, composeCurrencyValue, currencyUnitsForSystem, decomposeCurrencyValue, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey, type CitiesPayload } from '@/features/cities/data';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { normalizeHousePayload } from '@/features/houses/data';
-import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { ITEM_TYPES, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem, type CharacterInventoryPayload } from '@/features/inventory/data';
 import { normalizeWagonPayload } from '@/features/inventory/wagons';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import { potionEffectText } from '@/lib/utils/potions';
@@ -49,9 +49,17 @@ type SectionDraft = {
   name: string;
   npcName: string;
   roleLabel: string;
+  sectionType: 'standard' | 'sale' | 'rent' | 'holding';
   slotCount: number;
   hidden: boolean;
   order: number;
+};
+
+type StockInventorySelection = {
+  itemId: string;
+  quantity: number;
+  priceCoin: number;
+  section: string;
 };
 
 type VendorDraft = {
@@ -281,7 +289,7 @@ function defaultProductDraft(vendor: ShopVendor, city?: City | null): ProductDra
     currencySystemKey,
     stockQuantity: stableProduct ? 1 : 0,
     available: true,
-    section: vendor.blueprintType === 'library' ? '' : kind === 'spell' ? 'Utility Spells' : stableProduct ? 'For Sale' : 'Wares',
+    section: vendor.blueprintType === 'library' ? '' : kind === 'spell' ? 'Utility Spells' : stableProduct ? 'Sale Stalls' : 'Wares',
     quantityStep: 1,
     kind,
     documentAuthor: '',
@@ -323,7 +331,7 @@ function blueprintSections(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'brewery') return ['Brewing Supplies', 'Finished Potions', 'Brew Potion'];
   if (blueprint === 'spell_registrar') return [...SPELL_SERVICE_SECTIONS];
   if (blueprint === 'library') return [];
-  if (blueprint === 'stable') return ['For Sale', 'For Rent'];
+  if (blueprint === 'stable') return ['Sale Stalls', 'Rental Stalls', 'Holding Pens'];
   return ['Wares'];
 }
 
@@ -331,7 +339,7 @@ function defaultSectionForBlueprint(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'library') return '';
   if (blueprint === 'spell_registrar') return 'Utility Spells';
   if (blueprint === 'brewery') return 'Finished Potions';
-  if (blueprint === 'stable') return 'For Sale';
+  if (blueprint === 'stable') return 'Sale Stalls';
   return 'Wares';
 }
 
@@ -367,6 +375,11 @@ function sectionProductGroups(vendor: ShopVendor, products: MarketProduct[] = ve
     ] as const);
 }
 
+function sectionRecordForProduct(vendor: ShopVendor, product: MarketProduct) {
+  const sectionName = productSection(product);
+  return sectionRecordsForVendor(vendor).find((section) => section.name === sectionName) ?? null;
+}
+
 function sectionRecordsForVendor(vendor: ShopVendor, extraSection = ''): ShopSection[] {
   const explicit = [...vendor.sections];
   const known = new Set(explicit.map((section) => section.name));
@@ -379,6 +392,7 @@ function sectionRecordsForVendor(vendor: ShopVendor, extraSection = ''): ShopSec
       name,
       npcName: '',
       roleLabel: '',
+      sectionType: vendor.blueprintType === 'stable' ? stableSectionTypeFromName(name) : 'standard',
       slotCount: 0,
       hidden: false,
       order: 9000 + index,
@@ -408,6 +422,33 @@ function productDraftFromCatalogItem(vendor: ShopVendor, city: City | null | und
     kind: 'item',
     stockQuantity: vendor.blueprintType === 'stable' ? 1 : 0
   };
+}
+
+function defaultSectionTypeForBlueprint(vendor: ShopVendor, sectionName = ''): ShopSection['sectionType'] {
+  if (vendor.blueprintType !== 'stable') return 'standard';
+  return stableSectionTypeFromName(sectionName || defaultSectionForBlueprint(vendor.blueprintType));
+}
+
+function stableSectionTypeFromName(name: string): ShopSection['sectionType'] {
+  const normalized = name.toLowerCase();
+  if (normalized.includes('rent')) return 'rent';
+  if (normalized.includes('hold')) return 'holding';
+  if (normalized.includes('sale') || normalized.includes('sell')) return 'sale';
+  return 'sale';
+}
+
+function stableSectionTypeLabel(sectionType: ShopSection['sectionType']) {
+  if (sectionType === 'rent') return 'For rent';
+  if (sectionType === 'holding') return 'Holding';
+  if (sectionType === 'sale') return 'For sale';
+  return 'Standard';
+}
+
+function stableSectionHelp(sectionType: ShopSection['sectionType']) {
+  if (sectionType === 'rent') return 'Rental listing stays available after purchase.';
+  if (sectionType === 'holding') return 'Visible holding pen; animals cannot be bought.';
+  if (sectionType === 'sale') return 'Sale listing leaves the stable after purchase.';
+  return '';
 }
 
 function productDraftFromSpell(vendor: ShopVendor, city: City | null | undefined, spell: Spell): ProductDraft {
@@ -920,6 +961,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [sectionDraft, setSectionDraft] = useState<SectionDraft | null>(null);
   const [bulkProductPickerOpen, setBulkProductPickerOpen] = useState(false);
   const [bulkCatalogKeys, setBulkCatalogKeys] = useState<string[]>([]);
+  const [stockingVendorId, setStockingVendorId] = useState('');
+  const [stockInventory, setStockInventory] = useState<CharacterInventoryPayload>({ items: [], wallet: [] });
+  const [stockSelection, setStockSelection] = useState<StockInventorySelection | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
   const [bookPage, setBookPage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [researchType, setResearchType] = useState(MAGICAL_RESEARCH_TYPES[0]);
@@ -951,6 +996,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const selectedShopper = shoppers.find((character) => character.id === shoppingAs) ?? null;
   const selectedVendor = payload.vendors.find((vendor) => vendor.id === selectedVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
   const managingVendor = payload.vendors.find((vendor) => vendor.id === managingVendorId && vendor.cityKey === selectedCity?.key && activeCityVendor(vendor)) ?? null;
+  const stockingVendor = payload.vendors.find((vendor) => vendor.id === stockingVendorId && activeCityVendor(vendor)) ?? null;
   const activeCityKey = selectedCity?.key ?? '';
   const cityLocked = Boolean(selectedCity?.locked);
   const shopperInCity = characterInCity(selectedShopper, selectedCity);
@@ -1055,12 +1101,50 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const productEditorIsStable = Boolean(productEditorVendor && isStableVendor(productEditorVendor));
   const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key) && (!managingVendor || !isStableVendor(managingVendor) || item.type === 'pet'));
   const selectedBulkSpells = spellCatalog.filter((spell) => bulkCatalogKeys.includes(spell.key));
+  const payoutCharacterForVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    vendor?.payoutCharacterId ? payload.characters.find((character) => character.id === vendor.payoutCharacterId) ?? null : null
+  ), [payload.characters]);
+  const isShopkeeperForVendor = useCallback((vendor: ShopVendor | null | undefined) => {
+    const payoutCharacter = payoutCharacterForVendor(vendor);
+    return Boolean(payoutCharacter?.ownerUserId && payoutCharacter.ownerUserId === profile.id);
+  }, [payoutCharacterForVendor, profile.id]);
+  const canManageVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    Boolean(vendor && (isDm || (!isStableVendor(vendor) && isShopkeeperForVendor(vendor))))
+  ), [isDm, isShopkeeperForVendor]);
+  const canRenameStableVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    Boolean(vendor && isStableVendor(vendor) && isShopkeeperForVendor(vendor))
+  ), [isShopkeeperForVendor]);
+  const canPriceStableVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    Boolean(vendor && isStableVendor(vendor) && isShopkeeperForVendor(vendor))
+  ), [isShopkeeperForVendor]);
+  const canOpenManageVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    canManageVendor(vendor) || canPriceStableVendor(vendor)
+  ), [canManageVendor, canPriceStableVendor]);
+  const canStockVendor = useCallback((vendor: ShopVendor | null | undefined) => (
+    Boolean(vendor?.payoutCharacterId && (isDm || (!isStableVendor(vendor) && isShopkeeperForVendor(vendor))))
+  ), [isDm, isShopkeeperForVendor]);
+  const stockKeeper = payoutCharacterForVendor(stockingVendor);
+  const stockSections = stockingVendor ? sectionRecordsForVendor(stockingVendor).filter((section) => !section.hidden) : [];
+  const stockableItems = stockingVendor ? (() => {
+    const childParentIds = new Set(stockInventory.items.map((item) => item.parentItemId).filter(Boolean));
+    return stockInventory.items.filter((item) => {
+      if (item.loadoutSlot) return false;
+      if (item.type === 'currency') return false;
+      if (item.isStorage && childParentIds.has(item.id)) return false;
+      if (isStableVendor(stockingVendor)) return item.type === 'pet';
+      return item.type !== 'pet';
+    });
+  })() : [];
 
   const cityVendors = payload.vendors
     .filter((vendor) => vendor.cityKey === activeCityKey)
     .filter(activeCityVendor)
     .filter((vendor) => isDm || !vendor.hidden)
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+  const selectedProductSection = selectedVendor && selectedProduct ? sectionRecordForProduct(selectedVendor, selectedProduct) : null;
+  const selectedProductCanPurchase = !selectedProductSection || selectedProductSection.sectionType !== 'holding';
+  const productEditorPriceOnly = Boolean(editProduct && productEditorVendor && !canManageVendor(productEditorVendor) && canPriceStableVendor(productEditorVendor));
+  const vendorEditorRenameOnly = Boolean(editVendor && !canManageVendor(editVendor) && canRenameStableVendor(editVendor));
 
   const loadCities = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -1347,11 +1431,12 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function patchProduct(product: MarketProduct, patch: Partial<ProductDraft>, fallback = 'Shop stock could not be changed.') {
+    const vendor = payload.vendors.find((entry) => entry.id === product.vendorId) ?? null;
     const canPatchProduct = isDm || (
       product.kind === 'document'
       && product.documentVisibility === 'government'
       && product.documentEditorUserId === profile.id
-    );
+    ) || (vendor ? canManageVendor(vendor) || canPriceStableVendor(vendor) : false);
     if (!canPatchProduct) return false;
     setSaving(true);
     setError('');
@@ -1371,7 +1456,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function patchVendor(vendor: ShopVendor, patch: Partial<VendorDraft>, fallback = 'Shop details could not be changed.') {
-    if (!isDm) return false;
+    if (!canManageVendor(vendor) && !canRenameStableVendor(vendor)) return false;
     setSaving(true);
     setError('');
     try {
@@ -1390,7 +1475,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function deleteProduct(product: MarketProduct) {
-    if (!isDm) return;
+    const vendor = payload.vendors.find((entry) => entry.id === product.vendorId) ?? null;
+    if (!vendor || !canManageVendor(vendor)) return;
     if (!window.confirm(`Delete ${product.name} from this shop?`)) return;
     setSaving(true);
     setError('');
@@ -1404,7 +1490,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function deleteSection(vendor: ShopVendor, section: string) {
-    if (!isDm) return;
+    if (!canManageVendor(vendor)) return;
     const productsInSection = vendor.products.filter((product) => productSection(product) === section).length;
     if (!window.confirm(productsInSection > 0
       ? `Delete the ${section} section and its ${productsInSection} product${productsInSection === 1 ? '' : 's'}?`
@@ -1422,7 +1508,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function deleteVendor(vendor: ShopVendor) {
-    if (!isDm) return;
+    if (!canManageVendor(vendor)) return;
     if (!window.confirm(`Delete ${vendor.name} and every product inside it?`)) return;
     setSaving(true);
     setError('');
@@ -1439,7 +1525,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function addCatalogProductsToSection(vendor: ShopVendor, section: string) {
-    if (!isDm || !selectedCity || bulkCatalogKeys.length === 0) return;
+    if (!canManageVendor(vendor) || !selectedCity || bulkCatalogKeys.length === 0) return;
     const selectedItems = vendor.blueprintType === 'spell_registrar' ? [] : itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key) && (!isStableVendor(vendor) || item.type === 'pet'));
     const selectedSpells = vendor.blueprintType === 'spell_registrar' ? spellCatalog.filter((spell) => bulkCatalogKeys.includes(spell.key)) : [];
     if (selectedItems.length === 0 && selectedSpells.length === 0) return;
@@ -1479,6 +1565,54 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       setManageSection(section);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Shop items could not be added.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openStockInventory(vendor: ShopVendor) {
+    if (!canStockVendor(vendor) || !vendor.payoutCharacterId) return;
+    setStockingVendorId(vendor.id);
+    setStockSelection(null);
+    setStockInventory({ items: [], wallet: [] });
+    setStockLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/characters/${vendor.payoutCharacterId}/inventory`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? 'Shopkeeper inventory could not be loaded.');
+      setStockInventory(normalizeCharacterInventoryPayload(body));
+      const firstSection = sectionRecordsForVendor(vendor).find((section) => !section.hidden)?.name ?? defaultSectionForBlueprint(vendor.blueprintType);
+      setStockSelection((current) => current ? { ...current, section: current.section || firstSection } : null);
+    } catch (stockError) {
+      setError(stockError instanceof Error ? stockError.message : 'Shopkeeper inventory could not be loaded.');
+    } finally {
+      setStockLoading(false);
+    }
+  }
+
+  async function submitStockInventory() {
+    if (!stockingVendor || !stockSelection || !canStockVendor(stockingVendor)) return;
+    const item = stockableItems.find((entry) => entry.id === stockSelection.itemId);
+    if (!item) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${stockingVendor.id}/inventory-stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: item.id,
+          quantity: stockSelection.quantity,
+          priceCoin: stockSelection.priceCoin,
+          section: stockSelection.section || defaultSectionForBlueprint(stockingVendor.blueprintType)
+        })
+      }), 'Inventory could not be added to the shop.');
+      setStockingVendorId('');
+      setStockSelection(null);
+      setStockInventory({ items: [], wallet: [] });
+    } catch (stockError) {
+      setError(stockError instanceof Error ? stockError.message : 'Inventory could not be added to the shop.');
     } finally {
       setSaving(false);
     }
@@ -1649,6 +1783,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       name: '',
       npcName: vendor.npcName,
       roleLabel: vendor.facility,
+      sectionType: defaultSectionTypeForBlueprint(vendor),
       slotCount: vendor.blueprintType === 'stable' ? 6 : 0,
       hidden: false,
       order: (vendor.sections.reduce((max, section) => Math.max(max, section.order), 0) || 0) + 10
@@ -1661,6 +1796,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       name: section.name,
       npcName: section.npcName,
       roleLabel: section.roleLabel,
+      sectionType: section.sectionType,
       slotCount: section.slotCount,
       hidden: section.hidden,
       order: section.order
@@ -1670,6 +1806,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   async function saveSection(event: FormEvent) {
     event.preventDefault();
     if (!managingVendor || !sectionDraft || !sectionDraft.name.trim()) return;
+    if (!canManageVendor(managingVendor)) return;
     setSaving(true);
     setError('');
     try {
@@ -1758,6 +1895,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       return;
     }
     if (editVendor) {
+      if (!canManageVendor(editVendor) && !canRenameStableVendor(editVendor)) return;
       const saved = await patchVendor(editVendor, vendorDraft);
       if (saved) {
         setEditVendor(null);
@@ -1894,7 +2032,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {selectedVendor && <Button variant="secondary" onClick={() => setSelectedVendorId('')}><ArrowLeft className="mr-2 inline" size={15} /> Return to City</Button>}
-            {isDm && selectedVendor && <Button variant="secondary" onClick={() => { setManagingVendorId(selectedVendor.id); setManageSection(sectionRecordsForVendor(selectedVendor)[0]?.name ?? 'Wares'); }} disabled={saving}><Settings className="mr-2 inline" size={15} /> Manage shop</Button>}
+            {selectedVendor && canStockVendor(selectedVendor) && <Button variant="teal" onClick={() => void openStockInventory(selectedVendor)} disabled={saving}><PackageCheck className="mr-2 inline" size={15} /> Add inventory</Button>}
+            {selectedVendor && canOpenManageVendor(selectedVendor) && <Button variant="secondary" onClick={() => { setManagingVendorId(selectedVendor.id); setManageSection(sectionRecordsForVendor(selectedVendor)[0]?.name ?? 'Wares'); }} disabled={saving}><Settings className="mr-2 inline" size={15} /> {canManageVendor(selectedVendor) ? 'Manage shop' : 'Manage prices'}</Button>}
+            {selectedVendor && !canManageVendor(selectedVendor) && canRenameStableVendor(selectedVendor) && <Button variant="secondary" onClick={() => openVendorEdit(selectedVendor)} disabled={saving}><Pencil className="mr-2 inline" size={15} /> Rename stable</Button>}
             {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
             <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
             {isDm && !selectedVendor && selectedCity && <Button variant="secondary" onClick={() => openCityEdit(selectedCity)} disabled={saving}><Settings className="mr-2 inline" size={15} /> City Settings</Button>}
@@ -2015,7 +2155,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   <ShopCard
                     key={vendor.id}
                     vendor={vendor}
-                    isDm={isDm}
+                    canManage={canManageVendor(vendor)}
                     saving={saving}
                     index={cityVendors.findIndex((entry) => entry.id === vendor.id)}
                     total={cityVendors.length}
@@ -2051,7 +2191,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : isBlacksmithVendor(selectedVendor) ? (
         <BlacksmithPage
           vendor={selectedVendor}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2067,7 +2207,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         <ArmoryPage
           vendor={selectedVendor}
           sharedMaterials={armoryMaterials}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2083,7 +2223,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         <BreweryPage
           vendor={selectedVendor}
           shopper={selectedShopper}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2100,7 +2240,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : isSpellVendor(selectedVendor) ? (
         <SpellShopPage
           vendor={selectedVendor}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2114,7 +2254,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : isLibraryVendor(selectedVendor) ? (
         <LibraryPage
           vendor={selectedVendor}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2130,7 +2270,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : isStableVendor(selectedVendor) ? (
         <StablePage
           vendor={selectedVendor}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2144,7 +2284,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       ) : (
         <ShopPage
           vendor={selectedVendor}
-          isDm={isDm}
+          canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
           onSelectProduct={(product) => {
@@ -2224,9 +2364,99 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
               {!isDisplayBook(selectedProduct) && (
-                <Button variant="primary" disabled={!canShop || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {purchaseActionLabel(selectedProduct)}</Button>
+                <Button variant="primary" disabled={!canShop || !selectedProductCanPurchase || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {selectedProductCanPurchase ? purchaseActionLabel(selectedProduct) : 'Holding only'}</Button>
               )}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {stockingVendor && (
+        <Modal size="wide" title={`Add Inventory to ${stockingVendor.name}`} onClose={() => { setStockingVendorId(''); setStockSelection(null); setStockInventory({ items: [], wallet: [] }); }}>
+          <div className="grid gap-4">
+            <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4">
+              <p className="eyebrow">Shopkeeper Stock</p>
+              <h3 className="mt-1 text-2xl font-black">{stockKeeper?.name ?? 'Shopkeeper inventory'}</h3>
+              <p className="mt-1 text-sm font-bold text-[var(--muted)]">
+                Choose one carried item, set the amount and global price, then move it into this shop.
+              </p>
+            </div>
+            {stockLoading ? (
+              <div className="grid h-32 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]"><RefreshCw className="animate-spin" size={18} /></div>
+            ) : stockableItems.length === 0 ? (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4 text-sm font-bold text-[var(--muted)]">
+                No eligible inventory is available to stock. Equipped items, currency, pets in non-stables, and filled storage are kept out of this flow.
+              </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
+                <div className="thin-scrollbar grid max-h-[58vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+                  {stockableItems.map((item) => {
+                    const selected = stockSelection?.itemId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => setStockSelection({
+                          itemId: item.id,
+                          quantity: Math.min(item.quantity, quantityStepForItem(item)),
+                          priceCoin: stockSelection?.priceCoin ?? 0,
+                          section: stockSelection?.section || stockSections[0]?.name || defaultSectionForBlueprint(stockingVendor.blueprintType)
+                        })}
+                        className={`rounded-2xl border p-3 text-left transition ${rarityClass(item.rarity)} ${selected ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#120a08]' : 'hover:border-[var(--brass)]/70'}`}
+                      >
+                        <span className="flex min-w-0 items-start gap-3">
+                          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-black/25 text-[var(--brass)]"><ItemIcon type={item.type} size={21} /></span>
+                          <span className="min-w-0">
+                            <span className="block break-words font-black leading-5">{item.displayName || item.name}</span>
+                            <span className="mt-1 block text-xs font-black uppercase tracking-wide text-[var(--muted)]">{item.rarity} {item.type} - Qty {formatQuantity(item.quantity)}</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="grid content-start gap-3 rounded-2xl border border-[var(--line)] bg-black/15 p-3">
+                  <p className="eyebrow">Listing Setup</p>
+                  {(() => {
+                    const item = stockableItems.find((entry) => entry.id === stockSelection?.itemId) ?? null;
+                    const step = item ? quantityStepForItem(item) : 1;
+                    const selectedSection = stockSections.find((section) => section.name === stockSelection?.section) ?? stockSections[0] ?? null;
+                    const holding = selectedSection?.sectionType === 'holding';
+                    return item && stockSelection ? (
+                      <>
+                        <ForgeSelectableItemCard item={item} selected onClick={() => undefined} />
+                        <label>
+                          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Section</span>
+                          <SelectField value={stockSelection.section} onChange={(event) => setStockSelection({ ...stockSelection, section: event.target.value })}>
+                            {stockSections.map((section) => <option key={section.id || section.name} value={section.name}>{section.name}{isStableVendor(stockingVendor) ? ` - ${stableSectionTypeLabel(section.sectionType)}` : ''}</option>)}
+                          </SelectField>
+                        </label>
+                        <label>
+                          <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Quantity</span>
+                          <NumberInput min={step} max={item.quantity} step={step} value={stockSelection.quantity} onValueChange={(quantity) => setStockSelection({ ...stockSelection, quantity: Math.min(item.quantity, Math.max(step, quantity)) })} />
+                        </label>
+                        {holding ? (
+                          <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-xs font-bold text-[var(--muted)]">Holding sections show animals without making them purchasable.</div>
+                        ) : (
+                          <CurrencyPriceEditor
+                            systemKey="common"
+                            value={stockSelection.priceCoin}
+                            lockedSystem
+                            onSystemChange={() => undefined}
+                            onValueChange={(priceCoin) => setStockSelection({ ...stockSelection, priceCoin })}
+                          />
+                        )}
+                        <Button variant="primary" disabled={saving || !stockSelection.section || (!holding && stockSelection.priceCoin <= 0)} onClick={submitStockInventory}>
+                          <PackageCheck className="mr-2 inline" size={15} /> Add to shop
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-bold text-[var(--muted)]">Choose an item to stock.</div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}
@@ -2616,11 +2846,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openVendorEdit(managingVendor)} disabled={saving}><Pencil className="mr-2 inline" size={13} /> Shop settings</Button>
-                  <Button variant={managingVendor.hidden ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => void patchVendor(managingVendor, { hidden: !managingVendor.hidden }, 'Shop visibility could not be changed.')} disabled={saving}>
+                  {canManageVendor(managingVendor) && <Button variant={managingVendor.hidden ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" onClick={() => void patchVendor(managingVendor, { hidden: !managingVendor.hidden }, 'Shop visibility could not be changed.')} disabled={saving}>
                     {managingVendor.hidden ? <Eye className="mr-2 inline" size={13} /> : <EyeOff className="mr-2 inline" size={13} />}
                     {managingVendor.hidden ? 'Show shop' : 'Hide shop'}
-                  </Button>
-                  <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteVendor(managingVendor)} disabled={saving}><Trash2 className="mr-2 inline" size={13} /> Delete shop</Button>
+                  </Button>}
+                  {canManageVendor(managingVendor) && <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteVendor(managingVendor)} disabled={saving}><Trash2 className="mr-2 inline" size={13} /> Delete shop</Button>}
                 </div>
               </div>
             </div>
@@ -2650,7 +2880,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                             <span className="block break-words text-sm font-black">{section.name}</span>
                             <span className="mt-1 block text-xs font-bold text-[var(--muted)]">
                               {section.npcName || section.roleLabel ? `${[section.npcName, section.roleLabel].filter(Boolean).join(' - ')} - ` : ''}
-                              {isStableVendor(managingVendor) && section.slotCount > 0 ? `${count}/${section.slotCount} stable slot${section.slotCount === 1 ? '' : 's'}` : `${count} product${count === 1 ? '' : 's'}`}
+                              {isStableVendor(managingVendor) ? `${stableSectionTypeLabel(section.sectionType)} - ${section.slotCount > 0 ? `${count}/${section.slotCount} stable slot${section.slotCount === 1 ? '' : 's'}` : `${count} animal${count === 1 ? '' : 's'}`}` : `${count} product${count === 1 ? '' : 's'}`}
                             </span>
                           </span>
                           <span className="flex shrink-0 items-center gap-1">
@@ -2666,7 +2896,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     );
                   })}
                 </div>
-                <div className="mt-3 grid gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3">
+                {canManageVendor(managingVendor) && <div className="mt-3 grid gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3">
                   <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openSectionCreate(managingVendor)} disabled={saving}>
                     <Plus className="mr-2 inline" size={13} /> Create section
                   </Button>
@@ -2682,6 +2912,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                             name: section,
                             npcName: managingVendor.npcName,
                             roleLabel: managingVendor.facility,
+                            sectionType: defaultSectionTypeForBlueprint(managingVendor, section),
                             slotCount: managingVendor.blueprintType === 'stable' ? 6 : 0,
                             hidden: false,
                             order: (managingVendor.sections.reduce((max, entry) => Math.max(max, entry.order), 0) || 0) + 10
@@ -2692,7 +2923,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                         </button>
                       ))}
                   </div>
-                </div>
+                </div>}
               </div>
 
               <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
@@ -2703,11 +2934,11 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     <p className="mt-1 text-xs font-bold text-[var(--muted)]">{managingVendor.blueprintType === 'library' ? 'Write books, then publish them to a saved section.' : isStableVendor(managingVendor) ? 'Animals listed here are sent straight to the buyer stable.' : 'Products here use the same cards players see while shopping.'}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {managingVendor.blueprintType === 'library' ? (
+                    {canManageVendor(managingVendor) && managingVendor.blueprintType === 'library' ? (
                       <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openBookCreate(managingVendor, activeManageSection)} disabled={saving || manageSections.length === 0}>
                         <Plus className="mr-2 inline" size={13} /> Add book
                       </Button>
-                    ) : (
+                    ) : canManageVendor(managingVendor) ? (
                       <>
                         <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => { setBulkProductPickerOpen(true); setBulkCatalogKeys([]); setCatalogSearch(''); }} disabled={saving || !activeManageSection}>
                           <PackageCheck className="mr-2 inline" size={13} /> {managingVendor.blueprintType === 'spell_registrar' ? 'Add spells' : isStableVendor(managingVendor) ? 'Add animals' : 'Add catalog items'}
@@ -2716,10 +2947,10 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                           <Plus className="mr-2 inline" size={13} /> Custom product
                         </Button>
                       </>
-                    )}
-                    <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteSection(managingVendor, activeManageSection)} disabled={saving || !activeManageSection}>
+                    ) : null}
+                    {canManageVendor(managingVendor) && <Button variant="danger" className="px-3 py-2 text-xs" onClick={() => void deleteSection(managingVendor, activeManageSection)} disabled={saving || !activeManageSection}>
                       <Trash2 className="mr-2 inline" size={13} /> Delete section
-                    </Button>
+                    </Button>}
                   </div>
                 </div>
                 {activeManageSection ? manageSectionProducts.length === 0 ? (
@@ -2729,7 +2960,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 ) : (
                   <ProductGrid
                     products={manageSectionProducts}
-                    isDm={isDm}
+                    canManage={canOpenManageVendor(managingVendor)}
+                    canPatchProduct={canManageVendor(managingVendor)}
+                    canDeleteProduct={canManageVendor(managingVendor)}
                     saving={saving}
                     canShop={false}
                     minCardWidth="18rem"
@@ -2842,6 +3075,16 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               </label>
               {managingVendor.blueprintType === 'stable' && (
                 <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Stable section mode</span>
+                  <SelectField value={sectionDraft.sectionType} onChange={(event) => setSectionDraft({ ...sectionDraft, sectionType: event.target.value as SectionDraft['sectionType'] })}>
+                    <option value="sale">For sale - purchased animals leave the listing</option>
+                    <option value="rent">For rent - purchased animals stay available</option>
+                    <option value="holding">Holding - visible but not purchasable</option>
+                  </SelectField>
+                </label>
+              )}
+              {managingVendor.blueprintType === 'stable' && (
+                <label>
                   <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Stable slots</span>
                   <NumberInput min={0} max={200} step={1} value={sectionDraft.slotCount} onValueChange={(slotCount) => setSectionDraft({ ...sectionDraft, slotCount })} />
                 </label>
@@ -2896,46 +3139,50 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop name</span>
               <TextField value={vendorDraft.name} onChange={(event) => setVendorDraft({ ...vendorDraft, name: event.target.value })} />
             </label>
-            <label>
-              <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">NPC running shop</span>
-              <TextField value={vendorDraft.npcName} onChange={(event) => setVendorDraft({ ...vendorDraft, npcName: event.target.value })} />
-            </label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label>
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Blueprint</span>
-                <SelectField value={vendorDraft.blueprintType} onChange={(event) => setVendorDraft({ ...vendorDraft, blueprintType: event.target.value as VendorDraft['blueprintType'] })} disabled={!creatingVendor}>
-                  <option value="market">Market</option>
-                  <option value="blacksmith">Blacksmith</option>
-                  <option value="armory">Armory</option>
-                  <option value="brewery">Brewery</option>
-                  <option value="spell_registrar">Spell Registrar</option>
-                  <option value="library">Library</option>
-                  <option value="stable">Stable</option>
-                </SelectField>
-              </label>
-              <label>
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Player-run payout</span>
-                <SelectField value={vendorDraft.payoutCharacterId} onChange={(event) => setVendorDraft({ ...vendorDraft, payoutCharacterId: event.target.value })}>
-                  <option value="">No payout</option>
-                  {payload.characters.map((character) => (
-                    <option key={character.id} value={character.id}>{character.name} - {character.className}</option>
-                  ))}
-                </SelectField>
-              </label>
-              <label>
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Facility</span>
-                <TextField value={vendorDraft.facility} onChange={(event) => setVendorDraft({ ...vendorDraft, facility: event.target.value })} />
-              </label>
-              <label>
-                <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Category</span>
-                <TextField value={vendorDraft.category} onChange={(event) => setVendorDraft({ ...vendorDraft, category: event.target.value })} />
-              </label>
-            </div>
-            <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
-              <input type="checkbox" checked={!vendorDraft.hidden} onChange={(event) => setVendorDraft({ ...vendorDraft, hidden: !event.target.checked })} />
-              Visible to players
-            </label>
-            <Button variant="primary" disabled={!vendorDraft.name.trim() || !vendorDraft.npcName.trim() || saving}><PackageCheck className="mr-2 inline" size={15} /> Save shop</Button>
+            {!vendorEditorRenameOnly && (
+              <>
+                <label>
+                  <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">NPC running shop</span>
+                  <TextField value={vendorDraft.npcName} onChange={(event) => setVendorDraft({ ...vendorDraft, npcName: event.target.value })} />
+                </label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Blueprint</span>
+                    <SelectField value={vendorDraft.blueprintType} onChange={(event) => setVendorDraft({ ...vendorDraft, blueprintType: event.target.value as VendorDraft['blueprintType'] })} disabled={!creatingVendor}>
+                      <option value="market">Market</option>
+                      <option value="blacksmith">Blacksmith</option>
+                      <option value="armory">Armory</option>
+                      <option value="brewery">Brewery</option>
+                      <option value="spell_registrar">Spell Registrar</option>
+                      <option value="library">Library</option>
+                      <option value="stable">Stable</option>
+                    </SelectField>
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Player-run payout</span>
+                    <SelectField value={vendorDraft.payoutCharacterId} onChange={(event) => setVendorDraft({ ...vendorDraft, payoutCharacterId: event.target.value })}>
+                      <option value="">No payout</option>
+                      {payload.characters.map((character) => (
+                        <option key={character.id} value={character.id}>{character.name} - {character.className}</option>
+                      ))}
+                    </SelectField>
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Facility</span>
+                    <TextField value={vendorDraft.facility} onChange={(event) => setVendorDraft({ ...vendorDraft, facility: event.target.value })} />
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Category</span>
+                    <TextField value={vendorDraft.category} onChange={(event) => setVendorDraft({ ...vendorDraft, category: event.target.value })} />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                  <input type="checkbox" checked={!vendorDraft.hidden} onChange={(event) => setVendorDraft({ ...vendorDraft, hidden: !event.target.checked })} />
+                  Visible to players
+                </label>
+              </>
+            )}
+            <Button variant="primary" disabled={!vendorDraft.name.trim() || (!vendorEditorRenameOnly && !vendorDraft.npcName.trim()) || saving}><PackageCheck className="mr-2 inline" size={15} /> Save shop</Button>
           </form>
         </Modal>
       )}
@@ -2943,7 +3190,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       {(editProduct || creatingProductForVendor) && productDraft && (
         <Modal size="wide" title={productDraft.kind === 'document' ? (editProduct ? `Edit ${editProduct.name}` : bookPublishStep ? 'Publish Book' : 'Write Book') : creatingProductForVendor ? `Add to ${creatingProductForVendor.name}` : `Edit ${editProduct?.name ?? 'Product'}`} onClose={() => { setEditProduct(null); setCreatingProductForVendor(null); setProductDraft(null); setProductCatalogPickerOpen(false); setBookPublishStep(false); }}>
           <form onSubmit={saveProduct} className="grid gap-4">
-            {productDraft.kind === 'document' ? (
+            {productEditorPriceOnly ? (
+              <div className="grid gap-4">
+                <div className="rounded-2xl border border-[#c99f65]/35 bg-[#c99f65]/10 p-4">
+                  <p className="eyebrow">Stable Price</p>
+                  <h3 className="mt-1 text-2xl font-black">{productDraft.name}</h3>
+                  <p className="mt-1 text-sm font-bold text-[var(--muted)]">Stable keepers can rename the stable and price its listings. Sections and animals stay under DM control.</p>
+                </div>
+                <CurrencyPriceEditor
+                  systemKey="common"
+                  value={productDraft.priceCoin}
+                  lockedSystem
+                  onSystemChange={() => undefined}
+                  onValueChange={(priceCoin) => setProductDraft({ ...productDraft, currencySystemKey: 'common', priceCoin })}
+                />
+                <Button variant="primary" disabled={saving}><PackageCheck className="mr-2 inline" size={15} /> Save price</Button>
+              </div>
+            ) : productDraft.kind === 'document' ? (
               <div className="grid gap-4">
                 {!bookPublishStep || editProduct || productEditorIsDocumentOnly ? (
                   <>
@@ -3196,11 +3459,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 function CurrencyPriceEditor({
   systemKey,
   value,
+  lockedSystem = false,
   onSystemChange,
   onValueChange
 }: {
   systemKey: 'common' | 'calostrynn';
   value: number;
+  lockedSystem?: boolean;
   onSystemChange: (systemKey: 'common' | 'calostrynn') => void;
   onValueChange: (value: number) => void;
 }) {
@@ -3216,7 +3481,7 @@ function CurrencyPriceEditor({
       <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
         <label>
           <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Price currency</span>
-          <SelectField value={systemKey} onChange={(event) => onSystemChange(normalizeCurrencySystemKey(event.target.value))}>
+          <SelectField value={systemKey} onChange={(event) => onSystemChange(normalizeCurrencySystemKey(event.target.value))} disabled={lockedSystem}>
             <option value="common">Global Currency - Bits / Shillings / Marks / Crown / Sovereign</option>
             <option value="calostrynn">Calostrynn Currency - Coin / Callis / Callor / Cal</option>
           </SelectField>
@@ -3436,9 +3701,9 @@ function ConstructionRequirementRow({ requirement, city }: { requirement: CityCo
   );
 }
 
-function ShopCard({ vendor, isDm, saving, index, total, onOpen, onManage, onEdit, onDelete, onToggleVisibility, onMove }: {
+function ShopCard({ vendor, canManage, saving, index, total, onOpen, onManage, onEdit, onDelete, onToggleVisibility, onMove }: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   index: number;
   total: number;
@@ -3472,7 +3737,7 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onManage, onEdit
         </span>
       </button>
 
-      {isDm && (
+      {canManage && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="primary" className="px-3 py-2 text-xs" onClick={onManage} disabled={saving}>
             <Settings className="mr-2 inline" size={13} /> Manage
@@ -3496,6 +3761,8 @@ function ShopCard({ vendor, isDm, saving, index, total, onOpen, onManage, onEdit
 }
 
 function ShopSectionHeader({ section }: { section: ShopSection }) {
+  const modeLabel = section.sectionType !== 'standard' ? stableSectionTypeLabel(section.sectionType) : '';
+  const modeHelp = section.sectionType !== 'standard' ? stableSectionHelp(section.sectionType) : '';
   return (
     <div className="rule-title mb-3">
       <div className="flex flex-wrap items-end justify-between gap-2">
@@ -3506,6 +3773,7 @@ function ShopSectionHeader({ section }: { section: ShopSection }) {
             </p>
           )}
           <h3 className="text-sm font-black uppercase tracking-wider">{section.name}</h3>
+          {modeLabel && <p className="mt-1 text-xs font-bold text-[var(--muted)]">{modeLabel}{modeHelp ? ` - ${modeHelp}` : ''}</p>}
         </div>
         <span className="text-xs font-black text-[var(--muted)]">
           {section.slotCount > 0 ? `${section.productCount}/${section.slotCount} slots` : `${section.productCount} listed`}
@@ -3523,9 +3791,9 @@ function EmptyShopSection({ label = 'This section is empty.' }: { label?: string
   );
 }
 
-function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
+function ShopPage({ vendor, canManage, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3540,7 +3808,7 @@ function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduc
         <Card key={section.id || section.name}>
           <ShopSectionHeader section={section} />
           {products.length ? (
-            <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
+            <ProductGrid products={products} canManage={canManage} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
           ) : (
             <EmptyShopSection />
           )}
@@ -3552,7 +3820,7 @@ function ShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduc
 
 function StablePage(props: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3578,12 +3846,13 @@ function StablePage(props: {
       {groups.map(([section, products]) => {
         const visibleSlots = Math.max(section.slotCount, products.length);
         const emptySlots = Math.max(0, visibleSlots - products.length);
+        const sectionCanShop = props.canShop && section.sectionType !== 'holding';
         return (
           <Card key={section.id || section.name}>
             <ShopSectionHeader section={section} />
             <div className="grid gap-3">
               {products.length ? (
-                <ProductGrid {...props} products={products} minCardWidth="13rem" />
+                <ProductGrid {...props} products={products} canShop={sectionCanShop} canInspectUnavailable minCardWidth="13rem" />
               ) : (
                 <EmptyShopSection label="No animals are listed in this section yet." />
               )}
@@ -3604,9 +3873,9 @@ function StablePage(props: {
   );
 }
 
-function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
+function SpellShopPage({ vendor, canManage, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct }: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3654,7 +3923,7 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
             {expanded && (
               <div className="mt-4">
                 {products.length ? (
-                  <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
+                  <ProductGrid products={products} canManage={canManage} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
                 ) : (
                   <EmptyShopSection />
                 )}
@@ -3669,7 +3938,7 @@ function SpellShopPage({ vendor, isDm, saving, canShop, onSelectProduct, onEditP
 
 function LibraryPage(props: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3692,7 +3961,7 @@ function LibraryPage(props: {
 
 function BlacksmithPage(props: {
   vendor: ShopVendor;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3787,7 +4056,7 @@ function BlacksmithPage(props: {
 function ArmoryPage(props: {
   vendor: ShopVendor;
   sharedMaterials: MarketProduct[];
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -3885,10 +4154,10 @@ function ArmoryPage(props: {
   );
 }
 
-function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct, onCitiesChanged, liveRefreshSignal, setError }: {
+function BreweryPage({ vendor, shopper, canManage, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct, onCitiesChanged, liveRefreshSignal, setError }: {
   vendor: ShopVendor;
   shopper: Character | null;
-  isDm: boolean;
+  canManage: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -4069,7 +4338,7 @@ function BreweryPage({ vendor, shopper, isDm, saving, canShop, onSelectProduct, 
         <Card key={section.id || section.name}>
           <ShopSectionHeader section={section} />
           {products.length ? (
-            <ProductGrid products={products} isDm={isDm} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
+            <ProductGrid products={products} canManage={canManage} saving={saving} canShop={canShop} onSelectProduct={onSelectProduct} onEditProduct={onEditProduct} onDeleteProduct={onDeleteProduct} onPatchProduct={onPatchProduct} />
           ) : (
             <EmptyShopSection />
           )}
@@ -4260,9 +4529,11 @@ function BreweryIngredientPicker({ title, items, selections, onChange }: {
   );
 }
 
-function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct, minCardWidth = '15.5rem' }: {
+function ProductGrid({ products, canManage, canPatchProduct = canManage, canDeleteProduct = canManage, saving, canShop, onSelectProduct, onEditProduct, onDeleteProduct, onPatchProduct, minCardWidth = '15.5rem', canInspectUnavailable = false }: {
   products: MarketProduct[];
-  isDm: boolean;
+  canManage: boolean;
+  canPatchProduct?: boolean;
+  canDeleteProduct?: boolean;
   saving: boolean;
   canShop: boolean;
   onSelectProduct: (product: MarketProduct) => void;
@@ -4270,6 +4541,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
   onDeleteProduct: (product: MarketProduct) => void;
   onPatchProduct: (product: MarketProduct, patch: Partial<ProductDraft>) => void;
   minCardWidth?: string;
+  canInspectUnavailable?: boolean;
 }) {
   const bookOnlyGrid = products.length > 0 && products.every(isBookProduct);
   const productGridStyle = bookOnlyGrid
@@ -4279,16 +4551,16 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
     <div className={`grid gap-3 ${bookOnlyGrid ? 'sm:grid-cols-2 xl:grid-cols-4' : ''}`} style={productGridStyle}>
       {products.map((product) => {
         const disabled = !isDisplayBook(product) && !hasUsableStock(product);
-        const canOpen = isDm || isDisplayBook(product) || (!disabled && canShop);
+        const canOpen = canManage || isDisplayBook(product) || (!disabled && canShop) || canInspectUnavailable;
         const manaBadge = spellManaBadgeText(product);
         const bookProduct = isBookProduct(product);
-        const dmControls = isDm ? (
+        const dmControls = canManage ? (
           <span className={`absolute right-2 top-2 gap-1 ${bookProduct ? 'grid' : 'flex'}`}>
-            <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
+            {canPatchProduct && <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
               {product.available ? <Eye size={13} /> : <EyeOff size={13} />}
-            </span>
+            </span>}
             <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onEditProduct(product); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Pencil size={13} /></span>
-            <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/15 text-[var(--red)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>
+            {canDeleteProduct && <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onDeleteProduct(product); }} className={`rounded-lg border border-[var(--red)]/35 bg-[var(--red)]/15 text-[var(--red)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}><Trash2 size={13} /></span>}
           </span>
         ) : null;
         if (bookProduct) {
@@ -4334,7 +4606,7 @@ function ProductGrid({ products, isDm, saving, canShop, onSelectProduct, onEditP
             }}
             className={`relative rounded-2xl border p-3 text-left transition active:scale-[0.99] ${productCardClass(product)} ${disabled ? 'opacity-45' : ''} ${canOpen ? 'hover:border-[var(--brass)]' : ''}`}
           >
-            <span className={`mb-2 block ${isDm ? 'pr-28' : ''}`}>
+            <span className={`mb-2 block ${canManage ? 'pr-28' : ''}`}>
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">

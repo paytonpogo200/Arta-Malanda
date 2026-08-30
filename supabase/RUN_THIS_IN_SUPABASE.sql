@@ -7537,6 +7537,19 @@ create table if not exists public.market_products (
   document_content text not null default '',
   mana_cost int not null default 0 check (mana_cost >= 0),
   mana_label text not null default '',
+  item_is_accessory boolean not null default false,
+  item_is_storage boolean not null default false,
+  item_storage_capacity int not null default 0,
+  item_modifiers jsonb not null default '{}'::jsonb,
+  item_enchantment text,
+  item_rune_name text,
+  item_material text,
+  item_enhancement_count int not null default 0,
+  item_is_two_handed boolean not null default false,
+  item_potion_strength text,
+  item_potion_property text,
+  item_potion_quality text,
+  item_spell_book_form int not null default 1,
   is_available boolean not null default true,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -7566,7 +7579,20 @@ alter table public.market_products
   add column if not exists document_visibility text not null default 'for_sale',
   add column if not exists document_editor_user_id uuid references public.profiles(id) on delete set null,
   add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
-  add column if not exists mana_label text not null default '';
+  add column if not exists mana_label text not null default '',
+  add column if not exists item_is_accessory boolean not null default false,
+  add column if not exists item_is_storage boolean not null default false,
+  add column if not exists item_storage_capacity int not null default 0,
+  add column if not exists item_modifiers jsonb not null default '{}'::jsonb,
+  add column if not exists item_enchantment text,
+  add column if not exists item_rune_name text,
+  add column if not exists item_material text,
+  add column if not exists item_enhancement_count int not null default 0,
+  add column if not exists item_is_two_handed boolean not null default false,
+  add column if not exists item_potion_strength text,
+  add column if not exists item_potion_property text,
+  add column if not exists item_potion_quality text,
+  add column if not exists item_spell_book_form int not null default 1;
 
 alter table public.market_products
   drop constraint if exists market_products_currency_system_key_check,
@@ -7575,6 +7601,16 @@ alter table public.market_products
 alter table public.market_products
   drop constraint if exists market_products_document_visibility_check,
   add constraint market_products_document_visibility_check check (document_visibility in ('government', 'for_sale'));
+
+alter table public.market_products
+  drop constraint if exists market_products_item_storage_capacity_check,
+  add constraint market_products_item_storage_capacity_check check (item_storage_capacity >= 0 and item_storage_capacity <= 500),
+  drop constraint if exists market_products_item_modifiers_object_check,
+  add constraint market_products_item_modifiers_object_check check (jsonb_typeof(item_modifiers) = 'object'),
+  drop constraint if exists market_products_item_enhancement_count_check,
+  add constraint market_products_item_enhancement_count_check check (item_enhancement_count between 0 and 3),
+  drop constraint if exists market_products_item_spell_book_form_check,
+  add constraint market_products_item_spell_book_form_check check (item_spell_book_form in (1, 2));
 
 update public.market_products
 set item_type = 'book'
@@ -7626,6 +7662,7 @@ create table if not exists public.shop_sections (
   section_name text not null,
   npc_name text not null default '',
   role_label text not null default '',
+  section_type text not null default 'standard',
   slot_count int not null default 0 check (slot_count >= 0 and slot_count <= 200),
   is_hidden boolean not null default false,
   display_order int not null default 0,
@@ -7638,11 +7675,16 @@ create table if not exists public.shop_sections (
 create index if not exists shop_sections_vendor_idx on public.shop_sections(vendor_id);
 
 alter table public.shop_sections
-  add column if not exists slot_count int not null default 0;
+  add column if not exists slot_count int not null default 0,
+  add column if not exists section_type text not null default 'standard';
 
 alter table public.shop_sections
   drop constraint if exists shop_sections_slot_count_check,
   add constraint shop_sections_slot_count_check check (slot_count >= 0 and slot_count <= 200);
+
+alter table public.shop_sections
+  drop constraint if exists shop_sections_section_type_check,
+  add constraint shop_sections_section_type_check check (section_type in ('standard', 'sale', 'rent', 'holding'));
 
 create table if not exists public.app_data_repairs (
   repair_key text primary key,
@@ -8489,6 +8531,76 @@ begin
 end;
 $$;
 
+create or replace function public.profile_runs_shop_vendor(
+  p_profile public.profiles,
+  p_vendor public.shop_vendors
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce(p_vendor.payout_character_id is not null, false)
+    and exists (
+      select 1
+      from public.characters c
+      where c.id = p_vendor.payout_character_id
+        and c.owner_user_id = p_profile.id
+    )
+$$;
+
+create or replace function public.profile_can_manage_shop_vendor(
+  p_profile public.profiles,
+  p_vendor public.shop_vendors
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select p_profile.role = 'dm'::public.user_role
+    or (
+      public.profile_runs_shop_vendor(p_profile, p_vendor)
+      and p_vendor.blueprint_type <> 'stable'
+    )
+$$;
+
+create or replace function public.profile_can_price_stable_vendor(
+  p_profile public.profiles,
+  p_vendor public.shop_vendors
+)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select p_profile.role = 'dm'::public.user_role
+    or (
+      public.profile_runs_shop_vendor(p_profile, p_vendor)
+      and p_vendor.blueprint_type = 'stable'
+    )
+$$;
+
+create or replace function public.stable_section_type_for_product(p_product public.market_products)
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  select coalesce((
+    select s.section_type
+    from public.shop_sections s
+    where s.vendor_id = p_product.vendor_id
+      and s.section_name = coalesce(nullif(trim(p_product.shop_section), ''), 'Wares')
+    limit 1
+  ), case
+    when lower(coalesce(p_product.shop_section, '')) like '%rent%' then 'rent'
+    when lower(coalesce(p_product.shop_section, '')) like '%hold%' then 'holding'
+    when lower(coalesce(p_product.shop_section, '')) like '%sale%' or lower(coalesce(p_product.shop_section, '')) like '%sell%' then 'sale'
+    else 'sale'
+  end)
+$$;
+
 alter table public.shop_vendors
 add column if not exists npc_name text not null default 'Shopkeeper',
 add column if not exists blueprint_type text not null default 'market',
@@ -8507,7 +8619,20 @@ alter table public.market_products
   add column if not exists document_visibility text not null default 'for_sale',
   add column if not exists document_editor_user_id uuid references public.profiles(id) on delete set null,
   add column if not exists mana_cost int not null default 0 check (mana_cost >= 0),
-  add column if not exists mana_label text not null default '';
+  add column if not exists mana_label text not null default '',
+  add column if not exists item_is_accessory boolean not null default false,
+  add column if not exists item_is_storage boolean not null default false,
+  add column if not exists item_storage_capacity int not null default 0,
+  add column if not exists item_modifiers jsonb not null default '{}'::jsonb,
+  add column if not exists item_enchantment text,
+  add column if not exists item_rune_name text,
+  add column if not exists item_material text,
+  add column if not exists item_enhancement_count int not null default 0,
+  add column if not exists item_is_two_handed boolean not null default false,
+  add column if not exists item_potion_strength text,
+  add column if not exists item_potion_property text,
+  add column if not exists item_potion_quality text,
+  add column if not exists item_spell_book_form int not null default 1;
 
 alter table public.market_products
   drop constraint if exists market_products_product_kind_check,
@@ -8516,6 +8641,16 @@ alter table public.market_products
 alter table public.market_products
   drop constraint if exists market_products_document_visibility_check,
   add constraint market_products_document_visibility_check check (document_visibility in ('government', 'for_sale'));
+
+alter table public.market_products
+  drop constraint if exists market_products_item_storage_capacity_check,
+  add constraint market_products_item_storage_capacity_check check (item_storage_capacity >= 0 and item_storage_capacity <= 500),
+  drop constraint if exists market_products_item_modifiers_object_check,
+  add constraint market_products_item_modifiers_object_check check (jsonb_typeof(item_modifiers) = 'object'),
+  drop constraint if exists market_products_item_enhancement_count_check,
+  add constraint market_products_item_enhancement_count_check check (item_enhancement_count between 0 and 3),
+  drop constraint if exists market_products_item_spell_book_form_check,
+  add constraint market_products_item_spell_book_form_check check (item_spell_book_form in (1, 2));
 
 update public.shop_vendors
 set blueprint_type = 'market'
@@ -8557,41 +8692,53 @@ on conflict (vendor_id, section_key) do update
 set section_name = excluded.section_name,
     display_order = least(public.shop_sections.display_order, excluded.display_order);
 
-insert into public.shop_sections (vendor_id, section_key, section_name, display_order, slot_count)
-select v.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order, seed.slot_count
+insert into public.shop_sections (vendor_id, section_key, section_name, section_type, display_order, slot_count)
+select v.id, public.safe_slug(seed.section_name), seed.section_name, seed.section_type, seed.display_order, seed.slot_count
 from public.shop_vendors v
 join (values
-  ('market', 'Wares', 10, 0),
-  ('blacksmith', 'Material Scales', 10, 0),
-  ('blacksmith', 'Runes', 20, 0),
-  ('blacksmith', 'Light Weapons', 100, 0),
-  ('blacksmith', 'Medium Weapons', 110, 0),
-  ('blacksmith', 'Heavy Weapons', 120, 0),
-  ('blacksmith', 'Magecraft Commissions', 130, 0),
-  ('blacksmith', 'Shield Creation', 140, 0),
-  ('blacksmith', 'Mythril Services', 200, 0),
-  ('blacksmith', 'Dragon Scale Refining', 210, 0),
-  ('armory', 'Material Scales', 10, 0),
-  ('armory', 'Armor Creation', 100, 0),
-  ('armory', 'Mythril Services', 200, 0),
-  ('armory', 'Dragon Scale Refining', 210, 0),
-  ('brewery', 'Brewing Supplies', 10, 0),
-  ('brewery', 'Finished Potions', 20, 0),
-  ('brewery', 'Brew Potion', 100, 0),
-  ('spell_registrar', 'Ember Spells', 10, 0),
-  ('spell_registrar', 'Frost Spells', 20, 0),
-  ('spell_registrar', 'Lightning Spells', 30, 0),
-  ('spell_registrar', 'Earth Spells', 40, 0),
-  ('spell_registrar', 'Wind Spells', 50, 0),
-  ('spell_registrar', 'Energy Spells', 60, 0),
-  ('spell_registrar', 'Defensive Support Spells', 70, 0),
-  ('spell_registrar', 'Offensive Support Spells', 80, 0),
-  ('spell_registrar', 'Enhancement Spells', 90, 0),
-  ('spell_registrar', 'Utility Spells', 100, 0),
-  ('stable', 'For Sale', 10, 6),
-  ('stable', 'For Rent', 20, 6)
-) as seed(blueprint_type, section_name, display_order, slot_count) on seed.blueprint_type = v.blueprint_type
+  ('market', 'Wares', 'standard', 10, 0),
+  ('blacksmith', 'Material Scales', 'standard', 10, 0),
+  ('blacksmith', 'Runes', 'standard', 20, 0),
+  ('blacksmith', 'Light Weapons', 'standard', 100, 0),
+  ('blacksmith', 'Medium Weapons', 'standard', 110, 0),
+  ('blacksmith', 'Heavy Weapons', 'standard', 120, 0),
+  ('blacksmith', 'Magecraft Commissions', 'standard', 130, 0),
+  ('blacksmith', 'Shield Creation', 'standard', 140, 0),
+  ('blacksmith', 'Mythril Services', 'standard', 200, 0),
+  ('blacksmith', 'Dragon Scale Refining', 'standard', 210, 0),
+  ('armory', 'Material Scales', 'standard', 10, 0),
+  ('armory', 'Armor Creation', 'standard', 100, 0),
+  ('armory', 'Mythril Services', 'standard', 200, 0),
+  ('armory', 'Dragon Scale Refining', 'standard', 210, 0),
+  ('brewery', 'Brewing Supplies', 'standard', 10, 0),
+  ('brewery', 'Finished Potions', 'standard', 20, 0),
+  ('brewery', 'Brew Potion', 'standard', 100, 0),
+  ('spell_registrar', 'Ember Spells', 'standard', 10, 0),
+  ('spell_registrar', 'Frost Spells', 'standard', 20, 0),
+  ('spell_registrar', 'Lightning Spells', 'standard', 30, 0),
+  ('spell_registrar', 'Earth Spells', 'standard', 40, 0),
+  ('spell_registrar', 'Wind Spells', 'standard', 50, 0),
+  ('spell_registrar', 'Energy Spells', 'standard', 60, 0),
+  ('spell_registrar', 'Defensive Support Spells', 'standard', 70, 0),
+  ('spell_registrar', 'Offensive Support Spells', 'standard', 80, 0),
+  ('spell_registrar', 'Enhancement Spells', 'standard', 90, 0),
+  ('spell_registrar', 'Utility Spells', 'standard', 100, 0),
+  ('stable', 'Sale Stalls', 'sale', 10, 6),
+  ('stable', 'Rental Stalls', 'rent', 20, 6),
+  ('stable', 'Holding Pens', 'holding', 30, 6)
+) as seed(blueprint_type, section_name, section_type, display_order, slot_count) on seed.blueprint_type = v.blueprint_type
 on conflict (vendor_id, section_key) do nothing;
+
+update public.shop_sections s
+set section_type = case
+    when lower(s.section_name) like '%rent%' then 'rent'
+    when lower(s.section_name) like '%hold%' then 'holding'
+    when lower(s.section_name) like '%sale%' or lower(s.section_name) like '%sell%' then 'sale'
+    else 'sale'
+  end
+from public.shop_vendors v
+where v.id = s.vendor_id
+  and v.blueprint_type = 'stable';
 
 delete from public.shop_sections s
 using public.shop_vendors v
@@ -8632,6 +8779,7 @@ as $$
     'name', p_section.section_name,
     'npcName', p_section.npc_name,
     'roleLabel', p_section.role_label,
+    'sectionType', p_section.section_type,
     'slotCount', p_section.slot_count,
     'hidden', p_section.is_hidden,
     'order', p_section.display_order,
@@ -8763,6 +8911,12 @@ declare
   v_storage_kind text;
   v_storage_active boolean := false;
   v_storage_slot int;
+  v_stable_section_type text := 'sale';
+  v_is_accessory boolean := false;
+  v_is_storage boolean := false;
+  v_enchantment text;
+  v_rune_name text;
+  v_spell_book_form int := 1;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -8792,13 +8946,26 @@ begin
     v_is_two_handed := v_catalog.is_two_handed;
     v_storage_capacity := v_catalog.storage_capacity;
   end if;
+  if v_product.item_modifiers <> '{}'::jsonb then v_modifiers := v_product.item_modifiers; end if;
+  v_is_accessory := coalesce(v_product.item_is_accessory, false);
+  v_is_storage := coalesce(v_product.item_is_storage, false);
+  v_enchantment := nullif(v_product.item_enchantment, '');
+  v_rune_name := nullif(v_product.item_rune_name, '');
+  if nullif(v_product.item_material, '') is not null then v_material := v_product.item_material; end if;
+  if coalesce(v_product.item_storage_capacity, 0) > 0 then v_storage_capacity := v_product.item_storage_capacity; end if;
+  if coalesce(v_product.item_enhancement_count, 0) > 0 then v_product.item_enhancement_count := least(3, v_product.item_enhancement_count); end if;
+  if v_product.item_is_two_handed then v_is_two_handed := true; end if;
+  v_spell_book_form := case when v_product.item_spell_book_form = 2 then 2 else 1 end;
+  v_potion_strength := nullif(v_product.item_potion_strength, '');
+  v_potion_property := nullif(v_product.item_potion_property, '');
+  v_potion_quality := nullif(v_product.item_potion_quality, '');
   if v_product.item_type = 'potion' then
-    v_potion_strength := public.potion_strength_from_name(v_item_name);
-    v_potion_property := public.potion_property_from_name(v_item_name);
+    v_potion_strength := coalesce(v_potion_strength, public.potion_strength_from_name(v_item_name));
+    v_potion_property := coalesce(v_potion_property, public.potion_property_from_name(v_item_name));
     v_potion_quality := case
       when v_potion_property in ('Healing', 'Mana Regen') then null
       when lower(v_item_name) = 'empty flask' then null
-      else public.potion_quality_from_name(v_item_name)
+      else coalesce(v_potion_quality, public.potion_quality_from_name(v_item_name))
     end;
     if v_potion_strength is not null and v_potion_property is not null then
       v_item_name := public.format_potion_item_name(v_potion_strength, v_potion_property, v_potion_quality);
@@ -8816,6 +8983,13 @@ begin
     raise exception 'That city is currently locked.';
   end if;
 
+  if v_vendor.blueprint_type = 'stable' then
+    v_stable_section_type := public.stable_section_type_for_product(v_product);
+    if v_stable_section_type = 'holding' then
+      raise exception 'Animals in holding are not available for purchase.';
+    end if;
+  end if;
+
   if not public.character_is_in_city(v_character, v_city.city_key) then
     raise exception 'That character is not in %.', v_city.name;
   end if;
@@ -8831,6 +9005,9 @@ begin
     end if;
 
     v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
+    if v_vendor.payout_character_id is not distinct from v_character.id then
+      v_cost := 0;
+    end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
     if v_wallet < v_cost then
       raise exception 'Not enough currency.';
@@ -8870,6 +9047,9 @@ begin
     end if;
 
     v_cost := v_product.price_coin;
+    if v_vendor.payout_character_id is not distinct from v_character.id then
+      v_cost := 0;
+    end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
     if v_wallet < v_cost then
       raise exception 'Not enough currency.';
@@ -8946,6 +9126,9 @@ begin
     end if;
 
     v_cost := v_product.price_coin;
+    if v_vendor.payout_character_id is not distinct from v_character.id then
+      v_cost := 0;
+    end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
     if v_wallet < v_cost then
       raise exception 'Not enough currency.';
@@ -9027,6 +9210,9 @@ begin
   end if;
 
   v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
+  if v_vendor.payout_character_id is not distinct from v_character.id then
+    v_cost := 0;
+  end if;
   v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
   if v_wallet < v_cost then
     raise exception 'Not enough currency.';
@@ -9045,14 +9231,14 @@ begin
       1,
       false,
       v_modifiers,
-      null,
-      null,
+      v_enchantment,
+      v_rune_name,
       v_material,
-      0,
+      v_product.item_enhancement_count,
       v_is_two_handed
     );
 
-    if v_product.stock_quantity is not null then
+    if v_product.stock_quantity is not null and v_stable_section_type <> 'rent' then
       update public.market_products
       set stock_quantity = greatest(0, stock_quantity - 1),
           is_available = case
@@ -9067,7 +9253,7 @@ begin
 
   v_inventory_quantity := v_quantity;
 
-  if v_product.item_type = 'storage'::text then
+  if v_product.item_type = 'storage'::text or v_is_storage then
     v_storage_kind := public.additional_storage_kind(v_item_name, v_product.item_type);
     v_storage_active := v_storage_kind is null
       or not public.character_storage_container_exists(v_character.id, v_item_name);
@@ -9088,17 +9274,20 @@ begin
       item_type,
       rarity,
       quantity,
+      is_accessory,
       is_storage,
       storage_active,
       storage_capacity,
       modifiers,
       enchantment,
+      rune_name,
       material,
       enhancement_count,
       is_two_handed,
       potion_strength,
       potion_property,
-      potion_quality
+      potion_quality,
+      spell_book_form
     )
     values (
       v_character.id,
@@ -9109,17 +9298,20 @@ begin
       v_product.item_type,
       v_product.rarity,
       1,
+      v_is_accessory,
       true,
       v_storage_active,
       greatest(1, coalesce(nullif(v_storage_capacity, 0), public.catalog_storage_capacity(v_item_name))),
       v_modifiers,
-      null,
+      v_enchantment,
+      v_rune_name,
       v_material,
-      0,
+      v_product.item_enhancement_count,
       v_is_two_handed,
       v_potion_strength,
       v_potion_property,
-      v_potion_quality
+      v_potion_quality,
+      v_spell_book_form
     )
     returning * into v_storage_item;
 
@@ -9136,13 +9328,17 @@ begin
     and lower(public.normalize_item_name(i.item_name)) = lower(public.normalize_item_name(v_item_name))
     and public.normalize_item_type(i.item_type) = public.normalize_item_type(v_product.item_type)
     and i.rarity = v_product.rarity
-    and coalesce(i.enchantment, '') = ''
+    and coalesce(i.item_description, '') = left(trim(coalesce(v_product.description, '')), 1500)
+    and coalesce(i.enchantment, '') = coalesce(v_enchantment, '')
+    and coalesce(i.rune_name, '') = coalesce(v_rune_name, '')
     and coalesce(i.material, '') = coalesce(v_material, '')
     and coalesce(i.potion_strength, '') = coalesce(v_potion_strength, '')
     and coalesce(i.potion_property, '') = coalesce(v_potion_property, '')
     and coalesce(i.potion_quality, '') = coalesce(v_potion_quality, '')
-    and i.enhancement_count = 0
+    and i.enhancement_count = v_product.item_enhancement_count
     and i.is_two_handed = v_is_two_handed
+    and i.is_accessory = v_is_accessory
+    and i.spell_book_form = v_spell_book_form
     and i.modifiers = v_modifiers
     and i.is_storage = false
   order by i.slot_index
@@ -9168,16 +9364,19 @@ begin
       item_type,
       rarity,
       quantity,
+      is_accessory,
       is_storage,
       storage_capacity,
       modifiers,
       enchantment,
+      rune_name,
       material,
       enhancement_count,
       is_two_handed,
       potion_strength,
       potion_property,
-      potion_quality
+      potion_quality,
+      spell_book_form
     )
     values (
       v_character.id,
@@ -9188,16 +9387,19 @@ begin
       v_product.item_type,
       v_product.rarity,
       v_inventory_quantity,
+      v_is_accessory,
       false,
       0,
       v_modifiers,
-      null,
+      v_enchantment,
+      v_rune_name,
       v_material,
-      0,
+      v_product.item_enhancement_count,
       v_is_two_handed,
       v_potion_strength,
       v_potion_property,
-      v_potion_quality
+      v_potion_quality,
+      v_spell_book_form
     )
     returning * into v_item;
   end if;
@@ -9208,7 +9410,7 @@ begin
   perform public.credit_character_wallet_value(v_vendor.payout_character_id, v_product.currency_system_key, v_cost);
   perform public.ensure_dm_testing_wallet(v_character.id);
 
-  if v_product.stock_quantity is not null then
+  if v_product.stock_quantity is not null and (v_vendor.blueprint_type <> 'stable' or v_stable_section_type <> 'rent') then
     update public.market_products
     set stock_quantity = greatest(0, stock_quantity - v_quantity)
     where id = v_product.id;
@@ -9265,6 +9467,8 @@ declare
   v_product public.market_products%rowtype;
   v_vendor public.shop_vendors%rowtype;
   v_document_editor boolean := false;
+  v_can_manage boolean := false;
+  v_can_price_stable boolean := false;
   v_spell_type text;
   v_spell_key text;
   v_next_section text;
@@ -9290,25 +9494,36 @@ begin
   v_document_editor := v_product.product_kind = 'document'
     and v_product.document_visibility = 'government'
     and v_product.document_editor_user_id = v_profile.id;
+  v_can_manage := public.profile_can_manage_shop_vendor(v_profile, v_vendor);
+  v_can_price_stable := public.profile_can_price_stable_vendor(v_profile, v_vendor);
 
-  if v_profile.role <> 'dm'::public.user_role and not v_document_editor then
-    raise exception 'Only the Dungeon Master can change shop stock.';
+  if not v_can_manage and not v_document_editor and not v_can_price_stable then
+    raise exception 'You do not have permission to change this shop stock.';
   end if;
 
-  if v_profile.role <> 'dm'::public.user_role then
+  if v_document_editor and not v_can_manage then
     v_patch := jsonb_strip_nulls(jsonb_build_object(
       'documentAuthor', v_patch->'documentAuthor',
       'documentContent', v_patch->'documentContent',
       'documentPages', v_patch->'documentPages'
     ));
+  elsif v_can_price_stable and not v_can_manage then
+    v_patch := jsonb_strip_nulls(jsonb_build_object(
+      'priceCoin', v_patch->'priceCoin',
+      'currencySystemKey', 'common'
+    ));
   end if;
 
   if v_vendor.blueprint_type = 'stable' then
-    v_next_section := case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'For Sale') else v_product.shop_section end;
+    v_next_section := case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Sale Stalls') else v_product.shop_section end;
     select * into v_section
     from public.shop_sections
     where vendor_id = v_product.vendor_id
       and section_name = v_next_section;
+
+    if v_section.id is null then
+      raise exception 'Create that stable section before moving animals into it.';
+    end if;
 
     if v_section.id is not null
       and v_section.slot_count > 0
@@ -9338,6 +9553,7 @@ begin
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
     price_coin = case when v_patch ? 'priceCoin' then greatest(0, (v_patch->>'priceCoin')::int) else price_coin end,
     currency_system_key = case
+      when v_vendor.city_key <> 'calostrynn' then 'common'
       when v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'common' then 'common'
       when v_patch ? 'currencySystemKey' then 'calostrynn'
       else currency_system_key
@@ -9382,10 +9598,17 @@ begin
   returning * into v_product;
 
   if v_patch ? 'section' then
-    insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
-    values (v_product.vendor_id, public.safe_slug(v_product.shop_section), v_product.shop_section, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = v_product.vendor_id), 10))
+    insert into public.shop_sections (vendor_id, section_key, section_name, section_type, display_order)
+    values (
+      v_product.vendor_id,
+      public.safe_slug(v_product.shop_section),
+      v_product.shop_section,
+      case when v_vendor.blueprint_type = 'stable' then v_section.section_type else 'standard' end,
+      coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = v_product.vendor_id), 10)
+    )
     on conflict (vendor_id, section_key) do update
-    set section_name = excluded.section_name;
+    set section_name = excluded.section_name,
+        section_type = excluded.section_type;
   end if;
 
   if v_product.product_kind = 'spell' then
@@ -12622,15 +12845,33 @@ set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_can_manage boolean := false;
+  v_can_rename_stable boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
     raise exception 'Invalid or expired session.';
   end if;
 
-  if v_profile.role <> 'dm'::public.user_role then
-    raise exception 'Only the Dungeon Master can change shop details.';
+  select * into v_vendor
+  from public.shop_vendors
+  where id = p_vendor_id;
+
+  if v_vendor.id is null then
+    raise exception 'Shop not found.';
+  end if;
+
+  v_can_manage := public.profile_can_manage_shop_vendor(v_profile, v_vendor);
+  v_can_rename_stable := public.profile_runs_shop_vendor(v_profile, v_vendor) and v_vendor.blueprint_type = 'stable';
+
+  if not v_can_manage and not v_can_rename_stable then
+    raise exception 'You do not have permission to change this shop.';
+  end if;
+
+  if v_can_rename_stable and not v_can_manage then
+    v_patch := jsonb_strip_nulls(jsonb_build_object('name', v_patch->'name'));
   end if;
 
   update public.shop_vendors
@@ -13021,39 +13262,40 @@ begin
   set section_name = excluded.section_name,
       display_order = least(public.shop_sections.display_order, excluded.display_order);
 
-  insert into public.shop_sections (vendor_id, section_key, section_name, display_order, slot_count)
-  select v_vendor.id, public.safe_slug(seed.section_name), seed.section_name, seed.display_order, seed.slot_count
+  insert into public.shop_sections (vendor_id, section_key, section_name, section_type, display_order, slot_count)
+  select v_vendor.id, public.safe_slug(seed.section_name), seed.section_name, seed.section_type, seed.display_order, seed.slot_count
   from (values
-    ('market', 'Wares', 10, 0),
-    ('blacksmith', 'Material Scales', 10, 0),
-    ('blacksmith', 'Runes', 20, 0),
-    ('blacksmith', 'Light Weapons', 100, 0),
-    ('blacksmith', 'Medium Weapons', 110, 0),
-    ('blacksmith', 'Heavy Weapons', 120, 0),
-    ('blacksmith', 'Magecraft Commissions', 130, 0),
-    ('blacksmith', 'Shield Creation', 140, 0),
-    ('blacksmith', 'Mythril Services', 200, 0),
-    ('blacksmith', 'Dragon Scale Refining', 210, 0),
-    ('armory', 'Material Scales', 10, 0),
-    ('armory', 'Armor Creation', 100, 0),
-    ('armory', 'Mythril Services', 200, 0),
-    ('armory', 'Dragon Scale Refining', 210, 0),
-    ('brewery', 'Brewing Supplies', 10, 0),
-    ('brewery', 'Finished Potions', 20, 0),
-    ('brewery', 'Brew Potion', 100, 0),
-    ('spell_registrar', 'Ember Spells', 10, 0),
-    ('spell_registrar', 'Frost Spells', 20, 0),
-    ('spell_registrar', 'Lightning Spells', 30, 0),
-    ('spell_registrar', 'Earth Spells', 40, 0),
-    ('spell_registrar', 'Wind Spells', 50, 0),
-    ('spell_registrar', 'Energy Spells', 60, 0),
-    ('spell_registrar', 'Defensive Support Spells', 70, 0),
-    ('spell_registrar', 'Offensive Support Spells', 80, 0),
-    ('spell_registrar', 'Enhancement Spells', 90, 0),
-    ('spell_registrar', 'Utility Spells', 100, 0),
-    ('stable', 'For Sale', 10, 6),
-    ('stable', 'For Rent', 20, 6)
-  ) as seed(blueprint_type, section_name, display_order, slot_count)
+    ('market', 'Wares', 'standard', 10, 0),
+    ('blacksmith', 'Material Scales', 'standard', 10, 0),
+    ('blacksmith', 'Runes', 'standard', 20, 0),
+    ('blacksmith', 'Light Weapons', 'standard', 100, 0),
+    ('blacksmith', 'Medium Weapons', 'standard', 110, 0),
+    ('blacksmith', 'Heavy Weapons', 'standard', 120, 0),
+    ('blacksmith', 'Magecraft Commissions', 'standard', 130, 0),
+    ('blacksmith', 'Shield Creation', 'standard', 140, 0),
+    ('blacksmith', 'Mythril Services', 'standard', 200, 0),
+    ('blacksmith', 'Dragon Scale Refining', 'standard', 210, 0),
+    ('armory', 'Material Scales', 'standard', 10, 0),
+    ('armory', 'Armor Creation', 'standard', 100, 0),
+    ('armory', 'Mythril Services', 'standard', 200, 0),
+    ('armory', 'Dragon Scale Refining', 'standard', 210, 0),
+    ('brewery', 'Brewing Supplies', 'standard', 10, 0),
+    ('brewery', 'Finished Potions', 'standard', 20, 0),
+    ('brewery', 'Brew Potion', 'standard', 100, 0),
+    ('spell_registrar', 'Ember Spells', 'standard', 10, 0),
+    ('spell_registrar', 'Frost Spells', 'standard', 20, 0),
+    ('spell_registrar', 'Lightning Spells', 'standard', 30, 0),
+    ('spell_registrar', 'Earth Spells', 'standard', 40, 0),
+    ('spell_registrar', 'Wind Spells', 'standard', 50, 0),
+    ('spell_registrar', 'Energy Spells', 'standard', 60, 0),
+    ('spell_registrar', 'Defensive Support Spells', 'standard', 70, 0),
+    ('spell_registrar', 'Offensive Support Spells', 'standard', 80, 0),
+    ('spell_registrar', 'Enhancement Spells', 'standard', 90, 0),
+    ('spell_registrar', 'Utility Spells', 'standard', 100, 0),
+    ('stable', 'Sale Stalls', 'sale', 10, 6),
+    ('stable', 'Rental Stalls', 'rent', 20, 6),
+    ('stable', 'Holding Pens', 'holding', 30, 6)
+  ) as seed(blueprint_type, section_name, section_type, display_order, slot_count)
   where seed.blueprint_type = v_blueprint
   on conflict (vendor_id, section_key) do nothing;
 
@@ -13083,9 +13325,16 @@ declare
   v_spell_key text;
   v_section_record public.shop_sections%rowtype;
 begin
-  v_profile := public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
   select * into v_vendor from public.shop_vendors where id = p_vendor_id;
   if v_vendor.id is null then raise exception 'Shop not found.'; end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to add products to this shop.';
+  end if;
 
   v_kind := case
     when v_patch ? 'kind' and v_patch->>'kind' in ('item', 'spell', 'document', 'service') then v_patch->>'kind'
@@ -13097,7 +13346,7 @@ begin
 
   if v_vendor.blueprint_type = 'stable' then
     v_kind := 'item';
-    v_section := coalesce(nullif(trim(v_patch->>'section'), ''), 'For Sale');
+    v_section := coalesce(nullif(trim(v_patch->>'section'), ''), 'Sale Stalls');
 
     if public.normalize_item_type(coalesce(v_patch->>'type', 'pet')) <> 'pet' then
       raise exception 'Stable listings can only sell or rent pets.';
@@ -13107,6 +13356,10 @@ begin
     from public.shop_sections
     where vendor_id = p_vendor_id
       and section_name = v_section;
+
+    if v_section_record.id is null then
+      raise exception 'Create that stable section before listing animals in it.';
+    end if;
 
     if v_section_record.id is not null
       and v_section_record.slot_count > 0
@@ -13193,7 +13446,7 @@ begin
     end,
     coalesce(nullif(v_patch->>'rarity', ''), 'Common')::public.item_rarity,
     greatest(0, coalesce(nullif(v_patch->>'priceCoin', '')::int, 0)),
-    case when v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'calostrynn' then 'calostrynn' else v_currency end,
+    case when v_currency = 'calostrynn' and v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'calostrynn' then 'calostrynn' else v_currency end,
     case
       when v_vendor.blueprint_type = 'stable' then greatest(0, coalesce(nullif(v_patch->>'stockQuantity', '')::numeric, 1))
       when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric)
@@ -13222,10 +13475,17 @@ begin
     coalesce((select max(display_order) + 10 from public.market_products where vendor_id = p_vendor_id), 10)
   );
 
-  insert into public.shop_sections (vendor_id, section_key, section_name, display_order)
-  values (p_vendor_id, public.safe_slug(v_section), v_section, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10))
+  insert into public.shop_sections (vendor_id, section_key, section_name, section_type, display_order)
+  values (
+    p_vendor_id,
+    public.safe_slug(v_section),
+    v_section,
+    case when v_vendor.blueprint_type = 'stable' then v_section_record.section_type else 'standard' end,
+    coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10)
+  )
   on conflict (vendor_id, section_key) do update
-  set section_name = excluded.section_name;
+  set section_name = excluded.section_name,
+      section_type = excluded.section_type;
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -13241,9 +13501,14 @@ security definer
 set search_path = public, extensions
 as $$
 declare
+  v_profile public.profiles%rowtype;
   v_product public.market_products%rowtype;
+  v_vendor public.shop_vendors%rowtype;
 begin
-  perform public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
 
   select * into v_product
   from public.market_products
@@ -13251,6 +13516,11 @@ begin
 
   if v_product.id is null then
     raise exception 'Shop product not found.';
+  end if;
+
+  select * into v_vendor from public.shop_vendors where id = v_product.vendor_id;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to delete products from this shop.';
   end if;
 
   delete from public.market_products
@@ -13271,14 +13541,25 @@ security definer
 set search_path = public, extensions
 as $$
 declare
+  v_profile public.profiles%rowtype;
   v_vendor public.shop_vendors%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_name text := coalesce(nullif(trim(v_patch->>'name'), ''), 'Wares');
+  v_section_type text := case when v_patch->>'sectionType' in ('sale', 'rent', 'holding') then v_patch->>'sectionType' else 'standard' end;
 begin
-  perform public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
 
   select * into v_vendor from public.shop_vendors where id = p_vendor_id;
   if v_vendor.id is null then raise exception 'Shop not found.'; end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to create sections in this shop.';
+  end if;
+  if v_vendor.blueprint_type <> 'stable' then
+    v_section_type := 'standard';
+  end if;
 
   insert into public.shop_sections (
     vendor_id,
@@ -13286,6 +13567,7 @@ begin
     section_name,
     npc_name,
     role_label,
+    section_type,
     slot_count,
     is_hidden,
     display_order
@@ -13296,6 +13578,7 @@ begin
     v_name,
     left(trim(coalesce(v_patch->>'npcName', '')), 120),
     left(trim(coalesce(v_patch->>'roleLabel', '')), 120),
+    v_section_type,
     greatest(0, least(200, coalesce(nullif(v_patch->>'slotCount', '')::int, 0))),
     coalesce((v_patch->>'hidden')::boolean, false),
     coalesce(nullif(v_patch->>'order', '')::int, coalesce((select max(display_order) + 10 from public.shop_sections where vendor_id = p_vendor_id), 10))
@@ -13304,6 +13587,7 @@ begin
   set section_name = excluded.section_name,
       npc_name = excluded.npc_name,
       role_label = excluded.role_label,
+      section_type = excluded.section_type,
       slot_count = excluded.slot_count,
       is_hidden = excluded.is_hidden,
       display_order = excluded.display_order;
@@ -13324,11 +13608,23 @@ security definer
 set search_path = public, extensions
 as $$
 declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
   v_section public.shop_sections%rowtype;
   v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
   v_name text;
+  v_section_type text;
 begin
-  perform public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null then raise exception 'Shop not found.'; end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to update sections in this shop.';
+  end if;
 
   select * into v_section
   from public.shop_sections
@@ -13338,12 +13634,18 @@ begin
   if v_section.id is null then raise exception 'Shop section not found.'; end if;
 
   v_name := case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), v_section.section_name) else v_section.section_name end;
+  v_section_type := case
+    when v_vendor.blueprint_type <> 'stable' then 'standard'
+    when v_patch->>'sectionType' in ('sale', 'rent', 'holding') then v_patch->>'sectionType'
+    else v_section.section_type
+  end;
 
   update public.shop_sections
   set section_key = public.safe_slug(v_name),
       section_name = v_name,
       npc_name = case when v_patch ? 'npcName' then left(trim(coalesce(v_patch->>'npcName', '')), 120) else npc_name end,
       role_label = case when v_patch ? 'roleLabel' then left(trim(coalesce(v_patch->>'roleLabel', '')), 120) else role_label end,
+      section_type = v_section_type,
       slot_count = case when v_patch ? 'slotCount' then greatest(0, least(200, (v_patch->>'slotCount')::int)) else slot_count end,
       is_hidden = case when v_patch ? 'hidden' then coalesce((v_patch->>'hidden')::boolean, false) else is_hidden end,
       display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
@@ -13371,10 +13673,14 @@ security definer
 set search_path = public, extensions
 as $$
 declare
+  v_profile public.profiles%rowtype;
   v_vendor public.shop_vendors%rowtype;
   v_section text := coalesce(nullif(trim(p_section), ''), 'Wares');
 begin
-  perform public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
 
   select * into v_vendor
   from public.shop_vendors
@@ -13382,6 +13688,9 @@ begin
 
   if v_vendor.id is null then
     raise exception 'Shop not found.';
+  end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to delete sections from this shop.';
   end if;
 
   delete from public.market_products
@@ -13406,9 +13715,13 @@ security definer
 set search_path = public, extensions
 as $$
 declare
+  v_profile public.profiles%rowtype;
   v_vendor public.shop_vendors%rowtype;
 begin
-  perform public.require_dm_profile(p_session_token);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
 
   select * into v_vendor
   from public.shop_vendors
@@ -13416,6 +13729,9 @@ begin
 
   if v_vendor.id is null then
     raise exception 'Shop not found.';
+  end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to delete this shop.';
   end if;
 
   delete from public.shop_vendors
@@ -13425,9 +13741,187 @@ begin
 end;
 $$;
 
+create or replace function public.stock_shop_from_inventory(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_item_id uuid,
+  p_quantity numeric,
+  p_price_coin int,
+  p_section text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_catalog public.item_catalog%rowtype;
+  v_section public.shop_sections%rowtype;
+  v_quantity numeric := coalesce(p_quantity, 0);
+  v_section_name text := coalesce(nullif(trim(p_section), ''), 'Wares');
+  v_section_type text := 'standard';
+  v_product_kind text := 'item';
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then
+    raise exception 'Invalid or expired session.';
+  end if;
+
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null then
+    raise exception 'Shop not found.';
+  end if;
+  if not public.profile_can_manage_shop_vendor(v_profile, v_vendor) then
+    raise exception 'You do not have permission to stock this shop.';
+  end if;
+  if v_vendor.payout_character_id is null then
+    raise exception 'Choose a payout character before stocking inventory.';
+  end if;
+
+  select * into v_item
+  from public.inventory_items
+  where id = p_item_id
+    and character_id = v_vendor.payout_character_id
+  for update;
+
+  if v_item.id is null then
+    raise exception 'Inventory item not found for this shopkeeper.';
+  end if;
+  if v_item.loadout_slot is not null then
+    raise exception 'Equipped items cannot be stocked.';
+  end if;
+  if public.normalize_item_type(v_item.item_type) = 'currency' then
+    raise exception 'Currency cannot be stocked as a shop product.';
+  end if;
+  if exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty that storage item before listing it in a shop.';
+  end if;
+  if v_vendor.blueprint_type = 'stable' and public.normalize_item_type(v_item.item_type) <> 'pet' then
+    raise exception 'Stable inventory can only stock pets.';
+  end if;
+  if v_vendor.blueprint_type <> 'stable' and public.normalize_item_type(v_item.item_type) = 'pet' then
+    raise exception 'Pets belong in stable shops.';
+  end if;
+
+  select * into v_section
+  from public.shop_sections
+  where vendor_id = p_vendor_id
+    and section_name = v_section_name;
+
+  if v_section.id is null then
+    raise exception 'Create that shop section before adding inventory to it.';
+  end if;
+  v_section_type := v_section.section_type;
+
+  if v_vendor.blueprint_type = 'stable' then
+    if v_section.slot_count > 0
+      and (
+        select count(*)::int
+        from public.market_products p
+        where p.vendor_id = p_vendor_id
+          and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = v_section_name
+      ) >= v_section.slot_count
+    then
+      raise exception 'That stable section has no open listing slots.';
+    end if;
+  end if;
+
+  v_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, v_quantity));
+  if v_item.is_storage or public.normalize_item_type(v_item.item_type) in ('pet', 'weapon', 'armor', 'shield', 'accessory', 'tool', 'book', 'spell book') then
+    v_quantity := 1;
+  end if;
+  if v_quantity > v_item.quantity then
+    raise exception 'Not enough quantity to stock.';
+  end if;
+
+  select * into v_catalog
+  from public.item_catalog
+  where item_key = public.catalog_key_for_name(v_item.item_name)
+  limit 1;
+
+  insert into public.market_products (
+    vendor_id,
+    product_key,
+    item_name,
+    description,
+    item_type,
+    rarity,
+    price_coin,
+    currency_system_key,
+    stock_quantity,
+    catalog_item_key,
+    shop_section,
+    quantity_step,
+    product_kind,
+    item_is_accessory,
+    item_is_storage,
+    item_storage_capacity,
+    item_modifiers,
+    item_enchantment,
+    item_rune_name,
+    item_material,
+    item_enhancement_count,
+    item_is_two_handed,
+    item_potion_strength,
+    item_potion_property,
+    item_potion_quality,
+    item_spell_book_form,
+    is_available,
+    display_order
+  )
+  values (
+    p_vendor_id,
+    public.safe_slug(v_vendor.vendor_key || '-' || v_item.item_name || '-' || substring(gen_random_uuid()::text from 1 for 8)),
+    v_item.item_name,
+    left(trim(coalesce(v_item.item_description, '')), 1500),
+    public.normalize_item_type(v_item.item_type),
+    v_item.rarity,
+    case when v_section_type = 'holding' then 0 else greatest(0, coalesce(p_price_coin, 0)) end,
+    'common',
+    v_quantity,
+    coalesce(v_catalog.item_key, public.catalog_key_for_name(v_item.item_name)),
+    v_section_name,
+    public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, 1),
+    v_product_kind,
+    v_item.is_accessory,
+    v_item.is_storage,
+    v_item.storage_capacity,
+    coalesce(v_item.modifiers, '{}'::jsonb),
+    v_item.enchantment,
+    v_item.rune_name,
+    v_item.material,
+    v_item.enhancement_count,
+    v_item.is_two_handed,
+    v_item.potion_strength,
+    v_item.potion_property,
+    v_item.potion_quality,
+    v_item.spell_book_form,
+    true,
+    coalesce((select max(display_order) + 10 from public.market_products where vendor_id = p_vendor_id), 10)
+  );
+
+  if v_quantity >= v_item.quantity then
+    delete from public.inventory_items where id = v_item.id;
+  else
+    update public.inventory_items
+    set quantity = quantity - v_quantity
+    where id = v_item.id;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
 grant execute on function public.safe_slug(text) to anon, authenticated;
 grant execute on function public.shop_section_record_to_json(public.shop_sections) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products, boolean) to anon, authenticated;
+grant execute on function public.profile_runs_shop_vendor(public.profiles, public.shop_vendors) to anon, authenticated;
+grant execute on function public.profile_can_manage_shop_vendor(public.profiles, public.shop_vendors) to anon, authenticated;
+grant execute on function public.profile_can_price_stable_vendor(public.profiles, public.shop_vendors) to anon, authenticated;
+grant execute on function public.stable_section_type_for_product(public.market_products) to anon, authenticated;
 grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, authenticated;
 grant execute on function public.create_shop_section(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_section(text, uuid, uuid, jsonb) to anon, authenticated;
@@ -13435,6 +13929,7 @@ grant execute on function public.create_market_product(text, uuid, jsonb) to ano
 grant execute on function public.delete_market_product(text, uuid) to anon, authenticated;
 grant execute on function public.delete_market_section(text, uuid, text) to anon, authenticated;
 grant execute on function public.delete_shop_vendor(text, uuid) to anon, authenticated;
+grant execute on function public.stock_shop_from_inventory(text, uuid, uuid, numeric, int, text) to anon, authenticated;
 
 create or replace function public.character_spell_record_to_json(p_entry public.character_spells)
 returns jsonb

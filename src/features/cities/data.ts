@@ -203,6 +203,10 @@ export function normalizeProduct(value: unknown): MarketProduct {
 
 export function normalizeShopSection(value: unknown): ShopSection {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const rawSectionType = source.sectionType ?? source.section_type;
+  const sectionType = rawSectionType === 'sale' || rawSectionType === 'rent' || rawSectionType === 'holding'
+    ? rawSectionType
+    : 'standard';
   return {
     id: String(source.id ?? ''),
     vendorId: String(source.vendorId ?? ''),
@@ -210,6 +214,7 @@ export function normalizeShopSection(value: unknown): ShopSection {
     name: String(source.name ?? 'Wares'),
     npcName: String(source.npcName ?? ''),
     roleLabel: String(source.roleLabel ?? ''),
+    sectionType,
     slotCount: Math.max(0, numberFrom(source.slotCount, 0)),
     hidden: Boolean(source.hidden),
     order: numberFrom(source.order, 0),

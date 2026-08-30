@@ -337,6 +337,7 @@ export type ShopSection = {
   name: string;
   npcName: string;
   roleLabel: string;
+  sectionType: 'standard' | 'sale' | 'rent' | 'holding';
   slotCount: number;
   hidden: boolean;
   order: number;
