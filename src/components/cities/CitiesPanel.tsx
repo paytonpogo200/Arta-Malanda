@@ -69,6 +69,7 @@ type VendorDraft = {
   category: string;
   blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
   payoutCharacterId: string;
+  boardingFeeCoin: number;
   hidden: boolean;
   order: number;
 };
@@ -254,6 +255,7 @@ function vendorToDraft(vendor: ShopVendor): VendorDraft {
     category: vendor.category,
     blueprintType: vendor.blueprintType,
     payoutCharacterId: vendor.payoutCharacterId ?? '',
+    boardingFeeCoin: vendor.boardingFeeCoin,
     hidden: vendor.hidden,
     order: vendor.order
   };
@@ -267,6 +269,7 @@ function defaultVendorDraft(): VendorDraft {
     category: 'General',
     blueprintType: 'market',
     payoutCharacterId: '',
+    boardingFeeCoin: 0,
     hidden: false,
     order: 0
   };
@@ -1671,6 +1674,24 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     }
   }
 
+  async function retrieveBoardedAnimal() {
+    if (!selectedProduct || !selectedShopper) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/products/${selectedProduct.id}/retrieve-boarded`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterId: selectedShopper.id })
+      }), 'Boarded animal could not be taken out.');
+      setSelectedProduct(null);
+    } catch (retrieveError) {
+      setError(retrieveError instanceof Error ? retrieveError.message : 'Boarded animal could not be taken out.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function runForgeAction() {
     if (!selectedShopper || !craftModal) return;
     setSaving(true);
@@ -2378,7 +2399,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             )}
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
-              {!isDisplayBook(selectedProduct) && (
+              {selectedProduct.boardedOwnerUserId ? (
+                <Button variant="teal" disabled={!selectedShopper || saving} onClick={retrieveBoardedAnimal}><PawPrint className="mr-2 inline" size={15} /> Take animal out</Button>
+              ) : !isDisplayBook(selectedProduct) && (
                 <Button variant="primary" disabled={!canShop || !selectedProductCanPurchase || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {selectedProductCanPurchase ? purchaseActionLabel(selectedProduct) : 'Holding only'}</Button>
               )}
             </div>
@@ -3156,6 +3179,18 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Shop name</span>
               <TextField value={vendorDraft.name} onChange={(event) => setVendorDraft({ ...vendorDraft, name: event.target.value })} />
             </label>
+            {vendorDraft.blueprintType === 'stable' && (
+              <div>
+                <p className="mb-1 text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Boarding entry fee</p>
+                <CurrencyPriceEditor
+                  systemKey="common"
+                  lockedSystem
+                  value={vendorDraft.boardingFeeCoin}
+                  onSystemChange={() => undefined}
+                  onValueChange={(boardingFeeCoin) => setVendorDraft({ ...vendorDraft, boardingFeeCoin })}
+                />
+              </div>
+            )}
             {!vendorEditorRenameOnly && (
               <>
                 <label>

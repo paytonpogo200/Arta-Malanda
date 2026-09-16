@@ -328,6 +328,9 @@ export type MarketProduct = {
   documentPages: string[];
   documentVisibility: 'government' | 'for_sale';
   documentEditorUserId: string | null;
+  boardedOwnerUserId: string | null;
+  boardedSourceCharacterId: string | null;
+  boardedAt: string;
 };
 
 export type ShopSection = {
@@ -354,6 +357,7 @@ export type ShopVendor = {
   category: string;
   blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
   payoutCharacterId: string | null;
+  boardingFeeCoin: number;
   custom: boolean;
   hidden: boolean;
   order: number;

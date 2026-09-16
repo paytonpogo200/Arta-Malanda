@@ -16,7 +16,7 @@ import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/fea
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
-import type { CampaignProperty, Character, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, Spell } from '@/lib/types';
+import type { CampaignProperty, Character, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, ShopVendor, Spell } from '@/lib/types';
 
 type HousePanelProps = {
   ownerUserId: string | null;
@@ -87,6 +87,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     locked: false
   });
   const [cityOptions, setCityOptions] = useState<string[]>(['Wild']);
+  const [availableStables, setAvailableStables] = useState<ShopVendor[]>([]);
   const [loading, setLoading] = useState(Boolean(ownerUserId));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -146,6 +147,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     const caretaker = characters.find((entry) => entry.id === caretakerCharacterId);
     return caretaker ? [caretaker, ...assigned] : assigned;
   }, [canAdd, caretakerCharacterId, characters, ownerUserId, viewerUserId]);
+  const caretakerCharacter = useMemo(() => characters.find((entry) => entry.id === caretakerCharacterId) ?? null, [caretakerCharacterId, characters]);
 
   const loadHouse = useCallback(async (showLoading = true) => {
     if (!ownerUserId) return;
@@ -191,12 +193,22 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || cancelled) return;
-        const cities = normalizeCitiesPayload(payload)
+        const normalized = normalizeCitiesPayload(payload);
+        const cities = normalized
           .cities
           .slice()
           .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name))
           .map((city) => city.name);
         setCityOptions([...cities, 'Wild'].filter((entry, index, list) => entry && list.indexOf(entry) === index));
+        setAvailableStables(normalized.vendors.filter((vendor) => {
+          if (vendor.blueprintType !== 'stable' || vendor.hidden) return false;
+          const city = normalized.cities.find((entry) => entry.key === vendor.cityKey);
+          if (!city || city.locked) return false;
+          if (!caretakerCharacter) return true;
+          return caretakerCharacter.locationCityKey
+            ? caretakerCharacter.locationCityKey === city.key
+            : caretakerCharacter.locationName === city.name;
+        }));
       })
       .catch(() => {
         if (!cancelled) setCityOptions((current) => current.length ? current : ['Wild']);
@@ -204,7 +216,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [caretakerCharacter]);
 
   useEffect(() => {
     setTakeTargetCharacterId((current) => {
@@ -481,6 +493,17 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     if (moved) onCharacterInventoryChanged?.();
   }
 
+  async function boardAnimalAtStable(item: InventoryItem, vendor: ShopVendor) {
+    if (!caretakerCharacterId || item.type !== 'pet') return;
+    await requestHouseChange(`/api/cities/vendors/${vendor.id}/boarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId: item.id, characterId: caretakerCharacterId })
+    });
+    setItemModal(null);
+    onCharacterInventoryChanged?.();
+  }
+
   async function savePermissions() {
     if (!ownerUserId || !canEditPermissions) return;
     setSaving(true);
@@ -738,6 +761,16 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               </div>
               {canManageAny && (
                 <div className="grid gap-2">
+                  {itemModal.item.type === 'pet' && availableStables.length > 0 && (
+                    <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/10 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Board animal</p>
+                      {availableStables.map((stable) => (
+                        <Button key={stable.id} variant="secondary" onClick={() => boardAnimalAtStable(itemModal.item!, stable)} disabled={saving}>
+                          <PawPrint className="mr-2 inline" size={14} /> Board at {stable.name}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
                   <div className="grid gap-2 rounded-xl border border-[var(--line)] bg-black/10 p-3">
                     {takeTargetCharacters.length > 1 && (
                       <label>

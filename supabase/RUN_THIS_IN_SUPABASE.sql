@@ -187,7 +187,8 @@ alter table public.inventory_items
   add column if not exists is_two_handed boolean not null default false,
   add column if not exists potion_strength text,
   add column if not exists potion_property text,
-  add column if not exists potion_quality text;
+  add column if not exists potion_quality text,
+  add column if not exists spell_book_form int not null default 1 check (spell_book_form in (1, 2));
 
 create table if not exists public.battles (
   id uuid primary key default gen_random_uuid(),
@@ -5662,6 +5663,149 @@ begin
 end;
 $$;
 
+create or replace function public.move_inventory_item_to_static_house(
+  p_session_token text,
+  p_item_id uuid,
+  p_slot_index int default null,
+  p_parent_item_id uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_target public.house_inventory_items%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_slot_index int;
+  v_is_pet boolean;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+  if v_character.owner_user_id is null then
+    raise exception 'That character is not assigned to a player house.';
+  end if;
+
+  if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty this storage item before sending it to the house.';
+  end if;
+
+  v_house := public.get_required_player_house(v_character.owner_user_id);
+  v_is_pet := public.normalize_item_type(v_item.item_type) = 'pet';
+
+  if p_slot_index is null and not v_is_pet and not v_item.is_storage then
+    select * into v_target
+    from public.house_inventory_items h
+    where h.owner_user_id = v_character.owner_user_id
+      and h.parent_item_id is null
+      and lower(public.normalize_item_name(h.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+      and public.normalize_item_type(h.item_type) = public.normalize_item_type(v_item.item_type)
+      and h.rarity = v_item.rarity
+      and coalesce(h.enchantment, '') = coalesce(v_item.enchantment, '')
+      and coalesce(h.rune_name, '') = coalesce(v_item.rune_name, '')
+      and coalesce(h.material, '') = coalesce(v_item.material, '')
+      and coalesce(h.potion_strength, '') = coalesce(v_item.potion_strength, '')
+      and coalesce(h.potion_property, '') = coalesce(v_item.potion_property, '')
+      and coalesce(h.potion_quality, '') = coalesce(v_item.potion_quality, '')
+      and h.enhancement_count = v_item.enhancement_count
+      and h.is_two_handed = v_item.is_two_handed
+      and h.is_accessory = v_item.is_accessory
+      and h.modifiers = v_item.modifiers
+      and h.item_type <> 'pet'
+      and h.is_storage = false
+      and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
+    order by h.slot_index
+    limit 1;
+
+    if v_target.id is not null then
+      update public.house_inventory_items
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id;
+
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_player_house(p_session_token, v_character.owner_user_id);
+    end if;
+  end if;
+
+  if p_slot_index is null then
+    v_slot_index := case
+      when v_is_pet then public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house)
+      else public.find_first_free_house_slot(v_character.owner_user_id, p_parent_item_id, v_house.inventory_slots)
+    end;
+  else
+    v_slot_index := p_slot_index;
+  end if;
+
+  if v_slot_index is null then
+    raise exception using message = case when v_is_pet then 'No open stable slot.' else 'No open house inventory slot.' end;
+  end if;
+
+  perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, v_slot_index, v_item.item_type);
+
+  select * into v_target
+  from public.house_inventory_items h
+  where h.owner_user_id = v_character.owner_user_id
+    and coalesce(h.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+    and h.slot_index = v_slot_index
+  limit 1;
+
+  if v_target.id is not null then
+    if not v_is_pet
+      and not v_item.is_storage
+      and not v_target.is_storage
+      and lower(public.normalize_item_name(v_target.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+      and public.normalize_item_type(v_target.item_type) = public.normalize_item_type(v_item.item_type)
+      and v_target.rarity = v_item.rarity
+      and coalesce(v_target.enchantment, '') = coalesce(v_item.enchantment, '')
+      and coalesce(v_target.rune_name, '') = coalesce(v_item.rune_name, '')
+      and coalesce(v_target.material, '') = coalesce(v_item.material, '')
+      and coalesce(v_target.potion_strength, '') = coalesce(v_item.potion_strength, '')
+      and coalesce(v_target.potion_property, '') = coalesce(v_item.potion_property, '')
+      and coalesce(v_target.potion_quality, '') = coalesce(v_item.potion_quality, '')
+      and v_target.enhancement_count = v_item.enhancement_count
+      and v_target.is_two_handed = v_item.is_two_handed
+      and v_target.is_accessory = v_item.is_accessory
+      and v_target.modifiers = v_item.modifiers
+      and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
+    then
+      update public.house_inventory_items
+      set quantity = quantity + v_item.quantity
+      where id = v_target.id;
+
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_player_house(p_session_token, v_character.owner_user_id);
+    end if;
+
+    raise exception 'That house slot is already occupied.';
+  end if;
+
+  insert into public.house_inventory_items (
+    owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description, item_type, rarity, quantity,
+    is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form
+  )
+  values (
+    v_character.owner_user_id, p_parent_item_id, v_slot_index, v_item.item_name, v_item.display_name, v_item.item_description,
+    v_item.item_type, v_item.rarity, v_item.quantity, v_item.is_accessory, v_item.is_storage, v_item.storage_capacity,
+    v_item.modifiers, v_item.enchantment, v_item.rune_name, v_item.material, v_item.enhancement_count,
+    v_item.is_two_handed, v_item.potion_strength, v_item.potion_property, v_item.potion_quality, v_item.spell_book_form
+  )
+  returning * into v_house_item;
+
+  delete from public.inventory_items where id = v_item.id;
+  return public.get_player_house(p_session_token, v_character.owner_user_id);
+end;
+$$;
+
 create or replace function public.move_inventory_item_to_house(
   p_session_token text,
   p_item_id uuid
@@ -8343,6 +8487,9 @@ as $$
     'documentPages', case when p_product.product_kind = 'document' and p_product.document_visibility <> 'government' and not coalesce(p_is_dm, false) then '[]'::jsonb else coalesce(p_product.document_pages, '[]'::jsonb) end,
     'documentVisibility', p_product.document_visibility,
     'documentEditorUserId', p_product.document_editor_user_id,
+    'boardedOwnerUserId', p_product.boarded_owner_user_id,
+    'boardedSourceCharacterId', p_product.boarded_source_character_id,
+    'boardedAt', p_product.boarded_at,
     'available', p_product.is_available
   )
 $$;
@@ -8605,7 +8752,8 @@ alter table public.shop_vendors
 add column if not exists npc_name text not null default 'Shopkeeper',
 add column if not exists blueprint_type text not null default 'market',
 add column if not exists payout_character_id uuid references public.characters(id) on delete set null,
-add column if not exists is_custom boolean not null default false;
+add column if not exists is_custom boolean not null default false,
+add column if not exists boarding_fee_coin int not null default 0 check (boarding_fee_coin >= 0);
 
 alter table public.shop_vendors
   drop constraint if exists shop_vendors_blueprint_type_check,
@@ -8632,7 +8780,10 @@ alter table public.market_products
   add column if not exists item_potion_strength text,
   add column if not exists item_potion_property text,
   add column if not exists item_potion_quality text,
-  add column if not exists item_spell_book_form int not null default 1;
+  add column if not exists item_spell_book_form int not null default 1,
+  add column if not exists boarded_owner_user_id uuid references public.profiles(id) on delete set null,
+  add column if not exists boarded_source_character_id uuid references public.characters(id) on delete set null,
+  add column if not exists boarded_at timestamptz;
 
 alter table public.market_products
   drop constraint if exists market_products_product_kind_check,
@@ -8807,6 +8958,7 @@ as $$
     'category', p_vendor.category,
     'blueprintType', p_vendor.blueprint_type,
     'payoutCharacterId', p_vendor.payout_character_id,
+    'boardingFeeCoin', p_vendor.boarding_fee_coin,
     'custom', p_vendor.is_custom,
     'hidden', p_vendor.is_hidden,
     'order', p_vendor.display_order,
@@ -12871,7 +13023,10 @@ begin
   end if;
 
   if v_can_rename_stable and not v_can_manage then
-    v_patch := jsonb_strip_nulls(jsonb_build_object('name', v_patch->'name'));
+    v_patch := jsonb_strip_nulls(jsonb_build_object(
+      'name', v_patch->'name',
+      'boardingFeeCoin', v_patch->'boardingFeeCoin'
+    ));
   end if;
 
   update public.shop_vendors
@@ -12887,6 +13042,10 @@ begin
     payout_character_id = case
       when v_patch ? 'payoutCharacterId' then nullif(v_patch->>'payoutCharacterId', '')::uuid
       else payout_character_id
+    end,
+    boarding_fee_coin = case
+      when v_patch ? 'boardingFeeCoin' then greatest(0, (v_patch->>'boardingFeeCoin')::int)
+      else boarding_fee_coin
     end,
     display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end,
     is_hidden = case when v_patch ? 'hidden' then (v_patch->>'hidden')::boolean else is_hidden end
@@ -13936,6 +14095,196 @@ begin
 end;
 $$;
 
+create or replace function public.board_pet_at_stable(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_item_id uuid,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_section public.shop_sections%rowtype;
+  v_character public.characters%rowtype;
+  v_inventory_item public.inventory_items%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_owner_user_id uuid;
+  v_source_character_id uuid;
+  v_wallet int;
+  v_slot_count int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null then raise exception 'Stable not found.'; end if;
+  if v_vendor.blueprint_type <> 'stable' then raise exception 'That shop is not a stable.'; end if;
+
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then raise exception 'Choose a character to pay the boarding fee.'; end if;
+  perform public.assert_inventory_access(v_profile, v_character.id, false);
+  if not public.character_is_in_city(v_character, v_vendor.city_key) and v_profile.role <> 'dm'::public.user_role then
+    raise exception 'That character is not at this stable.';
+  end if;
+
+  select * into v_section
+  from public.shop_sections
+  where vendor_id = p_vendor_id
+    and section_type = 'holding'
+    and not is_hidden
+  order by display_order, section_name
+  limit 1;
+  if v_section.id is null then raise exception 'This stable needs a Holding section before animals can board.'; end if;
+
+  select count(*)::int into v_slot_count
+  from public.market_products p
+  where p.vendor_id = p_vendor_id
+    and coalesce(nullif(trim(p.shop_section), ''), 'Wares') = v_section.section_name;
+  if v_section.slot_count > 0 and v_slot_count >= v_section.slot_count then
+    raise exception 'That stable has no open boarding slots.';
+  end if;
+
+  select * into v_inventory_item from public.inventory_items where id = p_item_id for update;
+  if v_inventory_item.id is not null then
+    if public.normalize_item_type(v_inventory_item.item_type) <> 'pet' then raise exception 'Only animals can be boarded.'; end if;
+    select owner_user_id into v_owner_user_id from public.characters where id = v_inventory_item.character_id;
+    v_source_character_id := v_inventory_item.character_id;
+    perform public.assert_inventory_access(v_profile, v_inventory_item.character_id, false);
+  else
+    select * into v_house_item from public.house_inventory_items where id = p_item_id for update;
+    if v_house_item.id is null then raise exception 'Animal not found.'; end if;
+    if public.normalize_item_type(v_house_item.item_type) <> 'pet' then raise exception 'Only animals can be boarded.'; end if;
+    perform public.assert_house_access(v_profile, v_house_item.owner_user_id, false);
+    v_owner_user_id := v_house_item.owner_user_id;
+  end if;
+
+  if v_profile.role <> 'dm'::public.user_role and v_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the animal owner can board that animal.';
+  end if;
+  if v_character.owner_user_id is distinct from v_owner_user_id and v_profile.role <> 'dm'::public.user_role then
+    raise exception 'The boarding fee must be paid by one of the animal owner''s characters.';
+  end if;
+
+  if v_vendor.boarding_fee_coin > 0 then
+    v_wallet := public.wallet_total_currency(v_character.id, 'common');
+    if v_wallet < v_vendor.boarding_fee_coin then
+      raise exception 'Not enough global currency to board this animal.';
+    end if;
+    perform public.set_wallet_from_currency_value(v_character.id, 'common', v_wallet - v_vendor.boarding_fee_coin);
+    perform public.credit_character_wallet_value(v_vendor.payout_character_id, 'common', v_vendor.boarding_fee_coin);
+  end if;
+
+  insert into public.market_products (
+    vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key,
+    stock_quantity, catalog_item_key, shop_section, quantity_step, product_kind,
+    item_is_accessory, item_is_storage, item_storage_capacity, item_modifiers, item_enchantment,
+    item_rune_name, item_material, item_enhancement_count, item_is_two_handed,
+    boarded_owner_user_id, boarded_source_character_id, boarded_at, is_available, display_order
+  )
+  values (
+    p_vendor_id,
+    public.safe_slug(v_vendor.vendor_key || '-boarded-' || coalesce(v_inventory_item.item_name, v_house_item.item_name) || '-' || substring(gen_random_uuid()::text from 1 for 8)),
+    coalesce(v_inventory_item.item_name, v_house_item.item_name),
+    left(trim(coalesce(v_inventory_item.item_description, v_house_item.item_description, '')), 1500),
+    'pet',
+    coalesce(v_inventory_item.rarity, v_house_item.rarity),
+    0,
+    'common',
+    1,
+    public.catalog_key_for_name(coalesce(v_inventory_item.item_name, v_house_item.item_name)),
+    v_section.section_name,
+    1,
+    'item',
+    coalesce(v_inventory_item.is_accessory, v_house_item.is_accessory, false),
+    false,
+    0,
+    coalesce(v_inventory_item.modifiers, v_house_item.modifiers, '{}'::jsonb),
+    coalesce(v_inventory_item.enchantment, v_house_item.enchantment),
+    coalesce(v_inventory_item.rune_name, v_house_item.rune_name),
+    coalesce(v_inventory_item.material, v_house_item.material),
+    coalesce(v_inventory_item.enhancement_count, v_house_item.enhancement_count, 0),
+    coalesce(v_inventory_item.is_two_handed, v_house_item.is_two_handed, false),
+    v_owner_user_id,
+    coalesce(v_source_character_id, p_character_id),
+    now(),
+    true,
+    coalesce((select max(display_order) + 10 from public.market_products where vendor_id = p_vendor_id), 10)
+  );
+
+  if v_inventory_item.id is not null then
+    delete from public.inventory_items where id = v_inventory_item.id;
+  else
+    delete from public.house_inventory_items where id = v_house_item.id;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.retrieve_boarded_stable_pet(
+  p_session_token text,
+  p_product_id uuid,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_product public.market_products%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_character public.characters%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_product from public.market_products where id = p_product_id for update;
+  if v_product.id is null then raise exception 'Boarded animal not found.'; end if;
+  if public.normalize_item_type(v_product.item_type) <> 'pet' or v_product.boarded_owner_user_id is null then
+    raise exception 'That listing is not a boarded animal.';
+  end if;
+
+  select * into v_vendor from public.shop_vendors where id = v_product.vendor_id;
+  if v_vendor.blueprint_type <> 'stable' then raise exception 'That animal is not boarded at a stable.'; end if;
+
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then raise exception 'Choose a character to receive this animal.'; end if;
+  perform public.assert_inventory_access(v_profile, v_character.id, false);
+  if v_profile.role <> 'dm'::public.user_role and v_product.boarded_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the owner can take this boarded animal.';
+  end if;
+  if v_profile.role <> 'dm'::public.user_role and v_character.owner_user_id is distinct from v_product.boarded_owner_user_id then
+    raise exception 'Choose one of your characters to receive this animal.';
+  end if;
+
+  perform public.place_pet_item_in_stable_for_character(
+    v_character.id,
+    v_product.item_name,
+    null,
+    v_product.description,
+    v_product.rarity,
+    1,
+    v_product.item_is_accessory,
+    v_product.item_modifiers,
+    v_product.item_enchantment,
+    v_product.item_rune_name,
+    v_product.item_material,
+    v_product.item_enhancement_count,
+    v_product.item_is_two_handed
+  );
+
+  delete from public.market_products where id = v_product.id;
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
 grant execute on function public.safe_slug(text) to anon, authenticated;
 grant execute on function public.shop_section_record_to_json(public.shop_sections) to anon, authenticated;
 grant execute on function public.market_product_record_to_json(public.market_products, boolean) to anon, authenticated;
@@ -13951,6 +14300,8 @@ grant execute on function public.delete_market_product(text, uuid) to anon, auth
 grant execute on function public.delete_market_section(text, uuid, text) to anon, authenticated;
 grant execute on function public.delete_shop_vendor(text, uuid) to anon, authenticated;
 grant execute on function public.stock_shop_from_inventory(text, uuid, uuid, numeric, int, text) to anon, authenticated;
+grant execute on function public.board_pet_at_stable(text, uuid, uuid, uuid) to anon, authenticated;
+grant execute on function public.retrieve_boarded_stable_pet(text, uuid, uuid) to anon, authenticated;
 
 create or replace function public.character_spell_record_to_json(p_entry public.character_spells)
 returns jsonb
@@ -18844,8 +19195,50 @@ language plpgsql
 security definer
 set search_path = public, extensions
 as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_has_mobile boolean := false;
 begin
-  return public.move_inventory_item_to_home_wagon(p_session_token, p_item_id, null, null);
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+  if v_character.owner_user_id is null then
+    raise exception 'That character is not assigned to a player home.';
+  end if;
+
+  if public.normalize_item_type(v_item.item_type) = 'pet' then
+    v_has_mobile := exists (select 1 from public.caged_wagon_storage_for_owner(v_character.owner_user_id));
+  else
+    v_has_mobile := exists (select 1 from public.home_wagon_storage_for_owner(v_character.owner_user_id));
+  end if;
+
+  if v_has_mobile then
+    return public.move_inventory_item_to_home_wagon(p_session_token, p_item_id, null, null);
+  end if;
+
+  if not exists (select 1 from public.player_houses where owner_user_id = v_character.owner_user_id) then
+    if public.normalize_item_type(v_item.item_type) = 'pet' then
+      raise exception 'No stable or Caged Wagon is available for this player.';
+    end if;
+    raise exception 'No house or Wagon Home is available for this player.';
+  end if;
+
+  return public.move_inventory_item_to_static_house(p_session_token, p_item_id, null, null);
+exception
+  when others then
+    if SQLERRM in ('No wagon home is available for this player.', 'No Caged Wagon stable is available for this player.') then
+      raise exception using message = case
+        when SQLERRM = 'No Caged Wagon stable is available for this player.' then 'No stable or Caged Wagon is available for this player.'
+        else 'No house or Wagon Home is available for this player.'
+      end;
+    end if;
+    raise;
 end;
 $$;
 
@@ -18861,7 +19254,20 @@ security definer
 set search_path = public, extensions
 as $$
 begin
-  return public.move_inventory_item_to_home_wagon(p_session_token, p_item_id, p_slot_index, p_parent_item_id);
+  if exists (
+    select 1
+    from public.inventory_items item
+    join public.characters ch on ch.id = item.character_id
+    where item.id = p_item_id
+      and (
+        (public.normalize_item_type(item.item_type) = 'pet' and exists (select 1 from public.caged_wagon_storage_for_owner(ch.owner_user_id)))
+        or (public.normalize_item_type(item.item_type) <> 'pet' and exists (select 1 from public.home_wagon_storage_for_owner(ch.owner_user_id)))
+      )
+  ) then
+    return public.move_inventory_item_to_home_wagon(p_session_token, p_item_id, p_slot_index, p_parent_item_id);
+  end if;
+
+  return public.move_inventory_item_to_static_house(p_session_token, p_item_id, p_slot_index, p_parent_item_id);
 end;
 $$;
 
@@ -19027,6 +19433,7 @@ grant execute on function public.caged_wagon_storage_for_owner(uuid) to anon, au
 grant execute on function public.mobile_home_house_access_to_json(public.profiles, uuid, uuid) to anon, authenticated;
 grant execute on function public.mobile_home_house_permissions_to_json(uuid) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_home_wagon(text, uuid, int, uuid) to anon, authenticated;
+grant execute on function public.move_inventory_item_to_static_house(text, uuid, int, uuid) to anon, authenticated;
 grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.delete_player_house(text, uuid) to anon, authenticated;
 grant execute on function public.set_player_house_permissions(text, uuid, jsonb) to anon, authenticated;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, RefreshCw, Scissors, Search, Trash2, Users } from 'lucide-react';
+import { ArrowRightLeft, Coins, Gift, Loader2, PackageOpen, PawPrint, RefreshCw, Scissors, Search, Trash2, Users } from 'lucide-react';
 import { BookReader, pagesFromBookContent } from '@/components/books/BookReader';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
@@ -14,7 +14,7 @@ import { Modal } from '@/components/ui/Modal';
 import { NumberInput } from '@/components/ui/NumberInput';
 import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import { matchesCatalogNameSearch } from '@/features/catalog/search';
-import { CURRENCY_SYSTEMS, formatCurrencyValue, normalizeCurrencySystemKey } from '@/features/cities/data';
+import { CURRENCY_SYSTEMS, formatCurrencyValue, normalizeCitiesPayload, normalizeCurrencySystemKey } from '@/features/cities/data';
 import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeHousePayload } from '@/features/houses/data';
@@ -38,7 +38,7 @@ import { rarityClass } from '@/lib/utils/rarity';
 import { potionEffectText } from '@/lib/utils/potions';
 import { spellManaText } from '@/lib/utils/spells';
 import { signed } from '@/lib/utils/format';
-import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type ItemCatalogEntry, type LoadoutModifierKey, type LoadoutSlot, type Spell, type WalletBalance } from '@/lib/types';
+import { ATTRIBUTE_KEYS, ATTRIBUTE_LABELS, type Character, type ClassTemplate, type InventoryItem, type ItemCatalogEntry, type LoadoutModifierKey, type LoadoutSlot, type ShopVendor, type Spell, type WalletBalance } from '@/lib/types';
 
 type SlotTarget = {
   slot: number;
@@ -242,6 +242,7 @@ export function InventoryPanel({
   const [dropQuantity, setDropQuantity] = useState(1);
   const [catalog, setCatalog] = useState<ItemCatalogEntry[]>([]);
   const [spells, setSpells] = useState<Spell[]>([]);
+  const [availableStables, setAvailableStables] = useState<ShopVendor[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogSearch, setCatalogSearch] = useState('');
   const [addMode, setAddMode] = useState<'catalog' | 'custom'>('catalog');
@@ -345,6 +346,30 @@ export function InventoryPanel({
     void loadInventory(!inventoryLoadedRef.current);
     void loadWagons();
   }, [loadInventory, loadWagons, refreshSignal]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/cities', { cache: 'no-store' })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || cancelled) return;
+        const normalized = normalizeCitiesPayload(payload);
+        setAvailableStables(normalized.vendors.filter((vendor) => {
+          if (vendor.blueprintType !== 'stable' || vendor.hidden) return false;
+          const city = normalized.cities.find((entry) => entry.key === vendor.cityKey);
+          if (!city || city.locked) return false;
+          return character.locationCityKey
+            ? character.locationCityKey === city.key
+            : character.locationName === city.name;
+        }));
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableStables([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [character.locationCityKey, character.locationName]);
 
   useEffect(() => {
     if (!modal?.item || !canApplyRune(modal.item) || !character.ownerUserId) {
@@ -906,6 +931,16 @@ export function InventoryPanel({
   async function sendToHouse(item: InventoryItem) {
     if (!canManage || !character.ownerUserId) return;
     await requestInventoryChange(`/api/inventory/items/${item.id}/send-house`, { method: 'POST' });
+  }
+
+  async function boardAnimalAtStable(item: InventoryItem, vendor: ShopVendor) {
+    if (!canManage || item.type !== 'pet') return;
+    await requestInventoryChange(`/api/cities/vendors/${vendor.id}/boarding`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId: item.id, characterId: character.id })
+    });
+    setModal(null);
   }
 
   async function openSpecialStoragePermissions(item: InventoryItem) {
@@ -1945,17 +1980,29 @@ export function InventoryPanel({
                 </div>
               )}
               {modal.source !== 'wagon' && canManage && modal.item.type === 'pet' && (
-                <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
-                  <label>
-                    <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
-                    <TextField
-                      placeholder={modal.item.name}
-                      value={draft.displayName}
-                      onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
-                    />
-                  </label>
-                  <Button variant="secondary" disabled={saving}>Save pet name</Button>
-                </form>
+                <div className="grid gap-2">
+                  {availableStables.length > 0 && (
+                    <div className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Board animal</p>
+                      {availableStables.map((stable) => (
+                        <Button key={stable.id} variant="secondary" onClick={() => boardAnimalAtStable(modal.item!, stable)} disabled={saving}>
+                          <PawPrint className="mr-2 inline" size={14} /> Board at {stable.name}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  <form onSubmit={savePetDisplayName} className="grid gap-2 rounded-2xl border border-[var(--line)] bg-black/10 p-3">
+                    <label>
+                      <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Pet display name</span>
+                      <TextField
+                        placeholder={modal.item.name}
+                        value={draft.displayName}
+                        onChange={(event) => setDraft({ ...draft, displayName: event.target.value })}
+                      />
+                    </label>
+                    <Button variant="secondary" disabled={saving}>Save pet name</Button>
+                  </form>
+                </div>
               )}
               {modal.source !== 'wagon' && canManage && canApplyRune(modal.item) && (
                 <div className="grid gap-2 rounded-2xl border border-[#56e2c2]/30 bg-[#56e2c2]/10 p-3">

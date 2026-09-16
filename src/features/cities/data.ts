@@ -197,7 +197,10 @@ export function normalizeProduct(value: unknown): MarketProduct {
     documentContent: String(source.documentContent ?? ''),
     documentPages: rawPages.map(String),
     documentVisibility: source.documentVisibility === 'government' || source.document_visibility === 'government' ? 'government' : 'for_sale',
-    documentEditorUserId: source.documentEditorUserId || source.document_editor_user_id ? String(source.documentEditorUserId ?? source.document_editor_user_id) : null
+    documentEditorUserId: source.documentEditorUserId || source.document_editor_user_id ? String(source.documentEditorUserId ?? source.document_editor_user_id) : null,
+    boardedOwnerUserId: source.boardedOwnerUserId || source.boarded_owner_user_id ? String(source.boardedOwnerUserId ?? source.boarded_owner_user_id) : null,
+    boardedSourceCharacterId: source.boardedSourceCharacterId || source.boarded_source_character_id ? String(source.boardedSourceCharacterId ?? source.boarded_source_character_id) : null,
+    boardedAt: String(source.boardedAt ?? source.boarded_at ?? '')
   };
 }
 
@@ -242,6 +245,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
     category: String(source.category ?? 'General'),
     blueprintType,
     payoutCharacterId: source.payoutCharacterId ? String(source.payoutCharacterId) : null,
+    boardingFeeCoin: Math.max(0, numberFrom(source.boardingFeeCoin ?? source.boarding_fee_coin, 0)),
     custom: Boolean(source.custom),
     hidden: Boolean(source.hidden),
     order: numberFrom(source.order, 0),
