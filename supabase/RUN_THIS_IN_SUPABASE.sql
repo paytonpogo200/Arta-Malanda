@@ -7694,6 +7694,9 @@ create table if not exists public.market_products (
   item_potion_property text,
   item_potion_quality text,
   item_spell_book_form int not null default 1,
+  boarded_owner_user_id uuid references public.profiles(id) on delete set null,
+  boarded_source_character_id uuid references public.characters(id) on delete set null,
+  boarded_at timestamptz,
   is_available boolean not null default true,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -7736,7 +7739,10 @@ alter table public.market_products
   add column if not exists item_potion_strength text,
   add column if not exists item_potion_property text,
   add column if not exists item_potion_quality text,
-  add column if not exists item_spell_book_form int not null default 1;
+  add column if not exists item_spell_book_form int not null default 1,
+  add column if not exists boarded_owner_user_id uuid references public.profiles(id) on delete set null,
+  add column if not exists boarded_source_character_id uuid references public.characters(id) on delete set null,
+  add column if not exists boarded_at timestamptz;
 
 alter table public.market_products
   drop constraint if exists market_products_currency_system_key_check,
