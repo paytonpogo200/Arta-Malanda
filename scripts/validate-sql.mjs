@@ -125,6 +125,28 @@ for (const { label, pattern } of destructiveSeedPatterns) {
   }
 }
 
+const compositeIntoProblems = [];
+const functionBodyPattern = /create\s+or\s+replace\s+function\s+public\.([a-zA-Z0-9_]+)[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/gi;
+for (const functionMatch of sql.matchAll(functionBodyPattern)) {
+  const functionName = functionMatch[1];
+  const body = functionMatch[2];
+  const rowVariables = new Set(
+    Array.from(body.matchAll(/\b([a-zA-Z0-9_]+)\s+public\.[a-zA-Z0-9_]+%rowtype\b/gi))
+      .map((match) => match[1].toLowerCase())
+  );
+  if (!rowVariables.size) continue;
+
+  for (const intoMatch of body.matchAll(/\bselect\b[\s\S]*?\binto\s+([a-zA-Z0-9_]+(?:\s*,\s*[a-zA-Z0-9_]+)+)\s+from\b/gi)) {
+    const targets = intoMatch[1].split(',').map((target) => target.trim().toLowerCase());
+    const compositeTargets = targets.filter((target) => rowVariables.has(target));
+    if (!compositeTargets.length) continue;
+    const bodyOffset = functionMatch.index + functionMatch[0].indexOf(body) + intoMatch.index;
+    compositeIntoProblems.push(
+      `${functionName}: composite row variable ${compositeTargets.join(', ')} appears in a multi-item INTO list at line ${lineNumberAt(sql, bodyOffset)}`
+    );
+  }
+}
+
 if (duplicateOverloads.length) {
   failures.push(`Duplicate live SQL function overloads:\n${duplicateOverloads.map((entry) => `- ${entry}`).join('\n')}`);
 }
@@ -151,6 +173,10 @@ if (grantOrderProblems.length) {
 
 if (destructiveSeedProblems.length) {
   failures.push(`City/shop seed reset patterns found:\n${destructiveSeedProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (compositeIntoProblems.length) {
+  failures.push(`Invalid PostgreSQL composite-row INTO lists:\n${compositeIntoProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (failures.length) {

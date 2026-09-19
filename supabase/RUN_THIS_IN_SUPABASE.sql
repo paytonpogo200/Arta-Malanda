@@ -20223,7 +20223,7 @@ begin
       v_house_json := public.home_summary_json(v_selected_house, v_main.home_source = 'static' and v_main.home_id = v_selected_house.id);
     end if;
   elsif v_selected_source = 'mobile' then
-    select storage, owner_character into v_selected_storage, v_selected_character
+    select storage.* into v_selected_storage
     from public.inventory_items storage
     join public.characters owner_character on owner_character.id = storage.character_id
     where storage.id = v_selected_id
@@ -20235,6 +20235,9 @@ begin
         or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
       and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character);
     if v_selected_storage.id is not null then
+      select * into v_selected_character
+      from public.characters
+      where id = v_selected_storage.character_id;
       v_can_house := public.inventory_item_is_mobile_home_storage(v_selected_storage.item_name, v_selected_storage.item_type);
       v_can_stable := public.inventory_item_is_caged_wagon_storage(v_selected_storage.item_name, v_selected_storage.item_type);
       v_house_json := public.mobile_home_summary_json(v_selected_storage, v_selected_character, v_main.home_source = 'mobile' and v_main.home_id = v_selected_storage.id);
@@ -20391,7 +20394,7 @@ begin
   end if;
 
   if p_home_source = 'mobile' then
-    select storage, owner_character into v_storage, v_character
+    select storage.* into v_storage
     from public.inventory_items storage
     join public.characters owner_character on owner_character.id = storage.character_id
     where storage.id = p_home_id
@@ -20400,6 +20403,7 @@ begin
       and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
         or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type));
     if v_storage.id is null then raise exception 'Mobile home or stable not found.'; end if;
+    select * into v_character from public.characters where id = v_storage.character_id;
 
     v_mobile_capacity := case
       when v_profile.role = 'dm'::public.user_role and v_patch ? 'inventorySlots'
@@ -20530,7 +20534,6 @@ declare
   v_profile public.profiles%rowtype;
   v_house public.player_houses%rowtype;
   v_storage public.inventory_items%rowtype;
-  v_character public.characters%rowtype;
   v_entry jsonb;
   v_grantee uuid;
   v_house_access boolean;
@@ -20544,7 +20547,7 @@ begin
   if jsonb_typeof(coalesce(p_permissions, '[]'::jsonb)) <> 'array' then raise exception 'Permissions must be a list.'; end if;
 
   if p_home_source = 'mobile' then
-    select storage, owner_character into v_storage, v_character
+    select storage.* into v_storage
     from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
     where storage.id = p_home_id and owner_character.owner_user_id = p_owner_user_id
       and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
@@ -20702,7 +20705,6 @@ declare
   v_character public.characters%rowtype;
   v_house public.player_houses%rowtype;
   v_storage public.inventory_items%rowtype;
-  v_storage_character public.characters%rowtype;
   v_house_target public.house_inventory_items%rowtype;
   v_mobile_target public.inventory_items%rowtype;
   v_candidate record;
@@ -20784,7 +20786,7 @@ begin
           v_found := v_slot is not null;
         end if;
       else
-        select storage, owner_character into v_storage, v_storage_character
+        select storage.* into v_storage
         from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
         where storage.id = v_candidate.id;
         if not v_is_pet and not v_item.is_storage then
@@ -20808,7 +20810,7 @@ begin
   end if;
 
   if v_home_source = 'mobile' then
-    select storage, owner_character into v_storage, v_storage_character
+    select storage.* into v_storage
     from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
     where storage.id = v_home_id and owner_character.owner_user_id = v_character.owner_user_id
       and storage.is_storage and storage.parent_item_id is null and storage.loadout_slot is null;
@@ -21138,7 +21140,7 @@ begin
   if v_character.owner_user_id is null then return null; end if;
   if v_quantity <> 1 then raise exception 'Pets must be moved one at a time.'; end if;
 
-  select storage, free_slot.slot into v_storage, v_slot
+  select storage.* into v_storage
   from public.inventory_items storage
   join public.characters owner_character on owner_character.id = storage.character_id
   cross join lateral (
@@ -21161,7 +21163,9 @@ begin
     and public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type)
   order by owner_character.name, storage.slot_index, storage.created_at, storage.id
   limit 1;
-  if v_storage.id is null or v_slot is null then return null; end if;
+  if v_storage.id is null then return null; end if;
+  v_slot := public.find_first_free_inventory_slot(v_storage.character_id, v_storage.id, v_storage.storage_capacity);
+  if v_slot is null then return null; end if;
 
   insert into public.inventory_items (
     character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
@@ -21218,7 +21222,7 @@ begin
   );
   if v_caged_pet is not null then return v_caged_pet; end if;
 
-  select house, free_slot.slot into v_house, v_slot
+  select house.* into v_house
   from public.player_houses house
   cross join lateral (
     select candidate.slot
@@ -21232,7 +21236,9 @@ begin
   where house.owner_user_id = v_character.owner_user_id and house.stable_slots > 0 and not house.is_locked
   order by case when house.house_kind = 'stable' then 0 else 1 end, house.created_order, house.created_at, house.id
   limit 1;
-  if v_house.id is null or v_slot is null then raise exception 'No open stable or Caged Wagon slot.'; end if;
+  if v_house.id is null then raise exception 'No open stable or Caged Wagon slot.'; end if;
+  v_slot := public.find_first_free_house_stable_slot(v_character.owner_user_id, v_house);
+  if v_slot is null then raise exception 'No open stable or Caged Wagon slot.'; end if;
 
   insert into public.house_inventory_items (
     house_id, owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description,
