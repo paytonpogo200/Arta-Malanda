@@ -13684,6 +13684,50 @@ begin
   set section_name = excluded.section_name,
       section_type = excluded.section_type;
 
+  if current_setting('arta.bulk_market_product', true) = 'on' then
+    return '{}'::jsonb;
+  end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.create_market_products(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_patches jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_patch jsonb;
+  v_count integer;
+begin
+  if jsonb_typeof(p_patches) <> 'array' then
+    raise exception 'Shop products must be provided as a list.';
+  end if;
+
+  v_count := jsonb_array_length(p_patches);
+  if v_count < 1 then
+    raise exception 'Select at least one shop product.';
+  end if;
+  if v_count > 250 then
+    raise exception 'A maximum of 250 shop products can be added at once.';
+  end if;
+
+  perform set_config('arta.bulk_market_product', 'on', true);
+  for v_patch in select value from jsonb_array_elements(p_patches)
+  loop
+    if jsonb_typeof(v_patch) <> 'object' then
+      raise exception 'Every shop product must be a valid product record.';
+    end if;
+    perform public.create_market_product(p_session_token, p_vendor_id, v_patch);
+  end loop;
+  perform set_config('arta.bulk_market_product', 'off', true);
+
   return public.get_discovered_cities(p_session_token);
 end;
 $$;
@@ -14335,6 +14379,7 @@ grant execute on function public.create_shop_vendor(text, text, jsonb) to anon, 
 grant execute on function public.create_shop_section(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_shop_section(text, uuid, uuid, jsonb) to anon, authenticated;
 grant execute on function public.create_market_product(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.create_market_products(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.delete_market_product(text, uuid) to anon, authenticated;
 grant execute on function public.delete_market_section(text, uuid, text) to anon, authenticated;
 grant execute on function public.delete_shop_vendor(text, uuid) to anon, authenticated;

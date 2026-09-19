@@ -12,7 +12,12 @@ export async function POST(request: NextRequest) {
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('create_market_product', {
+    const isBulkCreate = Array.isArray(body.products);
+    const { data, error } = await supabase.rpc(isBulkCreate ? 'create_market_products' : 'create_market_product', isBulkCreate ? {
+      p_session_token: token,
+      p_vendor_id: body.vendorId,
+      p_patches: body.products
+    } : {
       p_session_token: token,
       p_vendor_id: body.vendorId,
       p_patch: body
@@ -21,6 +26,6 @@ export async function POST(request: NextRequest) {
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
     return NextResponse.json(normalizeCitiesPayload(data));
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Shop item could not be added.' }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Shop items could not be added.' }, { status: 500 });
   }
 }
