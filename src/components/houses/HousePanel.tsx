@@ -16,7 +16,7 @@ import { normalizeHousePayload, PROPERTY_LOCATIONS, PROPERTY_TYPES } from '@/fea
 import { quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
-import type { CampaignProperty, Character, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, ShopVendor, Spell } from '@/lib/types';
+import type { CampaignProperty, Character, House, InventoryItem, LoadoutModifierKey, PropertyLocation, PropertyType, ShopVendor, Spell } from '@/lib/types';
 
 type HousePanelProps = {
   ownerUserId: string | null;
@@ -51,9 +51,10 @@ const EMPTY_PROPERTY: PropertyDraft = {
   storageCapacity: 0
 };
 
-const STABLE_SLOT_OFFSET = 45;
+const STABLE_SLOT_OFFSET = 1000;
 
 type HouseSettingsDraft = {
+  kind: 'house' | 'stable';
   name: string;
   stableName: string;
   cityName: string;
@@ -61,10 +62,13 @@ type HouseSettingsDraft = {
   stableSlots: number;
   propertySlots: number;
   locked: boolean;
+  isMain: boolean;
 };
 
 export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, profiles = [], characters = [], canManage, canAdd, onCharacterInventoryChanged }: HousePanelProps) {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [homes, setHomes] = useState<House[]>([]);
+  const [selectedHomeKey, setSelectedHomeKey] = useState('');
   const [properties, setProperties] = useState<CampaignProperty[]>([]);
   const [houseAccess, setHouseAccess] = useState({ owner: false, dm: false, house: false, stable: false });
   const [permissions, setPermissions] = useState<Record<string, { house: boolean; stable: boolean }>>({});
@@ -77,14 +81,17 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [houseCityName, setHouseCityName] = useState('Wild');
   const [houseLocked, setHouseLocked] = useState(false);
   const [houseSettingsOpen, setHouseSettingsOpen] = useState(false);
+  const [creatingHome, setCreatingHome] = useState(false);
   const [houseSettingsDraft, setHouseSettingsDraft] = useState<HouseSettingsDraft>({
+    kind: 'house',
     name: 'House',
     stableName: 'Stable',
     cityName: 'Wild',
     inventorySlots: 45,
     stableSlots: 5,
     propertySlots: 10,
-    locked: false
+    locked: false,
+    isMain: false
   });
   const [cityOptions, setCityOptions] = useState<string[]>(['Wild']);
   const [availableStables, setAvailableStables] = useState<ShopVendor[]>([]);
@@ -101,7 +108,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [enhanceOpen, setEnhanceOpen] = useState(false);
   const [enhanceStat, setEnhanceStat] = useState<LoadoutModifierKey>('strength');
   const [takeTargetCharacterId, setTakeTargetCharacterId] = useState(caretakerCharacterId);
-  const [homeKind, setHomeKind] = useState<'house' | 'wagon-home' | 'caged-wagon'>('house');
+  const [homeKind, setHomeKind] = useState<'house' | 'stable' | 'wagon-home' | 'caged-wagon'>('house');
+  const [homeSource, setHomeSource] = useState<'static' | 'mobile'>('static');
+  const [homeIsMain, setHomeIsMain] = useState(false);
   const [homeStorageItemId, setHomeStorageItemId] = useState<string | null>(null);
   const [homeStorageCharacterId, setHomeStorageCharacterId] = useState<string | null>(null);
   const [stableStorageItemId, setStableStorageItemId] = useState<string | null>(null);
@@ -133,6 +142,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const canManageAny = canManageHouse || canManageStable;
   const canEditPermissions = canAdd || houseAccess.owner;
   const canCustomizeHouse = canAdd || houseAccess.owner;
+  const selectedHome = useMemo(() => homes.find((home) => `${home.source}:${home.id}` === selectedHomeKey) ?? null, [homes, selectedHomeKey]);
   const permissionProfiles = useMemo(() => profiles
     .filter((entry) => entry.id !== ownerUserId)
     .sort((a, b) => (a.displayName || a.username || '').localeCompare(b.displayName || b.username || '')), [ownerUserId, profiles]);
@@ -155,11 +165,18 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     setError('');
 
     try {
-      const response = await fetch(`/api/houses/${ownerUserId}`, { cache: 'no-store' });
+      const [requestedSource, requestedId] = selectedHomeKey ? selectedHomeKey.split(':') : ['', ''];
+      const params = new URLSearchParams();
+      if (requestedId) params.set('homeId', requestedId);
+      if (requestedSource) params.set('source', requestedSource);
+      const response = await fetch(`/api/houses/${ownerUserId}${params.size ? `?${params.toString()}` : ''}`, { cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? 'House could not be loaded.');
       const normalized = normalizeHousePayload(payload);
       setHomeAvailable(Boolean(normalized.house));
+      setHomes(normalized.homes);
+      if (normalized.house) setSelectedHomeKey(`${normalized.house.source}:${normalized.house.id}`);
+      else setSelectedHomeKey('');
       setItems(normalized.items);
       setProperties(normalized.properties);
       setHouseName(normalized.house?.name ?? 'House');
@@ -170,6 +187,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setPropertySlots(normalized.house?.propertySlots ?? 10);
       setHouseLocked(Boolean(normalized.house?.locked));
       setHomeKind(normalized.house?.kind ?? 'house');
+      setHomeSource(normalized.house?.source ?? 'static');
+      setHomeIsMain(Boolean(normalized.house?.isMain));
       setHomeStorageItemId(normalized.house?.storageItemId ?? null);
       setHomeStorageCharacterId(normalized.house?.storageCharacterId ?? null);
       setStableStorageItemId(normalized.house?.stableStorageItemId ?? null);
@@ -181,7 +200,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [ownerUserId]);
+  }, [ownerUserId, selectedHomeKey]);
 
   useEffect(() => {
     void loadHouse();
@@ -303,11 +322,11 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   }
 
   async function toggleHouseLock() {
-    if (!ownerUserId || !canAdd) return;
+    if (!ownerUserId || !canAdd || !selectedHome) return;
     await requestHouseChange(`/api/houses/${ownerUserId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ locked: !houseLocked })
+      body: JSON.stringify({ homeId: selectedHome.id, source: selectedHome.source, locked: !houseLocked })
     });
   }
 
@@ -340,6 +359,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...itemDraftPayload(itemDraft),
+        homeId: selectedHome?.id,
         parentItemId: itemModal.parentItemId,
         slotIndex: itemModal.slot
       })
@@ -347,36 +367,66 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   }
 
   function openHouseSettings() {
+    if (!selectedHome) return;
+    setCreatingHome(false);
     setHouseSettingsDraft({
+      kind: selectedHome.kind === 'stable' || selectedHome.kind === 'caged-wagon' ? 'stable' : 'house',
       name: houseName,
       stableName,
       cityName: houseCityName,
       inventorySlots,
       stableSlots,
       propertySlots,
-      locked: houseLocked
+      locked: houseLocked,
+      isMain: homeIsMain
+    });
+    setHouseSettingsOpen(true);
+  }
+
+  function openCreateHome(kind: 'house' | 'stable') {
+    if (!canAdd) return;
+    const hasMainHouse = homes.some((home) => home.isMain && (home.kind === 'house' || home.kind === 'wagon-home'));
+    setCreatingHome(true);
+    setHouseSettingsDraft({
+      kind,
+      name: kind === 'stable' ? 'New Stable' : 'New House',
+      stableName: kind === 'stable' ? 'New Stable' : 'Stable',
+      cityName: caretakerCharacter?.locationName || cityOptions[0] || 'Wild',
+      inventorySlots: kind === 'house' ? 45 : 0,
+      stableSlots: kind === 'stable' ? 5 : 0,
+      propertySlots: 0,
+      locked: false,
+      isMain: kind === 'house' && !hasMainHouse
     });
     setHouseSettingsOpen(true);
   }
 
   async function saveHouseSettings(event: FormEvent) {
     event.preventDefault();
-    if (!ownerUserId || !canCustomizeHouse) return;
+    if (!ownerUserId || !canCustomizeHouse || (!creatingHome && !selectedHome)) return;
     await requestHouseChange(`/api/houses/${ownerUserId}`, {
-      method: 'PATCH',
+      method: creatingHome ? 'POST' : 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(canAdd ? houseSettingsDraft : {
+      body: JSON.stringify(canAdd ? {
+        ...houseSettingsDraft,
+        homeId: selectedHome?.id,
+        source: selectedHome?.source ?? 'static'
+      } : {
+        homeId: selectedHome?.id,
+        source: selectedHome?.source ?? 'static',
         name: houseSettingsDraft.name,
-        stableName: houseSettingsDraft.stableName
+        stableName: houseSettingsDraft.stableName,
+        isMain: houseSettingsDraft.isMain
       })
     });
+    setCreatingHome(false);
     setHouseSettingsOpen(false);
   }
 
   async function deleteHouse() {
-    if (!ownerUserId || !canAdd || homeKind !== 'house' || !homeAvailable) return;
-    if (!window.confirm('Delete this house, stable, property, and stored house items? Wagon Homes and Caged Wagons will not be deleted.')) return;
-    await requestHouseChange(`/api/houses/${ownerUserId}`, { method: 'DELETE' });
+    if (!ownerUserId || !canAdd || homeSource !== 'static' || !homeAvailable || !selectedHome) return;
+    if (!window.confirm(`Delete ${homeKind === 'stable' ? stableName : houseName}? It must be empty first.`)) return;
+    await requestHouseChange(`/api/houses/${ownerUserId}?homeId=${encodeURIComponent(selectedHome.id)}&source=static`, { method: 'DELETE' });
   }
 
   async function updateItem(event: FormEvent) {
@@ -447,7 +497,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     const existingHouseItem = items.some((item) => item.id === itemId);
     if (existingHouseItem) {
       const existing = items.find((item) => item.id === itemId);
-      await requestHouseChange(existing && isMobileItem(existing) ? `/api/inventory/items/${itemId}` : `/api/houses/items/${itemId}`, {
+      await requestHouseChange(existing && isMobileItem(existing) ? `/api/houses/mobile-items/${itemId}` : `/api/houses/items/${itemId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slotIndex, parentItemId })
@@ -456,7 +506,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       await requestHouseChange(`/api/inventory/items/${itemId}/send-house`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotIndex, parentItemId })
+        body: JSON.stringify({ homeId: selectedHome?.id, source: selectedHome?.source, slotIndex, parentItemId })
       });
       onCharacterInventoryChanged?.();
     }
@@ -466,7 +516,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   async function savePetDisplayName(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || itemModal.item.type !== 'pet' || !canManageAny) return;
-    await requestHouseChange(isMobileItem(itemModal.item) ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
+    await requestHouseChange(isMobileItem(itemModal.item) ? `/api/houses/mobile-items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ displayName: itemDraft.displayName.trim() || null })
@@ -475,7 +525,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
 
   async function dropItem(item: InventoryItem) {
     if (!canManageAny) return;
-    await requestHouseChange(isMobileItem(item) ? `/api/inventory/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}` : `/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
+    await requestHouseChange(isMobileItem(item) ? `/api/houses/mobile-items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}` : `/api/houses/items/${item.id}?quantity=${Math.max(quantityStepForItem(item), dropQuantity)}`, { method: 'DELETE' });
   }
 
   async function takeItem(item: InventoryItem) {
@@ -513,7 +563,9 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          permissions: Object.entries(permissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access }))
+          permissions: Object.entries(permissions).map(([granteeUserId, access]) => ({ granteeUserId, ...access })),
+          homeId: selectedHome?.id,
+          source: selectedHome?.source
         })
       });
       const payload = await response.json().catch(() => ({}));
@@ -540,6 +592,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...propertyDraft,
+          homeId: selectedHome?.id,
           caretakerCharacterId: propertyDraft.location === 'with_character' ? caretakerCharacterId : null
         })
       });
@@ -560,27 +613,39 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   return (
     <Card>
       <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <p className="eyebrow">{houseCityName}</p>
           <h3 className="mt-1 flex items-center gap-2 text-xl font-black">
-            <Home size={19} className="text-[var(--brass)]" />
-            {homeKind === 'caged-wagon' ? stableName : houseName}
+            {homeKind === 'stable' || homeKind === 'caged-wagon' ? <PawPrint size={19} className="text-[var(--brass)]" /> : <Home size={19} className="text-[var(--brass)]" />}
+            {homeKind === 'stable' || homeKind === 'caged-wagon' ? stableName : houseName}
+            {homeIsMain && <span className="rounded-full border border-[var(--brass)]/50 bg-[var(--brass)]/10 px-2 py-1 text-[9px] font-black uppercase text-[var(--brass)]">Main House</span>}
           </h3>
           {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
+          {homes.length > 1 && (
+            <SelectField className="mt-3 max-w-md" value={selectedHomeKey} onChange={(event) => setSelectedHomeKey(event.target.value)} aria-label="Choose house or stable">
+              {homes.map((home) => (
+                <option key={`${home.source}:${home.id}`} value={`${home.source}:${home.id}`}>
+                  {home.isMain ? 'Main - ' : ''}{home.kind === 'stable' || home.kind === 'caged-wagon' ? home.stableName : home.name} - {home.cityName}
+                </option>
+              ))}
+            </SelectField>
+          )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          {canAdd && <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => openCreateHome('house')}><Home className="mr-2 inline" size={14} /> Add house</Button>}
+          {canAdd && <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => openCreateHome('stable')}><PawPrint className="mr-2 inline" size={14} /> Add stable</Button>}
           <Button variant="secondary" className="p-3" onClick={() => void loadHouse()} aria-label="Refresh house"><RefreshCw size={16} /></Button>
           {canCustomizeHouse && (
             <Button variant="secondary" className="p-3" onClick={openHouseSettings} aria-label="Home and stable settings">
               <Settings size={16} />
             </Button>
           )}
-          {canAdd && homeKind === 'house' && (
+          {canAdd && homeSource === 'static' && (
             <Button variant={houseLocked ? 'danger' : 'teal'} className="p-3" onClick={toggleHouseLock} aria-label={houseLocked ? 'Unlock house' : 'Lock house'}>
               {houseLocked ? <Lock size={16} /> : <Unlock size={16} />}
             </Button>
           )}
-          {canAdd && homeKind === 'house' && homeAvailable && (
+          {canAdd && homeSource === 'static' && homeAvailable && (
             <Button variant="danger" className="p-3" onClick={() => void deleteHouse()} aria-label="Delete house">
               <Trash2 size={16} />
             </Button>
@@ -590,7 +655,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               <Users size={16} />
             </Button>
           )}
-          {canAdd && homeKind === 'house' && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
+          {canAdd && homeSource === 'static' && homeKind === 'house' && propertySlots > 0 && <Button variant="primary" className="p-3" onClick={() => openProperty('new')} aria-label="Add property"><Plus size={16} /></Button>}
         </div>
       </div>
 
@@ -604,11 +669,12 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
         <div className="space-y-5">
           {!homeAvailable && (
             <div className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/10 p-4 text-sm text-[var(--muted)]">
-              <p>No home or stable is available for this player.</p>
+              <p>No house, stable, Wagon Home, or Caged Wagon is available for this player.</p>
               {canAdd && (
-                <Button variant="primary" className="w-fit px-3 py-2 text-xs" onClick={openHouseSettings}>
-                  <Plus className="mr-2 inline" size={14} /> Create home
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="primary" className="w-fit px-3 py-2 text-xs" onClick={() => openCreateHome('house')}><Home className="mr-2 inline" size={14} /> Create house</Button>
+                  <Button variant="secondary" className="w-fit px-3 py-2 text-xs" onClick={() => openCreateHome('stable')}><PawPrint className="mr-2 inline" size={14} /> Create stable</Button>
+                </div>
               )}
             </div>
           )}
@@ -701,7 +767,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
           </section>
           )}
 
-          {homeKind === 'house' && <section>
+          {homeKind === 'house' && propertySlots > 0 && <section>
             <div className="rule-title mb-3"><h3 className="text-sm font-black uppercase tracking-wider">Property</h3></div>
             <div className="grid gap-2 sm:grid-cols-2">
               {properties.map((property) => (
@@ -851,16 +917,41 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       )}
 
       {houseSettingsOpen && (
-        <Modal title="Home & stable settings" onClose={() => setHouseSettingsOpen(false)}>
+        <Modal title={creatingHome ? `Create ${houseSettingsDraft.kind}` : 'Property settings'} onClose={() => { setHouseSettingsOpen(false); setCreatingHome(false); }}>
           <form onSubmit={saveHouseSettings} className="grid gap-3">
+            {creatingHome && (
+              <label>
+                <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Property type</span>
+                <SelectField value={houseSettingsDraft.kind} onChange={(event) => {
+                  const kind = event.target.value === 'stable' ? 'stable' : 'house';
+                  setHouseSettingsDraft((current) => ({
+                    ...current,
+                    kind,
+                    name: kind === 'stable' ? 'New Stable' : 'New House',
+                    inventorySlots: kind === 'house' ? Math.max(1, current.inventorySlots || 45) : 0,
+                    stableSlots: kind === 'stable' ? Math.max(1, current.stableSlots || 5) : 0,
+                    isMain: kind === 'house' && current.isMain
+                  }));
+                }}>
+                  <option value="house">House</option>
+                  <option value="stable">Stable</option>
+                </SelectField>
+              </label>
+            )}
             <label>
-              <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Home name</span>
+              <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{houseSettingsDraft.kind === 'stable' ? 'Stable name' : 'House name'}</span>
               <TextField value={houseSettingsDraft.name} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, name: event.target.value })} />
             </label>
-            <label>
+            {houseSettingsDraft.kind === 'house' && stableSlots > 0 && !creatingHome && <label>
               <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable name</span>
               <TextField value={houseSettingsDraft.stableName} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, stableName: event.target.value })} />
-            </label>
+            </label>}
+            {houseSettingsDraft.kind === 'house' && homeKind !== 'caged-wagon' && (
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3 text-sm font-black">
+                <input type="checkbox" checked={houseSettingsDraft.isMain} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, isMain: event.target.checked })} />
+                Main House
+              </label>
+            )}
             {canAdd && (
               <>
                 <label>
@@ -870,18 +961,18 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                   </SelectField>
                 </label>
                 <div className="grid gap-2 sm:grid-cols-3">
-                  <label>
+                  {houseSettingsDraft.kind === 'house' && <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Home slots</span>
                     <NumberInput min={0} max={500} value={houseSettingsDraft.inventorySlots} onValueChange={(inventorySlots) => setHouseSettingsDraft({ ...houseSettingsDraft, inventorySlots })} />
-                  </label>
-                  <label>
+                  </label>}
+                  {(houseSettingsDraft.kind === 'stable' || (!creatingHome && stableSlots > 0)) && <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable slots</span>
                     <NumberInput min={0} max={200} value={houseSettingsDraft.stableSlots} onValueChange={(stableSlots) => setHouseSettingsDraft({ ...houseSettingsDraft, stableSlots })} />
-                  </label>
-                  <label>
+                  </label>}
+                  {houseSettingsDraft.kind === 'house' && (creatingHome || homeSource === 'static') && <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Property slots</span>
                     <NumberInput min={0} max={200} value={houseSettingsDraft.propertySlots} onValueChange={(propertySlots) => setHouseSettingsDraft({ ...houseSettingsDraft, propertySlots })} />
-                  </label>
+                  </label>}
                 </div>
                 <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
                   <input type="checkbox" checked={houseSettingsDraft.locked} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, locked: event.target.checked })} />
@@ -890,8 +981,8 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               </>
             )}
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" type="button" onClick={() => setHouseSettingsOpen(false)}>Cancel</Button>
-              <Button variant="primary" disabled={!houseSettingsDraft.name.trim() || !houseSettingsDraft.stableName.trim() || saving}>
+              <Button variant="ghost" type="button" onClick={() => { setHouseSettingsOpen(false); setCreatingHome(false); }}>Cancel</Button>
+              <Button variant="primary" disabled={!houseSettingsDraft.name.trim() || saving}>
                 {saving && <Loader2 className="mr-2 inline animate-spin" size={15} />}
                 Save settings
               </Button>

@@ -13,9 +13,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ o
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('set_player_house_permissions', {
+    const { data, error } = await supabase.rpc('set_player_home_permissions', {
       p_session_token: token,
       p_owner_user_id: ownerId,
+      p_home_id: body.homeId || null,
+      p_home_source: body.source || 'static',
       p_permissions: Array.isArray(body.permissions) ? body.permissions : []
     });
 

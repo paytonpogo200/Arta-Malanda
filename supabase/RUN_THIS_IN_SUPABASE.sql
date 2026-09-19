@@ -2865,94 +2865,6 @@ as $$
   )
 $$;
 
-do $$
-declare
-  v_item record;
-  v_slot int;
-  v_capacity int;
-begin
-  update public.inventory_items
-  set storage_active = true
-  where is_storage = true
-    and parent_item_id is null
-    and loadout_slot is null
-    and public.additional_storage_kind(item_name, item_type) is null;
-
-  with ranked_storage as (
-    select
-      i.id,
-      row_number() over (
-        partition by i.character_id, public.additional_storage_kind(i.item_name, i.item_type)
-        order by i.storage_active desc, i.created_at, i.id
-      ) as storage_rank
-    from public.inventory_items i
-    where i.is_storage = true
-      and i.parent_item_id is null
-      and i.loadout_slot is null
-      and public.additional_storage_kind(i.item_name, i.item_type) is not null
-  )
-  update public.inventory_items i
-  set storage_active = ranked_storage.storage_rank = 1
-  from ranked_storage
-  where i.id = ranked_storage.id;
-
-  for v_item in
-    select i.*
-    from public.inventory_items i
-    where i.is_storage = true
-      and i.storage_active = false
-      and i.parent_item_id is null
-      and i.loadout_slot is null
-      and i.slot_index < 0
-    order by i.character_id, i.created_at, i.id
-  loop
-    select inventory_slots into v_capacity from public.characters where id = v_item.character_id;
-    v_slot := public.find_first_free_inventory_slot(v_item.character_id, null, v_capacity);
-    if v_slot is null then
-      update public.characters
-      set inventory_slots = least(120, inventory_slots + 1)
-      where id = v_item.character_id
-      returning inventory_slots - 1 into v_slot;
-    end if;
-
-    update public.inventory_items
-    set slot_index = greatest(0, coalesce(v_slot, 0)),
-        parent_item_id = null,
-        loadout_slot = null
-    where id = v_item.id;
-  end loop;
-end $$;
-
-with active_storage as (
-  select i.id,
-    row_number() over (partition by i.character_id order by i.created_at, i.id) as storage_rank
-  from public.inventory_items i
-  where i.parent_item_id is null
-    and i.loadout_slot is null
-    and i.item_type = 'storage'::text
-    and i.is_storage = true
-    and i.storage_active = true
-)
-update public.inventory_items i
-set slot_index = -100000 - active_storage.storage_rank
-from active_storage
-where i.id = active_storage.id;
-
-with active_storage as (
-  select i.id,
-    row_number() over (partition by i.character_id order by i.created_at, i.id) as storage_rank
-  from public.inventory_items i
-  where i.parent_item_id is null
-    and i.loadout_slot is null
-    and i.item_type = 'storage'::text
-    and i.is_storage = true
-    and i.storage_active = true
-)
-update public.inventory_items i
-set slot_index = -active_storage.storage_rank
-from active_storage
-where i.id = active_storage.id;
-
 create or replace function public.inventory_items_stackable(a public.inventory_items, b public.inventory_items)
 returns boolean
 language sql
@@ -4071,15 +3983,8 @@ alter table public.house_inventory_items
   add column if not exists potion_quality text;
 
 drop index if exists house_inventory_main_slot_unique;
-
-create unique index if not exists house_inventory_root_slot_unique
-  on public.house_inventory_items (owner_user_id, slot_index)
-  where parent_item_id is null;
-
-create unique index if not exists house_inventory_parent_slot_unique
-  on public.house_inventory_items (parent_item_id, slot_index)
-  where parent_item_id is not null;
-
+drop index if exists house_inventory_root_slot_unique;
+drop index if exists house_inventory_parent_slot_unique;
 create index if not exists house_inventory_parent_idx on public.house_inventory_items(parent_item_id);
 
 alter table public.player_houses
@@ -4091,40 +3996,6 @@ alter table public.player_houses
 alter table public.player_houses
   alter column inventory_slots set default 45,
   alter column stable_slots set default 5;
-
-update public.player_houses
-set inventory_slots = 45,
-    stable_slots = case
-      when exists (
-        select 1
-        from public.profiles p
-        where p.id = public.player_houses.owner_user_id
-          and (lower(p.username::text) = 'm0' or lower(p.display_name) = 'm0')
-      ) or exists (
-        select 1
-        from public.characters c
-        where c.owner_user_id = public.player_houses.owner_user_id
-          and lower(c.name) in ('toren', 'rylas', 'halric')
-      )
-        then 20
-      else 5
-    end
-where inventory_slots <> 45
-   or stable_slots <> case
-      when exists (
-        select 1
-        from public.profiles p
-        where p.id = public.player_houses.owner_user_id
-          and (lower(p.username::text) = 'm0' or lower(p.display_name) = 'm0')
-      ) or exists (
-        select 1
-        from public.characters c
-        where c.owner_user_id = public.player_houses.owner_user_id
-          and lower(c.name) in ('toren', 'rylas', 'halric')
-      )
-        then 20
-      else 5
-    end;
 
 update public.house_inventory_items
 set item_type = public.normalize_item_type(item_type),
@@ -4207,76 +4078,6 @@ where item_type = 'quest'
     'utility-magic-spell-book'
   );
 
-update public.inventory_items
-set item_description = left(trim(concat_ws(E'\n\n', nullif(trim(coalesce(item_description, '')), ''), trim(material))), 1500)
-where nullif(trim(coalesce(material, '')), '') is not null
-  and position(lower(trim(material)) in lower(coalesce(item_description, ''))) = 0;
-
-update public.house_inventory_items
-set item_description = left(trim(concat_ws(E'\n\n', nullif(trim(coalesce(item_description, '')), ''), trim(material))), 1500)
-where nullif(trim(coalesce(material, '')), '') is not null
-  and position(lower(trim(material)) in lower(coalesce(item_description, ''))) = 0;
-
-with ranked_house_items as (
-  select i.id,
-    row_number() over (partition by i.owner_user_id order by greatest(i.slot_index, 0), i.created_at, i.id) as item_rank
-  from public.house_inventory_items i
-  where i.parent_item_id is null
-    and i.item_type <> 'pet'
-    and i.slot_index >= 0
-)
-update public.house_inventory_items i
-set slot_index = 200000 + ranked_house_items.item_rank
-from ranked_house_items
-where i.id = ranked_house_items.id;
-
-with ranked_house_pets as (
-  select i.id,
-    row_number() over (partition by i.owner_user_id order by greatest(i.slot_index, 0), i.created_at, i.id) as pet_rank
-  from public.house_inventory_items i
-  where i.parent_item_id is null
-    and i.item_type = 'pet'
-)
-update public.house_inventory_items i
-set slot_index = 300000 + ranked_house_pets.pet_rank
-from ranked_house_pets
-where i.id = ranked_house_pets.id;
-
-with ranked_house_items as (
-  select i.id,
-    row_number() over (partition by i.owner_user_id order by i.slot_index, i.created_at, i.id) as item_rank
-  from public.house_inventory_items i
-  where i.parent_item_id is null
-    and i.item_type <> 'pet'
-    and i.slot_index >= 200000
-)
-update public.house_inventory_items i
-set slot_index = case
-  when ranked_house_items.item_rank <= 45 then ranked_house_items.item_rank - 1
-  else 200000 + ranked_house_items.item_rank
-end
-from ranked_house_items
-where i.id = ranked_house_items.id;
-
-with ranked_house_pets as (
-  select i.id,
-    i.owner_user_id,
-    coalesce(h.stable_slots, 5) as stable_slots,
-    row_number() over (partition by i.owner_user_id order by i.slot_index, i.created_at, i.id) as pet_rank
-  from public.house_inventory_items i
-  join public.player_houses h on h.owner_user_id = i.owner_user_id
-  where i.parent_item_id is null
-    and i.item_type = 'pet'
-    and i.slot_index >= 300000
-)
-update public.house_inventory_items i
-set slot_index = case
-  when ranked_house_pets.pet_rank <= ranked_house_pets.stable_slots then 45 + ranked_house_pets.pet_rank - 1
-  else 300000 + ranked_house_pets.pet_rank
-end
-from ranked_house_pets
-where i.id = ranked_house_pets.id;
-
 create table if not exists public.campaign_properties (
   id uuid primary key default gen_random_uuid(),
   owner_user_id uuid not null references public.profiles(id) on delete cascade,
@@ -4311,6 +4112,106 @@ alter table public.mobile_storage_access_permissions enable row level security;
 alter table public.house_inventory_items enable row level security;
 alter table public.campaign_properties enable row level security;
 alter table public.wagon_activity_log enable row level security;
+
+-- Canonical property identity is established before house RPCs are compiled.
+alter table public.player_houses drop constraint if exists player_houses_owner_user_id_key;
+alter table public.player_houses
+  add column if not exists house_kind text not null default 'house',
+  add column if not exists created_order integer not null default 0;
+alter table public.player_houses drop constraint if exists player_houses_house_kind_check;
+alter table public.player_houses add constraint player_houses_house_kind_check check (house_kind in ('house', 'stable'));
+
+insert into public.player_houses (owner_user_id, city_name, inventory_slots, stable_slots, property_slots, house_name, stable_name, house_kind, created_order)
+select owner.id, 'Wild', 45, 5, 10, 'House', 'Stable', 'house', 10
+from (
+  select owner_user_id as id from public.house_inventory_items
+  union
+  select owner_user_id as id from public.campaign_properties
+) owner
+where owner.id is not null
+  and not exists (select 1 from public.player_houses house where house.owner_user_id = owner.id);
+
+alter table public.house_inventory_items
+  add column if not exists house_id uuid references public.player_houses(id) on delete cascade;
+update public.house_inventory_items item
+set house_id = (select house.id from public.player_houses house where house.owner_user_id = item.owner_user_id order by house.created_at, house.id limit 1)
+where item.house_id is null;
+alter table public.house_inventory_items alter column house_id set not null;
+drop index if exists house_inventory_root_slot_unique;
+drop index if exists house_inventory_parent_slot_unique;
+create unique index if not exists house_inventory_home_root_slot_unique on public.house_inventory_items(house_id, slot_index) where parent_item_id is null;
+create unique index if not exists house_inventory_home_parent_slot_unique on public.house_inventory_items(house_id, parent_item_id, slot_index) where parent_item_id is not null;
+create index if not exists house_inventory_home_idx on public.house_inventory_items(house_id, parent_item_id, slot_index);
+
+alter table public.campaign_properties
+  add column if not exists house_id uuid references public.player_houses(id) on delete cascade;
+update public.campaign_properties property
+set house_id = (select house.id from public.player_houses house where house.owner_user_id = property.owner_user_id order by house.created_at, house.id limit 1)
+where property.house_id is null;
+alter table public.campaign_properties alter column house_id set not null;
+
+create table if not exists public.house_unit_access_permissions (
+  house_id uuid not null references public.player_houses(id) on delete cascade,
+  grantee_user_id uuid not null references public.profiles(id) on delete cascade,
+  can_access_house boolean not null default false,
+  can_access_stable boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (house_id, grantee_user_id),
+  constraint house_unit_access_permissions_some_access check (can_access_house or can_access_stable)
+);
+create table if not exists public.player_main_homes (
+  owner_user_id uuid primary key references public.profiles(id) on delete cascade,
+  home_source text not null check (home_source in ('static', 'mobile')),
+  home_id uuid not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.house_unit_access_permissions enable row level security;
+alter table public.player_main_homes enable row level security;
+revoke all on public.house_unit_access_permissions from anon, authenticated;
+revoke all on public.player_main_homes from anon, authenticated;
+
+insert into public.house_unit_access_permissions(house_id, grantee_user_id, can_access_house, can_access_stable)
+select house.id, permission.grantee_user_id, permission.can_access_house, permission.can_access_stable
+from public.house_access_permissions permission
+join public.player_houses house on house.owner_user_id = permission.owner_user_id
+on conflict (house_id, grantee_user_id) do update
+set can_access_house = excluded.can_access_house, can_access_stable = excluded.can_access_stable;
+
+insert into public.player_main_homes(owner_user_id, home_source, home_id)
+select distinct on (house.owner_user_id) house.owner_user_id, 'static', house.id
+from public.player_houses house
+where house.house_kind = 'house' and house.inventory_slots > 0
+  and not exists (select 1 from public.player_main_homes preference where preference.owner_user_id = house.owner_user_id)
+order by house.owner_user_id, house.created_at, house.id
+on conflict (owner_user_id) do nothing;
+
+create or replace function public.static_home_access(
+  p_profile public.profiles,
+  p_house public.player_houses,
+  p_stable boolean default false
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p_profile.role = 'dm'::public.user_role
+    or (
+      not p_house.is_locked
+      and (
+        p_house.owner_user_id is not distinct from p_profile.id
+        or exists (
+          select 1
+          from public.house_unit_access_permissions permission
+          where permission.house_id = p_house.id
+            and permission.grantee_user_id = p_profile.id
+            and case when p_stable then permission.can_access_stable else permission.can_access_house end
+        )
+      )
+    )
+$$;
 
 revoke all on public.player_houses from anon, authenticated;
 revoke all on public.house_access_permissions from anon, authenticated;
@@ -4616,8 +4517,20 @@ returns int
 language sql
 immutable
 as $$
-  select 45
+  select 1000
 $$;
+
+-- Stable slots historically began at 45, which overlaps any house expanded
+-- beyond the original 45-slot capacity. Move existing root animals into a
+-- dedicated range once; repeated schema runs leave the new positions intact.
+update public.house_inventory_items item
+set slot_index = 1000 + (item.slot_index - 45)
+from public.player_houses house
+where item.house_id = house.id
+  and item.parent_item_id is null
+  and public.normalize_item_type(item.item_type) = 'pet'
+  and item.slot_index >= 45
+  and item.slot_index < 45 + house.stable_slots;
 
 create or replace function public.find_first_free_house_stable_slot(
   p_owner_user_id uuid,
@@ -4641,7 +4554,7 @@ begin
     if not exists (
       select 1
       from public.house_inventory_items i
-      where i.owner_user_id = p_owner_user_id
+      where i.house_id = p_house.id
         and i.parent_item_id is null
         and i.slot_index = v_slot
     ) then
@@ -5443,14 +5356,24 @@ begin
   select * into v_item from public.house_inventory_items where id = p_item_id;
   if v_item.id is null then raise exception 'House item not found.'; end if;
 
-  v_house := public.assert_house_access(v_profile, v_item.owner_user_id, false);
+  select * into v_house from public.player_houses where id = v_item.house_id;
+  if v_house.id is null then raise exception 'The item home was not found.'; end if;
+
+  if not public.static_home_access(
+    v_profile,
+    v_house,
+    public.normalize_item_type(v_item.item_type) = 'pet'
+      or (v_item.parent_item_id is null and v_item.slot_index >= public.house_stable_slot_offset())
+  ) then
+    raise exception 'You do not have permission to use that property.';
+  end if;
 
   if v_profile.role <> 'dm'::public.user_role
     and v_item.owner_user_id is distinct from v_profile.id
     and not exists (
       select 1
-      from public.house_access_permissions a
-      where a.owner_user_id = v_item.owner_user_id
+      from public.house_unit_access_permissions a
+      where a.house_id = v_item.house_id
         and a.grantee_user_id = v_profile.id
         and case
           when public.normalize_item_type(v_item.item_type) = 'pet'
@@ -5553,7 +5476,7 @@ begin
 
     select * into v_target
     from public.house_inventory_items i
-    where i.owner_user_id = v_item.owner_user_id
+    where i.house_id = v_item.house_id
       and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
       and i.slot_index = v_slot_index
       and i.id <> v_item.id
@@ -5574,7 +5497,7 @@ begin
 
       select coalesce(min(i.slot_index), 0) - 1 into v_temporary_slot_index
       from public.house_inventory_items i
-      where i.owner_user_id = v_item.owner_user_id
+      where i.house_id = v_item.house_id
         and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(v_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid);
 
       update public.house_inventory_items
@@ -5631,14 +5554,18 @@ begin
   select * into v_item from public.house_inventory_items where id = p_item_id;
   if v_item.id is null then raise exception 'House item not found.'; end if;
 
-  perform public.assert_house_access(v_profile, v_item.owner_user_id, false);
+  if not exists (
+    select 1 from public.player_houses house
+    where house.id = v_item.house_id
+      and public.static_home_access(v_profile, house, public.normalize_item_type(v_item.item_type) = 'pet')
+  ) then raise exception 'You do not have permission to use that property.'; end if;
 
   if v_profile.role <> 'dm'::public.user_role
     and v_item.owner_user_id is distinct from v_profile.id
     and not exists (
       select 1
-      from public.house_access_permissions a
-      where a.owner_user_id = v_item.owner_user_id
+      from public.house_unit_access_permissions a
+      where a.house_id = v_item.house_id
         and a.grantee_user_id = v_profile.id
         and case
           when public.normalize_item_type(v_item.item_type) = 'pet'
@@ -6911,7 +6838,10 @@ begin
   select * into v_property from public.campaign_properties where id = p_property_id;
   if v_property.id is null then raise exception 'Property not found.'; end if;
 
-  v_house := public.assert_house_access(v_profile, v_property.owner_user_id, false);
+  select * into v_house from public.player_houses where id = v_property.house_id;
+  if v_house.id is null or not public.static_home_access(v_profile, v_house, false) then
+    raise exception 'You do not have permission to use that property.';
+  end if;
   v_owner_user_id := v_property.owner_user_id;
   v_location := case when v_patch ? 'location' then coalesce(nullif(v_patch->>'location', ''), v_property.property_location) else v_property.property_location end;
   v_slot_index := case when v_patch ? 'slotIndex' then greatest(0, (v_patch->>'slotIndex')::int) else v_property.slot_index end;
@@ -6919,6 +6849,14 @@ begin
 
   if v_slot_index >= v_house.property_slots then
     raise exception 'Property slot is outside the house capacity.';
+  end if;
+  if exists (
+    select 1 from public.campaign_properties occupied
+    where occupied.house_id = v_house.id
+      and occupied.slot_index = v_slot_index
+      and occupied.id <> v_property.id
+  ) then
+    raise exception 'That property slot is already occupied.';
   end if;
 
   if v_caretaker_character_id is not null then
@@ -9939,6 +9877,18 @@ as $$
       and h.is_locked = false
       and public.city_names_match(h.city_name, c.location_name)
       and public.city_names_match(h.city_name, p_station_city_name)
+    union all
+    select 1
+    from public.characters c
+    join public.characters owner_character on owner_character.owner_user_id = c.owner_user_id
+    join public.inventory_items mobile_home on mobile_home.character_id = owner_character.id
+    where c.id = p_character_id
+      and mobile_home.parent_item_id is null
+      and mobile_home.loadout_slot is null
+      and mobile_home.is_storage
+      and public.inventory_item_is_mobile_home_storage(mobile_home.item_name, mobile_home.item_type)
+      and public.city_names_match(owner_character.location_name, c.location_name)
+      and public.city_names_match(owner_character.location_name, p_station_city_name)
   )
 $$;
 
@@ -9957,7 +9907,11 @@ as $$
       select sum(h.quantity)
       from public.characters c
       join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+      join public.player_houses home on home.id = h.house_id
       where c.id = p_character_id
+        and not home.is_locked
+        and public.city_names_match(home.city_name, c.location_name)
+        and public.city_names_match(home.city_name, p_station_city_name)
         and h.is_storage = false
         and lower(h.item_name) = lower(trim(p_item_name))
     ), 0) + coalesce((
@@ -10050,7 +10004,11 @@ begin
     select h.*
     from public.characters c
     join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+    join public.player_houses home on home.id = h.house_id
     where c.id = p_character_id
+      and not home.is_locked
+      and public.city_names_match(home.city_name, c.location_name)
+      and public.city_names_match(home.city_name, p_station_city_name)
       and h.is_storage = false
       and lower(h.item_name) = lower(trim(p_item_name))
     order by h.slot_index, h.created_at
@@ -12272,10 +12230,14 @@ as $$
     coalesce(c.properties, array[]::text[])
   from public.characters ch
   join public.house_inventory_items h on h.owner_user_id = ch.owner_user_id
+  join public.player_houses home on home.id = h.house_id
   left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(h.item_name))
   where lower(trim(coalesce(p_source, ''))) = 'house'
     and public.crafting_house_is_accessible(p_character_id, p_station_city_name)
     and ch.id = p_character_id
+    and not home.is_locked
+    and public.city_names_match(home.city_name, ch.location_name)
+    and public.city_names_match(home.city_name, p_station_city_name)
     and h.id = p_item_id
     and h.is_storage = false
     and public.normalize_item_type(h.item_type) <> 'potion'
@@ -12330,7 +12292,11 @@ begin
     select h.* into v_house_item
     from public.characters c
     join public.house_inventory_items h on h.owner_user_id = c.owner_user_id
+    join public.player_houses home on home.id = h.house_id
     where c.id = p_character_id
+      and not home.is_locked
+      and public.city_names_match(home.city_name, c.location_name)
+      and public.city_names_match(home.city_name, p_station_city_name)
       and h.id = p_item_id
       and h.is_storage = false
       and public.normalize_item_type(h.item_type) <> 'potion';
@@ -12400,9 +12366,13 @@ as $$
       coalesce(c.properties, array[]::text[]) as properties
     from public.characters ch
     join public.house_inventory_items h on h.owner_user_id = ch.owner_user_id
+    join public.player_houses home on home.id = h.house_id
     left join public.item_catalog c on c.item_key = public.catalog_key_for_name(public.normalize_item_name(h.item_name))
     where ch.id = p_character_id
       and public.crafting_house_is_accessible(p_character_id, p_station_city_name)
+      and not home.is_locked
+      and public.city_names_match(home.city_name, ch.location_name)
+      and public.city_names_match(home.city_name, p_station_city_name)
       and h.is_storage = false
       and (
         public.normalize_item_type(h.item_type) <> 'potion'
@@ -19310,163 +19280,6 @@ begin
 end;
 $$;
 
-do $$
-declare
-  v_home record;
-  v_house_item public.house_inventory_items%rowtype;
-  v_parent_new_id uuid;
-  v_new_id uuid;
-  v_slot int;
-  v_caged record;
-  v_inserted int;
-begin
-  create temp table house_mobile_migration_map (
-    old_id uuid primary key,
-    new_id uuid not null
-  ) on commit drop;
-
-  truncate table house_mobile_migration_map;
-
-  for v_house_item in
-    select h.*
-    from public.house_inventory_items h
-    where h.parent_item_id is null
-      and public.normalize_item_type(h.item_type) <> 'pet'
-    order by h.owner_user_id, h.slot_index, h.created_at
-  loop
-    select * into v_home
-    from public.home_wagon_storage_for_owner(v_house_item.owner_user_id);
-
-    if not found then
-      continue;
-    end if;
-
-    v_slot := public.find_first_free_inventory_slot((v_home.storage).character_id, (v_home.storage).id, (v_home.storage).storage_capacity);
-    if v_slot is null then
-      continue;
-    end if;
-
-    insert into public.inventory_items (
-      character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
-      item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment,
-      rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
-    )
-    values (
-      (v_home.storage).character_id, (v_home.storage).id, v_slot, null, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description,
-      v_house_item.item_type, v_house_item.rarity, v_house_item.quantity, v_house_item.is_accessory, v_house_item.is_storage, v_house_item.storage_capacity,
-      v_house_item.modifiers, v_house_item.enchantment, v_house_item.rune_name, v_house_item.material, v_house_item.enhancement_count,
-      v_house_item.is_two_handed, v_house_item.potion_strength, v_house_item.potion_property, v_house_item.potion_quality
-    )
-    returning id into v_new_id;
-
-    insert into house_mobile_migration_map (old_id, new_id)
-    values (v_house_item.id, v_new_id)
-    on conflict (old_id) do nothing;
-  end loop;
-
-  loop
-    v_inserted := 0;
-
-    for v_house_item in
-      select child.*
-      from public.house_inventory_items child
-      join house_mobile_migration_map parent_map on parent_map.old_id = child.parent_item_id
-      left join house_mobile_migration_map own_map on own_map.old_id = child.id
-      where own_map.old_id is null
-      order by child.created_at
-    loop
-      select new_id into v_parent_new_id
-      from house_mobile_migration_map
-      where old_id = v_house_item.parent_item_id;
-
-      if v_parent_new_id is null then
-        continue;
-      end if;
-
-      select character_id into v_new_id
-      from public.inventory_items
-      where id = v_parent_new_id;
-
-      insert into public.inventory_items (
-        character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
-        item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment,
-        rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
-      )
-      select
-        parent_item.character_id, v_parent_new_id, v_house_item.slot_index, null, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description,
-        v_house_item.item_type, v_house_item.rarity, v_house_item.quantity, v_house_item.is_accessory, v_house_item.is_storage, v_house_item.storage_capacity,
-        v_house_item.modifiers, v_house_item.enchantment, v_house_item.rune_name, v_house_item.material, v_house_item.enhancement_count,
-        v_house_item.is_two_handed, v_house_item.potion_strength, v_house_item.potion_property, v_house_item.potion_quality
-      from public.inventory_items parent_item
-      where parent_item.id = v_parent_new_id
-      returning id into v_new_id;
-
-      insert into house_mobile_migration_map (old_id, new_id)
-      values (v_house_item.id, v_new_id)
-      on conflict (old_id) do nothing;
-
-      v_inserted := v_inserted + 1;
-    end loop;
-
-    exit when v_inserted = 0;
-  end loop;
-
-  for v_house_item in
-    select h.*
-    from public.house_inventory_items h
-    where h.parent_item_id is null
-      and public.normalize_item_type(h.item_type) = 'pet'
-    order by h.owner_user_id, h.slot_index, h.created_at
-  loop
-    select w, c into v_caged
-    from public.inventory_items w
-    join public.characters c on c.id = w.character_id
-    where c.owner_user_id = v_house_item.owner_user_id
-      and w.parent_item_id is null
-      and w.loadout_slot is null
-      and w.is_storage = true
-      and public.inventory_item_is_caged_wagon_storage(w.item_name, w.item_type)
-    order by c.name, w.slot_index, w.created_at
-    limit 1;
-
-    if not found then
-      continue;
-    end if;
-
-    v_slot := public.find_first_free_inventory_slot((v_caged.w).character_id, (v_caged.w).id, (v_caged.w).storage_capacity);
-    if v_slot is null then
-      continue;
-    end if;
-
-    insert into public.inventory_items (
-      character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
-      item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment,
-      rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
-    )
-    values (
-      (v_caged.w).character_id, (v_caged.w).id, v_slot, null, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description,
-      'pet', v_house_item.rarity, 1, v_house_item.is_accessory, false, 0, v_house_item.modifiers, v_house_item.enchantment,
-      v_house_item.rune_name, v_house_item.material, v_house_item.enhancement_count, v_house_item.is_two_handed, null, null, null
-    )
-    returning id into v_new_id;
-
-    insert into house_mobile_migration_map (old_id, new_id)
-    values (v_house_item.id, v_new_id)
-    on conflict (old_id) do nothing;
-  end loop;
-
-  delete from public.house_inventory_items h
-  using house_mobile_migration_map m
-  where h.id = m.old_id;
-
-  delete from public.player_houses h
-  where not exists (
-    select 1
-    from public.house_inventory_items i
-    where i.owner_user_id = h.owner_user_id
-  );
-end $$;
-
 grant execute on function public.home_wagon_storage_for_owner(uuid) to anon, authenticated;
 grant execute on function public.caged_wagon_storage_for_owner(uuid) to anon, authenticated;
 grant execute on function public.mobile_home_house_access_to_json(public.profiles, uuid, uuid) to anon, authenticated;
@@ -20221,3 +20034,1588 @@ grant execute on function public.update_city_construction_project(text, uuid, js
 grant execute on function public.contribute_city_construction_project(text, uuid, uuid, jsonb) to anon, authenticated;
 
 grant execute on function public.city_names_match(text, text) to anon, authenticated;
+
+-- ============================================================
+-- Multi-home storage foundation.
+-- Physical houses/stables are independently addressable. Wagon Homes and
+-- Caged Wagons remain attached to their inventory items so contents travel
+-- with the item when ownership changes.
+create or replace function public.static_home_access(
+  p_profile public.profiles,
+  p_house public.player_houses,
+  p_stable boolean default false
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p_profile.role = 'dm'::public.user_role
+    or (
+      not p_house.is_locked
+      and (
+        p_house.owner_user_id is not distinct from p_profile.id
+        or exists (
+          select 1
+          from public.house_unit_access_permissions permission
+          where permission.house_id = p_house.id
+            and permission.grantee_user_id = p_profile.id
+            and case when p_stable then permission.can_access_stable else permission.can_access_house end
+        )
+      )
+    )
+$$;
+
+create or replace function public.home_summary_json(
+  p_house public.player_houses,
+  p_is_main boolean default false
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_house.id,
+    'ownerUserId', p_house.owner_user_id,
+    'source', 'static',
+    'name', p_house.house_name,
+    'stableName', p_house.stable_name,
+    'cityName', p_house.city_name,
+    'inventorySlots', p_house.inventory_slots,
+    'stableSlots', p_house.stable_slots,
+    'propertySlots', p_house.property_slots,
+    'locked', p_house.is_locked,
+    'isMain', p_is_main,
+    'kind', p_house.house_kind,
+    'storageItemId', null,
+    'storageCharacterId', null,
+    'stableStorageItemId', null,
+    'stableStorageCharacterId', null
+  )
+$$;
+
+create or replace function public.mobile_home_summary_json(
+  p_storage public.inventory_items,
+  p_character public.characters,
+  p_is_main boolean default false
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_storage.id,
+    'ownerUserId', p_character.owner_user_id,
+    'source', 'mobile',
+    'name', coalesce(nullif(p_storage.display_name, ''), p_storage.item_name),
+    'stableName', coalesce(nullif(p_storage.display_name, ''), p_storage.item_name),
+    'cityName', coalesce(nullif(p_character.location_name, ''), 'Wild'),
+    'inventorySlots', case when public.inventory_item_is_mobile_home_storage(p_storage.item_name, p_storage.item_type) then greatest(0, p_storage.storage_capacity) else 0 end,
+    'stableSlots', case when public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type) then greatest(0, p_storage.storage_capacity) else 0 end,
+    'propertySlots', 0,
+    'locked', false,
+    'isMain', p_is_main,
+    'kind', case when public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type) then 'caged-wagon' else 'wagon-home' end,
+    'storageItemId', case when public.inventory_item_is_mobile_home_storage(p_storage.item_name, p_storage.item_type) then p_storage.id else null end,
+    'storageCharacterId', p_storage.character_id,
+    'stableStorageItemId', case when public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type) then p_storage.id else null end,
+    'stableStorageCharacterId', case when public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type) then p_storage.character_id else null end
+  )
+$$;
+
+create or replace function public.get_player_homes(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_selected_home_id uuid default null,
+  p_selected_source text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_selected_house public.player_houses%rowtype;
+  v_selected_storage public.inventory_items%rowtype;
+  v_selected_character public.characters%rowtype;
+  v_selected_id uuid;
+  v_selected_source text;
+  v_main public.player_main_homes%rowtype;
+  v_house_json jsonb;
+  v_can_house boolean := false;
+  v_can_stable boolean := false;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_main from public.player_main_homes where owner_user_id = p_owner_user_id;
+
+  v_selected_id := p_selected_home_id;
+  v_selected_source := case when p_selected_source in ('static', 'mobile') then p_selected_source else null end;
+
+  if v_selected_id is null and v_main.home_id is not null then
+    v_selected_id := v_main.home_id;
+    v_selected_source := v_main.home_source;
+  end if;
+
+  if v_selected_source = 'static' and not exists (
+    select 1
+    from public.player_houses house
+    where house.id = v_selected_id
+      and house.owner_user_id = p_owner_user_id
+      and (public.static_home_access(v_profile, house, false) or public.static_home_access(v_profile, house, true))
+  ) then
+    v_selected_id := null;
+    v_selected_source := null;
+  elsif v_selected_source = 'mobile' and not exists (
+    select 1
+    from public.inventory_items storage
+    join public.characters owner_character on owner_character.id = storage.character_id
+    where storage.id = v_selected_id
+      and owner_character.owner_user_id = p_owner_user_id
+      and storage.is_storage
+      and storage.parent_item_id is null
+      and storage.loadout_slot is null
+      and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+        or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+      and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character)
+  ) then
+    v_selected_id := null;
+    v_selected_source := null;
+  end if;
+
+  if v_selected_id is null then
+    select house.id, 'static' into v_selected_id, v_selected_source
+    from public.player_houses house
+    where house.owner_user_id = p_owner_user_id
+      and (public.static_home_access(v_profile, house, false) or public.static_home_access(v_profile, house, true))
+    order by case when house.house_kind = 'house' then 0 else 1 end, house.created_order, house.created_at, house.id
+    limit 1;
+  end if;
+
+  if v_selected_id is null then
+    select storage.id, 'mobile' into v_selected_id, v_selected_source
+    from public.inventory_items storage
+    join public.characters owner_character on owner_character.id = storage.character_id
+    where owner_character.owner_user_id = p_owner_user_id
+      and storage.is_storage
+      and storage.parent_item_id is null
+      and storage.loadout_slot is null
+      and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+        or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+      and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character)
+    order by owner_character.name, storage.slot_index, storage.created_at, storage.id
+    limit 1;
+  end if;
+
+  if v_selected_source = 'static' then
+    select * into v_selected_house from public.player_houses where id = v_selected_id and owner_user_id = p_owner_user_id;
+    if v_selected_house.id is not null then
+      v_can_house := v_selected_house.inventory_slots > 0 and public.static_home_access(v_profile, v_selected_house, false);
+      v_can_stable := v_selected_house.stable_slots > 0 and public.static_home_access(v_profile, v_selected_house, true);
+      if not v_can_house and not v_can_stable then v_selected_house.id := null; end if;
+    end if;
+    if v_selected_house.id is not null then
+      v_house_json := public.home_summary_json(v_selected_house, v_main.home_source = 'static' and v_main.home_id = v_selected_house.id);
+    end if;
+  elsif v_selected_source = 'mobile' then
+    select storage, owner_character into v_selected_storage, v_selected_character
+    from public.inventory_items storage
+    join public.characters owner_character on owner_character.id = storage.character_id
+    where storage.id = v_selected_id
+      and owner_character.owner_user_id = p_owner_user_id
+      and storage.is_storage
+      and storage.parent_item_id is null
+      and storage.loadout_slot is null
+      and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+        or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+      and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character);
+    if v_selected_storage.id is not null then
+      v_can_house := public.inventory_item_is_mobile_home_storage(v_selected_storage.item_name, v_selected_storage.item_type);
+      v_can_stable := public.inventory_item_is_caged_wagon_storage(v_selected_storage.item_name, v_selected_storage.item_type);
+      v_house_json := public.mobile_home_summary_json(v_selected_storage, v_selected_character, v_main.home_source = 'mobile' and v_main.home_id = v_selected_storage.id);
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'homes', (
+      with visible_homes as (
+        select public.home_summary_json(house, v_main.home_source = 'static' and v_main.home_id = house.id) as home_json,
+          case when house.house_kind = 'house' then 0 else 2 end as source_order,
+          house.created_order as home_order,
+          house.created_at,
+          house.id
+        from public.player_houses house
+        where house.owner_user_id = p_owner_user_id
+          and (public.static_home_access(v_profile, house, false) or public.static_home_access(v_profile, house, true))
+        union all
+        select public.mobile_home_summary_json(storage, owner_character, v_main.home_source = 'mobile' and v_main.home_id = storage.id),
+          case when public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type) then 1 else 3 end,
+          storage.slot_index,
+          storage.created_at,
+          storage.id
+        from public.inventory_items storage
+        join public.characters owner_character on owner_character.id = storage.character_id
+        where owner_character.owner_user_id = p_owner_user_id
+          and storage.is_storage
+          and storage.parent_item_id is null
+          and storage.loadout_slot is null
+          and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+            or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+          and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character)
+      )
+      select coalesce(jsonb_agg(home_json order by (home_json->>'isMain')::boolean desc, source_order, home_order, created_at, id), '[]'::jsonb)
+      from visible_homes
+    ),
+    'house', v_house_json,
+    'access', jsonb_build_object(
+      'owner', p_owner_user_id is not distinct from v_profile.id,
+      'dm', v_profile.role = 'dm'::public.user_role,
+      'house', v_can_house,
+      'stable', v_can_stable
+    ),
+    'permissions', case
+      when v_profile.role = 'dm'::public.user_role or p_owner_user_id is not distinct from v_profile.id then (
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'ownerUserId', p_owner_user_id,
+          'granteeUserId', profile.id,
+          'granteeName', coalesce(nullif(profile.display_name, ''), profile.username::text, 'Player'),
+          'house', permission.house_access,
+          'stable', permission.stable_access
+        ) order by coalesce(nullif(profile.display_name, ''), profile.username::text, 'Player')), '[]'::jsonb)
+        from (
+          select access.grantee_user_id, access.can_access_house as house_access, access.can_access_stable as stable_access
+          from public.house_unit_access_permissions access
+          where v_selected_source = 'static' and access.house_id = v_selected_id
+          union all
+          select access.grantee_user_id, v_can_house, v_can_stable
+          from public.mobile_storage_access_permissions access
+          where v_selected_source = 'mobile' and access.storage_item_id = v_selected_id
+        ) permission
+        join public.profiles profile on profile.id = permission.grantee_user_id
+      ) else '[]'::jsonb end,
+    'items', case
+      when v_selected_source = 'static' and v_selected_house.id is not null then (
+        select coalesce(jsonb_agg(public.house_item_record_to_json(item) order by coalesce(item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid), item.slot_index, item.item_name), '[]'::jsonb)
+        from public.house_inventory_items item
+        where item.house_id = v_selected_house.id
+          and ((public.normalize_item_type(item.item_type) = 'pet' and v_can_stable)
+            or (public.normalize_item_type(item.item_type) <> 'pet' and v_can_house))
+      )
+      when v_selected_source = 'mobile' and v_selected_storage.id is not null then (
+        with recursive contents as (
+          select item.* from public.inventory_items item where item.parent_item_id = v_selected_storage.id
+          union all
+          select child.* from public.inventory_items child join contents parent on parent.id = child.parent_item_id
+        )
+        select coalesce(jsonb_agg(public.inventory_item_record_to_json(item) order by coalesce(item.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid), item.slot_index, item.item_name), '[]'::jsonb)
+        from contents item
+      ) else '[]'::jsonb end,
+    'properties', case when v_selected_source = 'static' and v_selected_house.id is not null then (
+      select coalesce(jsonb_agg(public.property_record_to_json(property) order by property.property_location, property.slot_index, property.property_name), '[]'::jsonb)
+      from public.campaign_properties property
+      where property.house_id = v_selected_house.id
+    ) else '[]'::jsonb end
+  );
+end;
+$$;
+
+create or replace function public.save_player_home(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_home_id uuid,
+  p_home_source text,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_house public.player_houses%rowtype;
+  v_storage public.inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_kind text;
+  v_name text;
+  v_inventory_slots integer;
+  v_stable_slots integer;
+  v_mobile_capacity integer;
+  v_is_main boolean := coalesce((v_patch->>'isMain')::boolean, false);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if not exists (select 1 from public.profiles where id = p_owner_user_id) then raise exception 'Player account not found.'; end if;
+  if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the home owner or Dungeon Master can change this property.';
+  end if;
+
+  if p_home_id is null then
+    if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can create houses and stables.'; end if;
+    v_kind := case when v_patch->>'kind' = 'stable' then 'stable' else 'house' end;
+    v_name := coalesce(nullif(left(trim(v_patch->>'name'), 100), ''), case when v_kind = 'stable' then 'Stable' else 'House' end);
+    v_inventory_slots := case when v_kind = 'house' then greatest(0, least(500, coalesce((v_patch->>'inventorySlots')::integer, 45))) else 0 end;
+    v_stable_slots := case when v_kind = 'stable' then greatest(0, least(200, coalesce((v_patch->>'stableSlots')::integer, 5))) else greatest(0, least(200, coalesce((v_patch->>'stableSlots')::integer, 0))) end;
+
+    insert into public.player_houses (
+      owner_user_id, house_name, stable_name, city_name, inventory_slots, stable_slots,
+      property_slots, is_locked, house_kind, created_order
+    ) values (
+      p_owner_user_id,
+      case when v_kind = 'house' then v_name else 'House' end,
+      case when v_kind = 'stable' then v_name else coalesce(nullif(left(trim(v_patch->>'stableName'), 100), ''), 'Stable') end,
+      public.assert_valid_character_location(coalesce(nullif(v_patch->>'cityName', ''), 'Wild')),
+      v_inventory_slots,
+      v_stable_slots,
+      greatest(0, least(200, coalesce((v_patch->>'propertySlots')::integer, 0))),
+      coalesce((v_patch->>'locked')::boolean, false),
+      v_kind,
+      coalesce((select max(created_order) + 10 from public.player_houses where owner_user_id = p_owner_user_id), 10)
+    ) returning * into v_house;
+
+    if v_kind = 'house' and (
+      v_is_main
+      or not exists (select 1 from public.player_main_homes preference where preference.owner_user_id = p_owner_user_id)
+    ) then
+      insert into public.player_main_homes(owner_user_id, home_source, home_id)
+      values (p_owner_user_id, 'static', v_house.id)
+      on conflict (owner_user_id) do update set home_source = 'static', home_id = excluded.home_id, updated_at = now();
+    end if;
+    return public.get_player_homes(p_session_token, p_owner_user_id, v_house.id, 'static');
+  end if;
+
+  if p_home_source = 'mobile' then
+    select storage, owner_character into v_storage, v_character
+    from public.inventory_items storage
+    join public.characters owner_character on owner_character.id = storage.character_id
+    where storage.id = p_home_id
+      and owner_character.owner_user_id = p_owner_user_id
+      and storage.is_storage
+      and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+        or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type));
+    if v_storage.id is null then raise exception 'Mobile home or stable not found.'; end if;
+
+    v_mobile_capacity := case
+      when v_profile.role = 'dm'::public.user_role and v_patch ? 'inventorySlots'
+        and public.inventory_item_is_mobile_home_storage(v_storage.item_name, v_storage.item_type)
+        then greatest(0, least(500, (v_patch->>'inventorySlots')::integer))
+      when v_profile.role = 'dm'::public.user_role and v_patch ? 'stableSlots'
+        and public.inventory_item_is_caged_wagon_storage(v_storage.item_name, v_storage.item_type)
+        then greatest(0, least(200, (v_patch->>'stableSlots')::integer))
+      else v_storage.storage_capacity
+    end;
+    if v_mobile_capacity < v_storage.storage_capacity and exists (
+      select 1 from public.inventory_items content
+      where content.parent_item_id = v_storage.id and content.loadout_slot is null and content.slot_index >= v_mobile_capacity
+    ) then
+      raise exception 'Move contents out of the slots being removed before reducing this mobile property capacity.';
+    end if;
+
+    update public.inventory_items
+    set display_name = case when v_patch ? 'name' then coalesce(nullif(left(trim(v_patch->>'name'), 100), ''), display_name, item_name) else display_name end,
+        storage_capacity = v_mobile_capacity
+    where id = p_home_id;
+
+    if v_is_main and public.inventory_item_is_mobile_home_storage(v_storage.item_name, v_storage.item_type) then
+      insert into public.player_main_homes(owner_user_id, home_source, home_id)
+      values (p_owner_user_id, 'mobile', p_home_id)
+      on conflict (owner_user_id) do update set home_source = 'mobile', home_id = excluded.home_id, updated_at = now();
+    elsif v_patch ? 'isMain' and not v_is_main then
+      delete from public.player_main_homes where owner_user_id = p_owner_user_id and home_source = 'mobile' and home_id = p_home_id;
+    end if;
+    return public.get_player_homes(p_session_token, p_owner_user_id, p_home_id, 'mobile');
+  end if;
+
+  select * into v_house from public.player_houses where id = p_home_id and owner_user_id = p_owner_user_id;
+  if v_house.id is null then raise exception 'House or stable not found.'; end if;
+
+  v_inventory_slots := case when v_patch ? 'inventorySlots' then greatest(0, least(500, (v_patch->>'inventorySlots')::integer)) else v_house.inventory_slots end;
+  v_stable_slots := case when v_patch ? 'stableSlots' then greatest(0, least(200, (v_patch->>'stableSlots')::integer)) else v_house.stable_slots end;
+
+  if v_profile.role = 'dm'::public.user_role and v_inventory_slots < v_house.inventory_slots and exists (
+    select 1 from public.house_inventory_items item
+    where item.house_id = v_house.id and item.parent_item_id is null
+      and public.normalize_item_type(item.item_type) <> 'pet' and item.slot_index >= v_inventory_slots
+  ) then raise exception 'Move items out of the slots being removed before reducing this house capacity.'; end if;
+  if v_profile.role = 'dm'::public.user_role and v_stable_slots < v_house.stable_slots and exists (
+    select 1 from public.house_inventory_items item
+    where item.house_id = v_house.id and item.parent_item_id is null
+      and public.normalize_item_type(item.item_type) = 'pet'
+      and item.slot_index >= public.house_stable_slot_offset() + v_stable_slots
+  ) then raise exception 'Move animals out of the slots being removed before reducing this stable capacity.'; end if;
+
+  update public.player_houses
+  set house_name = case when v_patch ? 'name' and house_kind = 'house' then coalesce(nullif(left(trim(v_patch->>'name'), 100), ''), house_name) else house_name end,
+      stable_name = case
+        when v_patch ? 'name' and house_kind = 'stable' then coalesce(nullif(left(trim(v_patch->>'name'), 100), ''), stable_name)
+        when v_patch ? 'stableName' then coalesce(nullif(left(trim(v_patch->>'stableName'), 100), ''), stable_name)
+        else stable_name end,
+      city_name = case when v_profile.role = 'dm'::public.user_role and v_patch ? 'cityName' then public.assert_valid_character_location(v_patch->>'cityName') else city_name end,
+      inventory_slots = case when v_profile.role = 'dm'::public.user_role then v_inventory_slots else inventory_slots end,
+      stable_slots = case when v_profile.role = 'dm'::public.user_role then v_stable_slots else stable_slots end,
+      property_slots = case when v_profile.role = 'dm'::public.user_role and v_patch ? 'propertySlots' then greatest(0, least(200, (v_patch->>'propertySlots')::integer)) else property_slots end,
+      is_locked = case when v_profile.role = 'dm'::public.user_role and v_patch ? 'locked' then (v_patch->>'locked')::boolean else is_locked end,
+      updated_at = now()
+  where id = v_house.id
+  returning * into v_house;
+
+  if v_patch ? 'isMain' and v_house.house_kind = 'house' then
+    if v_is_main then
+      insert into public.player_main_homes(owner_user_id, home_source, home_id)
+      values (p_owner_user_id, 'static', v_house.id)
+      on conflict (owner_user_id) do update set home_source = 'static', home_id = excluded.home_id, updated_at = now();
+    else
+      delete from public.player_main_homes where owner_user_id = p_owner_user_id and home_source = 'static' and home_id = v_house.id;
+    end if;
+  end if;
+
+  return public.get_player_homes(p_session_token, p_owner_user_id, v_house.id, 'static');
+end;
+$$;
+
+create or replace function public.delete_player_home(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_home_id uuid,
+  p_home_source text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_house public.player_houses%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can delete houses and stables.'; end if;
+  if p_home_source <> 'static' then raise exception 'Wagon Homes and Caged Wagons must be moved or traded as inventory items.'; end if;
+
+  select * into v_house from public.player_houses where id = p_home_id and owner_user_id = p_owner_user_id;
+  if v_house.id is null then raise exception 'House or stable not found.'; end if;
+  if exists (select 1 from public.house_inventory_items where house_id = v_house.id) then
+    raise exception 'Move every item and animal out before deleting this property.';
+  end if;
+  if exists (select 1 from public.campaign_properties where house_id = v_house.id) then
+    raise exception 'Move or delete the property records attached to this home first.';
+  end if;
+
+  delete from public.player_main_homes where owner_user_id = p_owner_user_id and home_source = 'static' and home_id = v_house.id;
+  delete from public.player_houses where id = v_house.id;
+  return public.get_player_homes(p_session_token, p_owner_user_id, null, null);
+end;
+$$;
+
+create or replace function public.set_player_home_permissions(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_home_id uuid,
+  p_home_source text,
+  p_permissions jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_house public.player_houses%rowtype;
+  v_storage public.inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_entry jsonb;
+  v_grantee uuid;
+  v_house_access boolean;
+  v_stable_access boolean;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role and p_owner_user_id is distinct from v_profile.id then
+    raise exception 'Only the property owner or Dungeon Master can change permissions.';
+  end if;
+  if jsonb_typeof(coalesce(p_permissions, '[]'::jsonb)) <> 'array' then raise exception 'Permissions must be a list.'; end if;
+
+  if p_home_source = 'mobile' then
+    select storage, owner_character into v_storage, v_character
+    from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
+    where storage.id = p_home_id and owner_character.owner_user_id = p_owner_user_id
+      and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+        or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type));
+    if v_storage.id is null then raise exception 'Mobile home or stable not found.'; end if;
+    delete from public.mobile_storage_access_permissions where storage_item_id = p_home_id;
+  else
+    select * into v_house from public.player_houses where id = p_home_id and owner_user_id = p_owner_user_id;
+    if v_house.id is null then raise exception 'House or stable not found.'; end if;
+    delete from public.house_unit_access_permissions where house_id = p_home_id;
+  end if;
+
+  for v_entry in select value from jsonb_array_elements(coalesce(p_permissions, '[]'::jsonb))
+  loop
+    v_grantee := nullif(v_entry->>'granteeUserId', '')::uuid;
+    v_house_access := coalesce((v_entry->>'house')::boolean, false);
+    v_stable_access := coalesce((v_entry->>'stable')::boolean, false);
+    if v_grantee is null or v_grantee = p_owner_user_id or not (v_house_access or v_stable_access) then continue; end if;
+    if not exists (select 1 from public.profiles where id = v_grantee) then raise exception 'A selected player account does not exist.'; end if;
+
+    if p_home_source = 'mobile' then
+      if (v_house_access and public.inventory_item_is_mobile_home_storage(v_storage.item_name, v_storage.item_type))
+        or (v_stable_access and public.inventory_item_is_caged_wagon_storage(v_storage.item_name, v_storage.item_type)) then
+        insert into public.mobile_storage_access_permissions(storage_item_id, owner_user_id, grantee_user_id)
+        values (p_home_id, p_owner_user_id, v_grantee);
+      end if;
+    else
+      if (v_house_access and v_house.inventory_slots > 0) or (v_stable_access and v_house.stable_slots > 0) then
+        insert into public.house_unit_access_permissions(house_id, grantee_user_id, can_access_house, can_access_stable)
+        values (p_home_id, v_grantee, v_house_access and v_house.inventory_slots > 0, v_stable_access and v_house.stable_slots > 0);
+      end if;
+    end if;
+  end loop;
+
+  return public.get_player_homes(p_session_token, p_owner_user_id, p_home_id, p_home_source);
+end;
+$$;
+
+create or replace function public.add_home_inventory_item(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_home_id uuid,
+  p_parent_item_id uuid,
+  p_slot_index integer,
+  p_item_name text,
+  p_item_type text,
+  p_rarity text,
+  p_quantity numeric,
+  p_is_storage boolean default false,
+  p_storage_capacity integer default 0,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false,
+  p_potion_strength text default null,
+  p_potion_property text default null,
+  p_potion_quality text default null,
+  p_item_description text default null,
+  p_is_accessory boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_house public.player_houses%rowtype;
+  v_catalog public.item_catalog%rowtype;
+  v_item public.house_inventory_items%rowtype;
+  v_target public.house_inventory_items%rowtype;
+  v_name text := public.normalize_item_name(p_item_name);
+  v_type text;
+  v_rarity public.item_rarity;
+  v_quantity numeric;
+  v_modifiers jsonb;
+  v_material text;
+  v_description text;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can add items directly to a home.'; end if;
+  select * into v_house from public.player_houses where id = p_home_id and owner_user_id = p_owner_user_id;
+  if v_house.id is null then raise exception 'House or stable not found.'; end if;
+  if length(trim(coalesce(v_name, ''))) = 0 then raise exception 'Item name is required.'; end if;
+
+  select * into v_catalog from public.item_catalog where item_key = public.catalog_key_for_name(v_name) limit 1;
+  v_type := public.normalize_item_type(coalesce(nullif(p_item_type, ''), v_catalog.item_type, 'misc'));
+  v_rarity := coalesce(nullif(p_rarity, ''), v_catalog.rarity::text, 'Common')::public.item_rarity;
+  v_quantity := public.assert_valid_item_quantity(v_name, v_type, greatest(0.5, coalesce(p_quantity, 1)));
+  v_modifiers := case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(v_catalog.default_modifiers, '{}'::jsonb) || coalesce(p_modifiers, '{}'::jsonb) else coalesce(v_catalog.default_modifiers, '{}'::jsonb) end;
+  v_material := coalesce(nullif(trim(p_material), ''), v_catalog.material, '');
+  v_description := left(trim(coalesce(p_item_description, v_catalog.item_description, '')), 1500);
+
+  perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, p_slot_index, v_type);
+  if p_parent_item_id is not null and not exists (
+    select 1 from public.house_inventory_items parent
+    where parent.id = p_parent_item_id and parent.house_id = v_house.id and parent.is_storage
+  ) then raise exception 'Storage container not found in this home.'; end if;
+
+  select * into v_target from public.house_inventory_items target
+  where target.house_id = v_house.id
+    and coalesce(target.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
+    and target.slot_index = p_slot_index;
+
+  if v_target.id is not null then
+    if not coalesce(p_is_storage, false) and not v_target.is_storage and v_type <> 'pet'
+      and lower(public.normalize_item_name(v_target.item_name)) = lower(v_name)
+      and public.normalize_item_type(v_target.item_type) = v_type
+      and v_target.rarity = v_rarity
+      and coalesce(v_target.enchantment, '') = coalesce(nullif(trim(p_enchantment), ''), '')
+      and coalesce(v_target.material, '') = coalesce(v_material, '')
+      and v_target.modifiers = v_modifiers
+      and public.item_catalog_stackable(v_name, v_type)
+    then
+      update public.house_inventory_items set quantity = quantity + v_quantity where id = v_target.id returning * into v_item;
+      return public.house_item_record_to_json(v_item);
+    end if;
+    raise exception 'That home slot is already occupied.';
+  end if;
+
+  insert into public.house_inventory_items (
+    house_id, owner_user_id, parent_item_id, slot_index, item_name, item_description, item_type, rarity, quantity,
+    is_accessory, is_storage, storage_capacity, modifiers, enchantment, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality
+  ) values (
+    v_house.id, p_owner_user_id, p_parent_item_id, p_slot_index, v_name, v_description, v_type, v_rarity, v_quantity,
+    coalesce(p_is_accessory, false), coalesce(p_is_storage, false),
+    case when coalesce(p_is_storage, false) then greatest(1, coalesce(nullif(p_storage_capacity, 0), v_catalog.storage_capacity, 1)) else 0 end,
+    v_modifiers, nullif(trim(p_enchantment), ''), v_material, least(3, greatest(0, coalesce(p_enhancement_count, 0))),
+    coalesce(p_is_two_handed, false) or coalesce(v_catalog.is_two_handed, false),
+    nullif(trim(p_potion_strength), ''), nullif(trim(p_potion_property), ''), nullif(trim(p_potion_quality), '')
+  ) returning * into v_item;
+  return public.house_item_record_to_json(v_item);
+end;
+$$;
+
+create or replace function public.move_inventory_item_to_home(
+  p_session_token text,
+  p_item_id uuid,
+  p_home_id uuid default null,
+  p_home_source text default null,
+  p_slot_index integer default null,
+  p_parent_item_id uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_storage public.inventory_items%rowtype;
+  v_storage_character public.characters%rowtype;
+  v_house_target public.house_inventory_items%rowtype;
+  v_mobile_target public.inventory_items%rowtype;
+  v_candidate record;
+  v_home_id uuid := p_home_id;
+  v_home_source text := case when p_home_source in ('static', 'mobile') then p_home_source else null end;
+  v_slot integer;
+  v_capacity integer;
+  v_is_pet boolean;
+  v_found boolean := false;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_item from public.inventory_items where id = p_item_id;
+  if v_item.id is null then raise exception 'Item not found.'; end if;
+  v_character := public.assert_inventory_access(v_profile, v_item.character_id, false);
+  if v_character.owner_user_id is null then raise exception 'That character is not assigned to a player home.'; end if;
+  v_is_pet := public.normalize_item_type(v_item.item_type) = 'pet';
+  if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty this storage item before sending it to another home.';
+  end if;
+
+  if v_home_id is null then
+    for v_candidate in
+      with candidates as (
+        select house.id, 'static'::text as source,
+          case when main.home_source = 'static' and main.home_id = house.id then 0 else 10 end
+            + case when house.house_kind = 'house' then 0 else 2 end as priority
+        from public.player_houses house
+        left join public.player_main_homes main on main.owner_user_id = house.owner_user_id
+        where house.owner_user_id = v_character.owner_user_id
+          and (v_profile.role = 'dm'::public.user_role or not house.is_locked)
+          and ((v_is_pet and house.stable_slots > 0) or (not v_is_pet and house.inventory_slots > 0))
+        union all
+        select storage.id, 'mobile',
+          case when main.home_source = 'mobile' and main.home_id = storage.id then 0 else 11 end
+        from public.inventory_items storage
+        join public.characters owner_character on owner_character.id = storage.character_id
+        left join public.player_main_homes main on main.owner_user_id = owner_character.owner_user_id
+        where owner_character.owner_user_id = v_character.owner_user_id
+          and storage.is_storage and storage.parent_item_id is null and storage.loadout_slot is null
+          and ((v_is_pet and public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+            or (not v_is_pet and public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)))
+      )
+      select * from candidates order by priority, source, id
+    loop
+      if v_candidate.source = 'static' then
+        select * into v_house from public.player_houses where id = v_candidate.id;
+        if not v_is_pet and not v_item.is_storage then
+          select * into v_house_target from public.house_inventory_items target
+          where target.house_id = v_house.id and target.parent_item_id is null
+            and lower(public.normalize_item_name(target.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+            and public.normalize_item_type(target.item_type) = public.normalize_item_type(v_item.item_type)
+            and target.rarity = v_item.rarity
+            and coalesce(target.enchantment, '') = coalesce(v_item.enchantment, '')
+            and coalesce(target.rune_name, '') = coalesce(v_item.rune_name, '')
+            and coalesce(target.material, '') = coalesce(v_item.material, '')
+            and coalesce(target.potion_strength, '') = coalesce(v_item.potion_strength, '')
+            and coalesce(target.potion_property, '') = coalesce(v_item.potion_property, '')
+            and coalesce(target.potion_quality, '') = coalesce(v_item.potion_quality, '')
+            and target.enhancement_count = v_item.enhancement_count
+            and target.is_two_handed = v_item.is_two_handed
+            and target.is_accessory = v_item.is_accessory
+            and target.modifiers = v_item.modifiers
+            and not target.is_storage
+            and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
+          order by target.slot_index limit 1;
+        end if;
+        if v_house_target.id is not null then v_found := true;
+        else
+          v_slot := case when v_is_pet then (
+            select slot from generate_series(public.house_stable_slot_offset(), public.house_stable_slot_offset() + v_house.stable_slots - 1) slot
+            where not exists (select 1 from public.house_inventory_items occupied where occupied.house_id = v_house.id and occupied.parent_item_id is null and occupied.slot_index = slot)
+            order by slot limit 1
+          ) else (
+            select slot from generate_series(0, v_house.inventory_slots - 1) slot
+            where not exists (select 1 from public.house_inventory_items occupied where occupied.house_id = v_house.id and occupied.parent_item_id is null and occupied.slot_index = slot)
+            order by slot limit 1
+          ) end;
+          v_found := v_slot is not null;
+        end if;
+      else
+        select storage, owner_character into v_storage, v_storage_character
+        from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
+        where storage.id = v_candidate.id;
+        if not v_is_pet and not v_item.is_storage then
+          select * into v_mobile_target from public.inventory_items target
+          where target.character_id = v_storage.character_id and target.parent_item_id = v_storage.id
+            and target.loadout_slot is null and public.inventory_items_stackable(target, v_item)
+          order by target.slot_index limit 1;
+        end if;
+        if v_mobile_target.id is not null then v_found := true;
+        else
+          v_slot := public.find_first_free_inventory_slot(v_storage.character_id, v_storage.id, v_storage.storage_capacity);
+          v_found := v_slot is not null;
+        end if;
+      end if;
+      if v_found then v_home_id := v_candidate.id; v_home_source := v_candidate.source; exit; end if;
+      v_house_target.id := null; v_mobile_target.id := null; v_slot := null;
+    end loop;
+    if v_home_id is null then
+      raise exception using message = case when v_is_pet then 'Every stable is full or unavailable.' else 'Every house is full or unavailable.' end;
+    end if;
+  end if;
+
+  if v_home_source = 'mobile' then
+    select storage, owner_character into v_storage, v_storage_character
+    from public.inventory_items storage join public.characters owner_character on owner_character.id = storage.character_id
+    where storage.id = v_home_id and owner_character.owner_user_id = v_character.owner_user_id
+      and storage.is_storage and storage.parent_item_id is null and storage.loadout_slot is null;
+    if v_storage.id is null then raise exception 'Mobile home or stable not found.'; end if;
+    if v_is_pet and not public.inventory_item_is_caged_wagon_storage(v_storage.item_name, v_storage.item_type) then raise exception 'Animals require a stable or Caged Wagon.'; end if;
+    if not v_is_pet and not public.inventory_item_is_mobile_home_storage(v_storage.item_name, v_storage.item_type) then raise exception 'Items require a house or Wagon Home.'; end if;
+
+    if p_parent_item_id is null then p_parent_item_id := v_storage.id; end if;
+    if p_parent_item_id <> v_storage.id and not exists (
+      with recursive ancestry as (
+        select nested.id, nested.parent_item_id from public.inventory_items nested where nested.id = p_parent_item_id and nested.character_id = v_storage.character_id and nested.is_storage
+        union all select parent.id, parent.parent_item_id from public.inventory_items parent join ancestry child on child.parent_item_id = parent.id
+      ) select 1 from ancestry where id = v_storage.id
+    ) then raise exception 'That container is not inside the selected home.'; end if;
+    if v_is_pet and p_parent_item_id <> v_storage.id then raise exception 'Animals can only be placed directly into stable slots.'; end if;
+    v_capacity := case when p_parent_item_id = v_storage.id then v_storage.storage_capacity else (select storage_capacity from public.inventory_items where id = p_parent_item_id) end;
+
+    if p_slot_index is null and not v_is_pet and not v_item.is_storage then
+      select * into v_mobile_target from public.inventory_items target
+      where target.character_id = v_storage.character_id and target.parent_item_id = p_parent_item_id
+        and target.loadout_slot is null and public.inventory_items_stackable(target, v_item)
+      order by target.slot_index limit 1;
+      if v_mobile_target.id is not null then
+        update public.inventory_items set quantity = quantity + v_item.quantity where id = v_mobile_target.id;
+        delete from public.inventory_items where id = v_item.id;
+        return public.get_player_homes(p_session_token, v_character.owner_user_id, v_storage.id, 'mobile');
+      end if;
+    end if;
+    v_slot := coalesce(p_slot_index, public.find_first_free_inventory_slot(v_storage.character_id, p_parent_item_id, v_capacity));
+    if v_slot is null or v_slot < 0 or v_slot >= v_capacity then raise exception 'No open slot in that home.'; end if;
+    select * into v_mobile_target from public.inventory_items target
+    where target.character_id = v_storage.character_id and target.parent_item_id = p_parent_item_id and target.slot_index = v_slot and target.loadout_slot is null;
+    if v_mobile_target.id is not null then
+      if public.inventory_items_stackable(v_mobile_target, v_item) then
+        update public.inventory_items set quantity = quantity + v_item.quantity where id = v_mobile_target.id;
+        delete from public.inventory_items where id = v_item.id;
+        return public.get_player_homes(p_session_token, v_character.owner_user_id, v_storage.id, 'mobile');
+      end if;
+      raise exception 'That home slot is already occupied.';
+    end if;
+    with recursive moved as (
+      select child.id from public.inventory_items child where child.id = v_item.id
+      union all select child.id from public.inventory_items child join moved parent on child.parent_item_id = parent.id
+    ) update public.inventory_items set character_id = v_storage.character_id where id in (select id from moved);
+    update public.inventory_items set parent_item_id = p_parent_item_id, slot_index = v_slot, loadout_slot = null where id = v_item.id;
+    return public.get_player_homes(p_session_token, v_character.owner_user_id, v_storage.id, 'mobile');
+  end if;
+
+  select * into v_house from public.player_houses where id = v_home_id and owner_user_id = v_character.owner_user_id;
+  if v_house.id is null then raise exception 'House or stable not found.'; end if;
+  if v_house.is_locked and v_profile.role <> 'dm'::public.user_role then raise exception 'That property is locked by the Dungeon Master.'; end if;
+  if v_is_pet and v_house.stable_slots <= 0 then raise exception 'Animals require a stable or Caged Wagon.'; end if;
+  if not v_is_pet and v_house.inventory_slots <= 0 then raise exception 'Items require a house or Wagon Home.'; end if;
+  if p_parent_item_id is not null and not exists (select 1 from public.house_inventory_items parent where parent.id = p_parent_item_id and parent.house_id = v_house.id and parent.is_storage) then
+    raise exception 'That container is not inside the selected home.';
+  end if;
+
+  if p_slot_index is null and not v_is_pet and not v_item.is_storage then
+    select * into v_house_target from public.house_inventory_items target
+    where target.house_id = v_house.id and target.parent_item_id is not distinct from p_parent_item_id
+      and lower(public.normalize_item_name(target.item_name)) = lower(public.normalize_item_name(v_item.item_name))
+      and public.normalize_item_type(target.item_type) = public.normalize_item_type(v_item.item_type)
+      and target.rarity = v_item.rarity and coalesce(target.enchantment, '') = coalesce(v_item.enchantment, '')
+      and coalesce(target.rune_name, '') = coalesce(v_item.rune_name, '') and coalesce(target.material, '') = coalesce(v_item.material, '')
+      and target.modifiers = v_item.modifiers and not target.is_storage and public.item_catalog_stackable(v_item.item_name, v_item.item_type)
+    order by target.slot_index limit 1;
+    if v_house_target.id is not null then
+      update public.house_inventory_items set quantity = quantity + v_item.quantity where id = v_house_target.id;
+      delete from public.inventory_items where id = v_item.id;
+      return public.get_player_homes(p_session_token, v_character.owner_user_id, v_house.id, 'static');
+    end if;
+  end if;
+
+  v_capacity := case when p_parent_item_id is not null then (select storage_capacity from public.house_inventory_items where id = p_parent_item_id)
+    when v_is_pet then v_house.stable_slots else v_house.inventory_slots end;
+  v_slot := p_slot_index;
+  if v_slot is null then
+    v_slot := case when v_is_pet and p_parent_item_id is null then (
+      select slot from generate_series(public.house_stable_slot_offset(), public.house_stable_slot_offset() + v_house.stable_slots - 1) slot
+      where not exists (select 1 from public.house_inventory_items occupied where occupied.house_id = v_house.id and occupied.parent_item_id is null and occupied.slot_index = slot)
+      order by slot limit 1
+    ) else (
+      select slot from generate_series(0, v_capacity - 1) slot
+      where not exists (select 1 from public.house_inventory_items occupied where occupied.house_id = v_house.id and occupied.parent_item_id is not distinct from p_parent_item_id and occupied.slot_index = slot)
+      order by slot limit 1
+    ) end;
+  end if;
+  if v_slot is null then raise exception using message = case when v_is_pet then 'No open stable slot.' else 'No open house inventory slot.' end; end if;
+  perform public.assert_house_item_slot_capacity(v_house, p_parent_item_id, v_slot, v_item.item_type);
+  select * into v_house_target from public.house_inventory_items target
+  where target.house_id = v_house.id and target.parent_item_id is not distinct from p_parent_item_id and target.slot_index = v_slot;
+  if v_house_target.id is not null then
+    raise exception 'That home slot is already occupied.';
+  end if;
+
+  insert into public.house_inventory_items (
+    house_id, owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description, item_type, rarity, quantity,
+    is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form
+  ) values (
+    v_house.id, v_character.owner_user_id, p_parent_item_id, v_slot, v_item.item_name, v_item.display_name, v_item.item_description,
+    v_item.item_type, v_item.rarity, v_item.quantity, v_item.is_accessory, v_item.is_storage, v_item.storage_capacity,
+    v_item.modifiers, v_item.enchantment, v_item.rune_name, v_item.material, v_item.enhancement_count,
+    v_item.is_two_handed, v_item.potion_strength, v_item.potion_property, v_item.potion_quality, v_item.spell_book_form
+  );
+  delete from public.inventory_items where id = v_item.id;
+  return public.get_player_homes(p_session_token, v_character.owner_user_id, v_house.id, 'static');
+end;
+$$;
+
+create or replace function public.move_home_item_to_inventory(
+  p_session_token text,
+  p_house_item_id uuid,
+  p_character_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_source public.house_inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_slot integer;
+  v_storage_kind text;
+  v_storage_should_activate boolean := false;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_source from public.house_inventory_items where id = p_house_item_id for update;
+  if v_source.id is null then raise exception 'Home item not found.'; end if;
+  select * into v_house from public.player_houses where id = v_source.house_id;
+  if v_house.id is null then raise exception 'The item home was not found.'; end if;
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+
+  if not public.static_home_access(v_profile, v_house, public.normalize_item_type(v_source.item_type) = 'pet') then
+    raise exception 'You do not have permission to use this property.';
+  end if;
+  if v_profile.role <> 'dm'::public.user_role
+    and v_character.owner_user_id is distinct from v_house.owner_user_id
+    and v_character.owner_user_id is distinct from v_profile.id then
+    raise exception 'That character cannot receive items from this property.';
+  end if;
+  if v_source.is_storage and exists (select 1 from public.house_inventory_items child where child.parent_item_id = v_source.id) then
+    raise exception 'Empty this storage item before taking it from the home.';
+  end if;
+
+  if public.normalize_item_type(v_source.item_type) = 'pet' then
+    perform public.place_pet_item_for_character(
+      v_character.id, v_source.item_name, v_source.display_name, v_source.item_description,
+      v_source.rarity, 1, v_source.is_accessory, v_source.modifiers, v_source.enchantment,
+      v_source.rune_name, v_source.material, v_source.enhancement_count, v_source.is_two_handed
+    );
+    delete from public.house_inventory_items where id = v_source.id;
+    return public.get_character_inventory(p_session_token, v_character.id);
+  end if;
+
+  select * into v_target from public.inventory_items target
+  where target.character_id = v_character.id and target.parent_item_id is null and target.loadout_slot is null
+    and lower(public.normalize_item_name(target.item_name)) = lower(public.normalize_item_name(v_source.item_name))
+    and public.normalize_item_type(target.item_type) = public.normalize_item_type(v_source.item_type)
+    and target.rarity = v_source.rarity
+    and coalesce(target.enchantment, '') = coalesce(v_source.enchantment, '')
+    and coalesce(target.rune_name, '') = coalesce(v_source.rune_name, '')
+    and coalesce(target.material, '') = coalesce(v_source.material, '')
+    and coalesce(target.potion_strength, '') = coalesce(v_source.potion_strength, '')
+    and coalesce(target.potion_property, '') = coalesce(v_source.potion_property, '')
+    and coalesce(target.potion_quality, '') = coalesce(v_source.potion_quality, '')
+    and target.enhancement_count = v_source.enhancement_count
+    and target.is_two_handed = v_source.is_two_handed
+    and target.is_accessory = v_source.is_accessory
+    and target.modifiers = v_source.modifiers
+    and not target.is_storage and not v_source.is_storage
+    and public.item_catalog_stackable(v_source.item_name, v_source.item_type)
+  order by target.slot_index limit 1;
+  if v_target.id is not null then
+    update public.inventory_items set quantity = quantity + v_source.quantity where id = v_target.id;
+    delete from public.house_inventory_items where id = v_source.id;
+    return public.get_character_inventory(p_session_token, v_character.id);
+  end if;
+
+  v_storage_kind := public.additional_storage_kind(v_source.item_name, v_source.item_type);
+  v_storage_should_activate := v_source.is_storage and v_storage_kind is not null and not exists (
+    select 1 from public.inventory_items active_storage
+    where active_storage.character_id = v_character.id
+      and active_storage.parent_item_id is null
+      and active_storage.loadout_slot is null
+      and active_storage.is_storage
+      and active_storage.storage_active
+      and public.additional_storage_kind(active_storage.item_name, active_storage.item_type) = v_storage_kind
+  );
+  v_slot := case
+    when v_storage_should_activate then public.next_storage_container_slot(v_character.id)
+    else public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots)
+  end;
+  if v_slot is null then raise exception 'No open inventory slot.'; end if;
+  insert into public.inventory_items (
+    character_id, parent_item_id, slot_index, item_name, display_name, item_description, item_type, rarity, quantity,
+    is_accessory, is_storage, storage_active, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form
+  ) values (
+    v_character.id, null, v_slot, v_source.item_name, v_source.display_name, v_source.item_description,
+    v_source.item_type, v_source.rarity, v_source.quantity, v_source.is_accessory, v_source.is_storage,
+    v_storage_should_activate, v_source.storage_capacity, v_source.modifiers, v_source.enchantment, v_source.rune_name, v_source.material,
+    v_source.enhancement_count, v_source.is_two_handed, v_source.potion_strength, v_source.potion_property,
+    v_source.potion_quality, v_source.spell_book_form
+  ) returning * into v_item;
+  delete from public.house_inventory_items where id = v_source.id;
+  return public.get_character_inventory(p_session_token, v_character.id);
+end;
+$$;
+
+create or replace function public.add_home_property(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_home_id uuid,
+  p_caretaker_character_id uuid,
+  p_name text,
+  p_property_type text,
+  p_location text,
+  p_is_pet boolean default false,
+  p_slot_index integer default 0,
+  p_storage_capacity integer default 0
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_house public.player_houses%rowtype;
+  v_property public.campaign_properties%rowtype;
+  v_caretaker public.characters%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can add property records.'; end if;
+  select * into v_house from public.player_houses where id = p_home_id and owner_user_id = p_owner_user_id;
+  if v_house.id is null then raise exception 'House not found.'; end if;
+  if v_house.house_kind <> 'house' then raise exception 'Property records belong to houses, not standalone stables.'; end if;
+  if length(trim(coalesce(p_name, ''))) = 0 then raise exception 'Property name is required.'; end if;
+  if coalesce(p_slot_index, 0) < 0 or coalesce(p_slot_index, 0) >= v_house.property_slots then raise exception 'Property slot is outside the house capacity.'; end if;
+  if exists (select 1 from public.campaign_properties where house_id = v_house.id and slot_index = p_slot_index) then raise exception 'That property slot is occupied.'; end if;
+  if p_caretaker_character_id is not null then
+    select * into v_caretaker from public.characters where id = p_caretaker_character_id;
+    if v_caretaker.id is null or v_caretaker.owner_user_id is distinct from p_owner_user_id then raise exception 'Property caretaker must belong to that home owner.'; end if;
+  end if;
+
+  insert into public.campaign_properties (
+    house_id, owner_user_id, caretaker_character_id, property_name, property_type,
+    property_location, is_pet, slot_index, storage_capacity
+  ) values (
+    v_house.id, p_owner_user_id, case when p_location = 'with_character' then p_caretaker_character_id else null end,
+    trim(p_name), coalesce(nullif(p_property_type, ''), 'other'), coalesce(nullif(p_location, ''), 'at_house'),
+    coalesce(p_is_pet, false) or coalesce(nullif(p_property_type, ''), 'other') = 'pet',
+    greatest(0, coalesce(p_slot_index, 0)), greatest(0, coalesce(p_storage_capacity, 0))
+  ) returning * into v_property;
+  return public.property_record_to_json(v_property);
+end;
+$$;
+
+create or replace function public.get_required_player_house(p_owner_user_id uuid)
+returns public.player_houses
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_house public.player_houses%rowtype;
+begin
+  if p_owner_user_id is null or not exists (select 1 from public.profiles where id = p_owner_user_id) then raise exception 'House owner not found.'; end if;
+  select house.* into v_house
+  from public.player_houses house
+  left join public.player_main_homes main
+    on main.owner_user_id = house.owner_user_id and main.home_source = 'static' and main.home_id = house.id
+  where house.owner_user_id = p_owner_user_id
+  order by (main.home_id is not null) desc, (house.house_kind = 'house') desc, house.created_order, house.created_at, house.id
+  limit 1;
+  if v_house.id is null then raise exception 'House not found. The Dungeon Master must create it first.'; end if;
+  return v_house;
+end;
+$$;
+
+create or replace function public.get_player_house(p_session_token text, p_owner_user_id uuid)
+returns jsonb
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  select public.get_player_homes(p_session_token, p_owner_user_id, null, null)
+$$;
+
+create or replace function public.place_pet_item_in_caged_wagon_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_storage public.inventory_items%rowtype;
+  v_pet public.inventory_items%rowtype;
+  v_slot integer;
+  v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then raise exception 'Receiving character was not found.'; end if;
+  if v_character.owner_user_id is null then return null; end if;
+  if v_quantity <> 1 then raise exception 'Pets must be moved one at a time.'; end if;
+
+  select storage, free_slot.slot into v_storage, v_slot
+  from public.inventory_items storage
+  join public.characters owner_character on owner_character.id = storage.character_id
+  cross join lateral (
+    select candidate.slot
+    from generate_series(0, greatest(0, storage.storage_capacity) - 1) candidate(slot)
+    where not exists (
+      select 1 from public.inventory_items occupied
+      where occupied.character_id = storage.character_id
+        and occupied.parent_item_id = storage.id
+        and occupied.loadout_slot is null
+        and occupied.slot_index = candidate.slot
+    )
+    order by candidate.slot
+    limit 1
+  ) free_slot
+  where owner_character.owner_user_id = v_character.owner_user_id
+    and storage.parent_item_id is null
+    and storage.loadout_slot is null
+    and storage.is_storage
+    and public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type)
+  order by owner_character.name, storage.slot_index, storage.created_at, storage.id
+  limit 1;
+  if v_storage.id is null or v_slot is null then return null; end if;
+
+  insert into public.inventory_items (
+    character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
+    item_type, rarity, quantity, is_accessory, is_storage, storage_active, storage_capacity, modifiers,
+    enchantment, rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
+  ) values (
+    v_storage.character_id, v_storage.id, v_slot, null, public.normalize_item_name(p_item_name),
+    nullif(left(trim(coalesce(p_display_name, '')), 80), ''), left(trim(coalesce(p_item_description, '')), 1500),
+    'pet', p_rarity, 1, coalesce(p_is_accessory, false), false, false, 0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    nullif(trim(coalesce(p_enchantment, '')), ''), nullif(trim(coalesce(p_rune_name, '')), ''), trim(coalesce(p_material, '')),
+    least(3, greatest(0, coalesce(p_enhancement_count, 0))), coalesce(p_is_two_handed, false), null, null, null
+  ) returning * into v_pet;
+  return public.inventory_item_record_to_json(v_pet);
+end;
+$$;
+
+create or replace function public.place_pet_item_in_stable_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_house public.player_houses%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_caged_pet jsonb;
+  v_slot integer;
+  v_quantity numeric := public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1)));
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then raise exception 'Receiving character was not found.'; end if;
+  if v_character.owner_user_id is null then raise exception 'That character is not assigned to a player stable.'; end if;
+  if v_quantity <> 1 then raise exception 'Pets must be moved one at a time.'; end if;
+
+  v_caged_pet := public.place_pet_item_in_caged_wagon_for_character(
+    p_character_id, p_item_name, p_display_name, p_item_description, p_rarity, p_quantity,
+    p_is_accessory, p_modifiers, p_enchantment, p_rune_name, p_material, p_enhancement_count, p_is_two_handed
+  );
+  if v_caged_pet is not null then return v_caged_pet; end if;
+
+  select house, free_slot.slot into v_house, v_slot
+  from public.player_houses house
+  cross join lateral (
+    select candidate.slot
+    from generate_series(public.house_stable_slot_offset(), public.house_stable_slot_offset() + house.stable_slots - 1) candidate(slot)
+    where not exists (
+      select 1 from public.house_inventory_items occupied
+      where occupied.house_id = house.id and occupied.parent_item_id is null and occupied.slot_index = candidate.slot
+    )
+    order by candidate.slot limit 1
+  ) free_slot
+  where house.owner_user_id = v_character.owner_user_id and house.stable_slots > 0 and not house.is_locked
+  order by case when house.house_kind = 'stable' then 0 else 1 end, house.created_order, house.created_at, house.id
+  limit 1;
+  if v_house.id is null or v_slot is null then raise exception 'No open stable or Caged Wagon slot.'; end if;
+
+  insert into public.house_inventory_items (
+    house_id, owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description,
+    item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment,
+    rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
+  ) values (
+    v_house.id, v_character.owner_user_id, null, v_slot, public.normalize_item_name(p_item_name),
+    nullif(left(trim(coalesce(p_display_name, '')), 80), ''), left(trim(coalesce(p_item_description, '')), 1500),
+    'pet', p_rarity, 1, coalesce(p_is_accessory, false), false, 0,
+    case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+    nullif(trim(coalesce(p_enchantment, '')), ''), nullif(trim(coalesce(p_rune_name, '')), ''), trim(coalesce(p_material, '')),
+    least(3, greatest(0, coalesce(p_enhancement_count, 0))), coalesce(p_is_two_handed, false), null, null, null
+  ) returning * into v_house_item;
+  return public.house_item_record_to_json(v_house_item);
+end;
+$$;
+
+create or replace function public.place_pet_item_for_character(
+  p_character_id uuid,
+  p_item_name text,
+  p_display_name text,
+  p_item_description text,
+  p_rarity public.item_rarity,
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count int default 0,
+  p_is_two_handed boolean default false
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_character public.characters%rowtype;
+  v_pet public.inventory_items%rowtype;
+begin
+  select * into v_character from public.characters where id = p_character_id;
+  if v_character.id is null then raise exception 'Receiving character was not found.'; end if;
+  if public.assert_valid_item_quantity(p_item_name, 'pet', greatest(1, coalesce(p_quantity, 1))) <> 1 then raise exception 'Pets must be moved one at a time.'; end if;
+  if not exists (select 1 from public.inventory_items item where item.character_id = v_character.id and item.loadout_slot = 'active-pet') then
+    insert into public.inventory_items (
+      character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description,
+      item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment,
+      rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality
+    ) values (
+      v_character.id, null, 0, 'active-pet', public.normalize_item_name(p_item_name),
+      nullif(left(trim(coalesce(p_display_name, '')), 80), ''), left(trim(coalesce(p_item_description, '')), 1500),
+      'pet', p_rarity, 1, coalesce(p_is_accessory, false), false, 0,
+      case when jsonb_typeof(coalesce(p_modifiers, '{}'::jsonb)) = 'object' then coalesce(p_modifiers, '{}'::jsonb) else '{}'::jsonb end,
+      nullif(trim(coalesce(p_enchantment, '')), ''), nullif(trim(coalesce(p_rune_name, '')), ''), trim(coalesce(p_material, '')),
+      least(3, greatest(0, coalesce(p_enhancement_count, 0))), coalesce(p_is_two_handed, false), null, null, null
+    ) returning * into v_pet;
+    return public.inventory_item_record_to_json(v_pet);
+  end if;
+  return public.place_pet_item_in_stable_for_character(
+    p_character_id, p_item_name, p_display_name, p_item_description, p_rarity, p_quantity,
+    p_is_accessory, p_modifiers, p_enchantment, p_rune_name, p_material, p_enhancement_count, p_is_two_handed
+  );
+end;
+$$;
+
+create or replace function public.update_mobile_home_item_state(
+  p_session_token text,
+  p_item_id uuid,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_root public.inventory_items%rowtype;
+  v_owner_character public.characters%rowtype;
+  v_parent public.inventory_items%rowtype;
+  v_target public.inventory_items%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_parent_item_id uuid;
+  v_original_parent_item_id uuid;
+  v_slot_index integer;
+  v_original_slot_index integer;
+  v_temporary_slot_index integer;
+  v_capacity integer;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+
+  select * into v_item from public.inventory_items where id = p_item_id for update;
+  if v_item.id is null then raise exception 'Mobile home item not found.'; end if;
+
+  with recursive ancestry as (
+    select item.* from public.inventory_items item where item.id = v_item.id
+    union all
+    select parent.*
+    from public.inventory_items parent
+    join ancestry child on child.parent_item_id = parent.id
+  )
+  select * into v_root
+  from ancestry
+  where parent_item_id is null
+    and loadout_slot is null
+    and is_storage
+    and (
+      public.inventory_item_is_mobile_home_storage(item_name, item_type)
+      or public.inventory_item_is_caged_wagon_storage(item_name, item_type)
+    )
+  limit 1;
+
+  if v_root.id is null or v_root.id = v_item.id then
+    raise exception 'That item is not inside a Wagon Home or Caged Wagon.';
+  end if;
+
+  select * into v_owner_character from public.characters where id = v_root.character_id;
+  if v_owner_character.id is null then raise exception 'Mobile home owner not found.'; end if;
+  if v_profile.role <> 'dm'::public.user_role
+    and v_owner_character.owner_user_id is distinct from v_profile.id
+    and not exists (
+      select 1 from public.mobile_storage_access_permissions access
+      where access.storage_item_id = v_root.id
+        and access.owner_user_id = v_owner_character.owner_user_id
+        and access.grantee_user_id = v_profile.id
+    )
+  then
+    raise exception 'You do not have permission to organize this mobile property.';
+  end if;
+
+  if v_patch ? 'displayName' then
+    if public.normalize_item_type(v_item.item_type) <> 'pet' then
+      raise exception 'Only animals can be named.';
+    end if;
+    update public.inventory_items
+    set display_name = nullif(left(trim(coalesce(v_patch->>'displayName', '')), 80), '')
+    where id = v_item.id
+    returning * into v_item;
+  end if;
+
+  if v_patch ? 'slotIndex' or v_patch ? 'parentItemId' then
+    if v_patch - 'slotIndex' - 'parentItemId' - 'displayName' <> '{}'::jsonb then
+      raise exception 'Only the Dungeon Master can edit item details.';
+    end if;
+
+    v_original_parent_item_id := v_item.parent_item_id;
+    v_original_slot_index := v_item.slot_index;
+    v_parent_item_id := case
+      when v_patch ? 'parentItemId' then nullif(v_patch->>'parentItemId', '')::uuid
+      else v_item.parent_item_id
+    end;
+    v_slot_index := case when v_patch ? 'slotIndex' then (v_patch->>'slotIndex')::integer else v_item.slot_index end;
+
+    if v_parent_item_id is null then
+      raise exception 'Mobile property contents must remain inside their Wagon Home or Caged Wagon.';
+    end if;
+    if v_parent_item_id = v_item.id then raise exception 'An item cannot be moved inside itself.'; end if;
+    if v_parent_item_id is not distinct from v_original_parent_item_id and v_slot_index = v_original_slot_index then
+      return public.inventory_item_record_to_json(v_item);
+    end if;
+
+    select * into v_parent from public.inventory_items where id = v_parent_item_id;
+    if v_parent.id is null or v_parent.character_id is distinct from v_root.character_id or not public.inventory_item_can_hold_children(v_parent) then
+      raise exception 'That storage destination is not available.';
+    end if;
+
+    if v_parent.id <> v_root.id and not exists (
+      with recursive parent_ancestry as (
+        select item.id, item.parent_item_id from public.inventory_items item where item.id = v_parent.id
+        union all
+        select parent.id, parent.parent_item_id
+        from public.inventory_items parent
+        join parent_ancestry child on child.parent_item_id = parent.id
+      )
+      select 1 from parent_ancestry where id = v_root.id
+    ) then
+      raise exception 'Items cannot be moved outside this mobile property.';
+    end if;
+
+    if exists (
+      with recursive descendants as (
+        select child.id from public.inventory_items child where child.parent_item_id = v_item.id
+        union all
+        select child.id from public.inventory_items child join descendants parent on child.parent_item_id = parent.id
+      )
+      select 1 from descendants where id = v_parent.id
+    ) then
+      raise exception 'A storage item cannot be moved inside one of its own contents.';
+    end if;
+
+    if public.inventory_item_is_caged_wagon_storage(v_parent.item_name, v_parent.item_type) then
+      if public.normalize_item_type(v_item.item_type) <> 'pet' then raise exception 'Only animals can be placed in a Caged Wagon.'; end if;
+    elsif public.normalize_item_type(v_item.item_type) = 'pet' then
+      raise exception 'Animals can only be placed in a Caged Wagon.';
+    end if;
+
+    v_capacity := greatest(0, v_parent.storage_capacity);
+    if v_slot_index < 0 or v_slot_index >= v_capacity then raise exception 'That storage slot does not exist.'; end if;
+
+    select * into v_target
+    from public.inventory_items target
+    where target.character_id = v_root.character_id
+      and target.parent_item_id = v_parent.id
+      and target.loadout_slot is null
+      and target.slot_index = v_slot_index
+      and target.id <> v_item.id
+    for update;
+
+    if v_target.id is not null then
+      if public.inventory_items_stackable(v_target, v_item) then
+        update public.inventory_items set quantity = quantity + v_item.quantity where id = v_target.id returning * into v_target;
+        delete from public.inventory_items where id = v_item.id;
+        return public.inventory_item_record_to_json(v_target);
+      end if;
+
+      select * into v_parent from public.inventory_items where id = v_original_parent_item_id;
+      if v_parent.id is null then raise exception 'The original mobile property container no longer exists.'; end if;
+      if public.inventory_item_is_caged_wagon_storage(v_parent.item_name, v_parent.item_type) then
+        if public.normalize_item_type(v_target.item_type) <> 'pet' then
+          raise exception 'Only animals can be swapped into a Caged Wagon.';
+        end if;
+      elsif public.normalize_item_type(v_target.item_type) = 'pet' then
+        raise exception 'Animals can only be swapped into a Caged Wagon.';
+      end if;
+
+      select coalesce(min(item.slot_index), 0) - 1 into v_temporary_slot_index
+      from public.inventory_items item
+      where item.character_id = v_root.character_id and item.parent_item_id = v_parent.id and item.loadout_slot is null;
+
+      update public.inventory_items
+      set slot_index = v_temporary_slot_index
+      where id = v_target.id;
+
+      update public.inventory_items
+      set parent_item_id = v_parent.id, slot_index = v_slot_index, loadout_slot = null
+      where id = v_item.id
+      returning * into v_item;
+
+      update public.inventory_items
+      set parent_item_id = v_original_parent_item_id, slot_index = v_original_slot_index, loadout_slot = null
+      where id = v_target.id;
+      return public.inventory_item_record_to_json(v_item);
+    end if;
+
+    update public.inventory_items
+    set parent_item_id = v_parent.id, slot_index = v_slot_index, loadout_slot = null
+    where id = v_item.id
+    returning * into v_item;
+  end if;
+
+  if v_patch - 'slotIndex' - 'parentItemId' - 'displayName' <> '{}'::jsonb then
+    if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can edit item details.'; end if;
+    raise exception 'Use the item editor to change item details.';
+  end if;
+
+  return public.inventory_item_record_to_json(v_item);
+end;
+$$;
+
+create or replace function public.clear_stale_mobile_main_home()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old_owner_user_id uuid;
+begin
+  if old.is_storage and (
+    public.inventory_item_is_mobile_home_storage(old.item_name, old.item_type)
+    or public.inventory_item_is_caged_wagon_storage(old.item_name, old.item_type)
+  ) then
+    select owner_user_id into v_old_owner_user_id from public.characters where id = old.character_id;
+    if tg_op = 'DELETE' then
+      delete from public.player_main_homes
+      where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
+    elsif new.character_id is distinct from old.character_id then
+      delete from public.player_main_homes
+      where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
+    end if;
+  end if;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists clear_stale_mobile_main_home_trigger on public.inventory_items;
+create trigger clear_stale_mobile_main_home_trigger
+before update of character_id or delete on public.inventory_items
+for each row execute function public.clear_stale_mobile_main_home();
+
+-- Retire the owner-wide, single-house mutation surface. All application writes use
+-- the property-specific functions above so one home can never overwrite another.
+drop function if exists public.update_player_house(text, uuid, jsonb);
+drop function if exists public.delete_player_house(text, uuid);
+drop function if exists public.set_player_house_permissions(text, uuid, jsonb);
+drop function if exists public.add_campaign_property(text, uuid, uuid, text, text, text, boolean, integer, integer);
+drop function if exists public.add_house_inventory_item(text, uuid, uuid, integer, text, text, text, numeric, boolean, integer, jsonb, text, text, integer, boolean, text, text, text, text, boolean);
+drop function if exists public.move_inventory_item_to_house_slot(text, uuid, integer, uuid);
+drop function if exists public.move_inventory_item_to_house(text, uuid);
+drop function if exists public.move_inventory_item_to_static_house(text, uuid, integer, uuid);
+drop function if exists public.move_house_item_to_inventory(text, uuid, uuid);
+drop function if exists public.move_inventory_item_to_home_wagon(text, uuid, integer, uuid);
+drop function if exists public.mobile_home_house_access_to_json(public.profiles, uuid, uuid);
+drop function if exists public.mobile_home_house_permissions_to_json(uuid);
+drop function if exists public.home_wagon_storage_for_owner(uuid);
+drop function if exists public.caged_wagon_storage_for_owner(uuid);
+
+create or replace function public.drop_mobile_home_item_quantity(
+  p_session_token text,
+  p_item_id uuid,
+  p_quantity numeric
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_root public.inventory_items%rowtype;
+  v_owner_character public.characters%rowtype;
+  v_drop_quantity numeric;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_item from public.inventory_items where id = p_item_id for update;
+  if v_item.id is null then raise exception 'Mobile home item not found.'; end if;
+
+  with recursive ancestry as (
+    select item.* from public.inventory_items item where item.id = v_item.id
+    union all
+    select parent.* from public.inventory_items parent join ancestry child on child.parent_item_id = parent.id
+  )
+  select * into v_root from ancestry
+  where parent_item_id is null and loadout_slot is null and is_storage
+    and (public.inventory_item_is_mobile_home_storage(item_name, item_type)
+      or public.inventory_item_is_caged_wagon_storage(item_name, item_type))
+  limit 1;
+  if v_root.id is null or v_root.id = v_item.id then raise exception 'That item is not inside a mobile property.'; end if;
+
+  select * into v_owner_character from public.characters where id = v_root.character_id;
+  if v_profile.role <> 'dm'::public.user_role
+    and v_owner_character.owner_user_id is distinct from v_profile.id
+    and not exists (
+      select 1 from public.mobile_storage_access_permissions access
+      where access.storage_item_id = v_root.id
+        and access.owner_user_id = v_owner_character.owner_user_id
+        and access.grantee_user_id = v_profile.id
+    )
+  then raise exception 'You do not have permission to use this mobile property.'; end if;
+
+  if v_item.is_storage and exists (select 1 from public.inventory_items child where child.parent_item_id = v_item.id) then
+    raise exception 'Empty this storage item before dropping it.';
+  end if;
+  v_drop_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, greatest(0.5, coalesce(p_quantity, 1)));
+  if v_drop_quantity >= v_item.quantity then
+    delete from public.inventory_items where id = v_item.id;
+    return null;
+  end if;
+  update public.inventory_items set quantity = quantity - v_drop_quantity where id = v_item.id returning * into v_item;
+  return public.inventory_item_record_to_json(v_item);
+end;
+$$;
+
+grant execute on function public.static_home_access(public.profiles, public.player_houses, boolean) to anon, authenticated;
+grant execute on function public.home_summary_json(public.player_houses, boolean) to anon, authenticated;
+grant execute on function public.mobile_home_summary_json(public.inventory_items, public.characters, boolean) to anon, authenticated;
+grant execute on function public.get_player_homes(text, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.save_player_home(text, uuid, uuid, text, jsonb) to anon, authenticated;
+grant execute on function public.delete_player_home(text, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.set_player_home_permissions(text, uuid, uuid, text, jsonb) to anon, authenticated;
+grant execute on function public.add_home_inventory_item(text, uuid, uuid, uuid, integer, text, text, text, numeric, boolean, integer, jsonb, text, text, integer, boolean, text, text, text, text, boolean) to anon, authenticated;
+grant execute on function public.move_inventory_item_to_home(text, uuid, uuid, text, integer, uuid) to anon, authenticated;
+grant execute on function public.move_home_item_to_inventory(text, uuid, uuid) to anon, authenticated;
+grant execute on function public.add_home_property(text, uuid, uuid, uuid, text, text, text, boolean, integer, integer) to anon, authenticated;
+grant execute on function public.get_required_player_house(uuid) to anon, authenticated;
+grant execute on function public.get_player_house(text, uuid) to anon, authenticated;
+grant execute on function public.place_pet_item_in_stable_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, integer, boolean) to anon, authenticated;
+grant execute on function public.place_pet_item_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, integer, boolean) to anon, authenticated;
+grant execute on function public.update_mobile_home_item_state(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.drop_mobile_home_item_quantity(text, uuid, numeric) to anon, authenticated;

@@ -15,7 +15,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('move_house_item_to_inventory', {
+    const { data, error } = await supabase.rpc('move_home_item_to_inventory', {
       p_session_token: token,
       p_house_item_id: id,
       p_character_id: characterId

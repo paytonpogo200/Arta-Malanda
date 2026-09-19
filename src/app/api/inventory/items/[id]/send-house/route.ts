@@ -10,21 +10,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
     const { id } = await context.params;
     const body = await request.json().catch(() => ({}));
-    const hasSlotIndex = body && typeof body === 'object' && 'slotIndex' in body;
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = hasSlotIndex
-      ? await supabase.rpc('move_inventory_item_to_house_slot', {
-        p_session_token: token,
-        p_item_id: id,
-        p_slot_index: Number(body.slotIndex ?? 0),
-        p_parent_item_id: body.parentItemId || null
-      })
-      : await supabase.rpc('move_inventory_item_to_house', {
-        p_session_token: token,
-        p_item_id: id
-      });
+    const { data, error } = await supabase.rpc('move_inventory_item_to_home', {
+      p_session_token: token,
+      p_item_id: id,
+      p_home_id: body.homeId || null,
+      p_home_source: body.source || null,
+      p_slot_index: body && typeof body === 'object' && 'slotIndex' in body ? Number(body.slotIndex ?? 0) : null,
+      p_parent_item_id: body.parentItemId || null
+    });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
     return NextResponse.json(normalizeHousePayload(data));

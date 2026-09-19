@@ -13,9 +13,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ow
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
-    const { data, error } = await supabase.rpc('add_campaign_property', {
+    const { data, error } = await supabase.rpc('add_home_property', {
       p_session_token: token,
       p_owner_user_id: ownerId,
+      p_home_id: body.homeId || null,
       p_caretaker_character_id: body.caretakerCharacterId || null,
       p_name: String(body.name ?? ''),
       p_property_type: String(body.type ?? 'other'),

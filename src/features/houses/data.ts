@@ -6,6 +6,7 @@ export const PROPERTY_LOCATIONS: PropertyLocation[] = ['with_character', 'at_hou
 
 export type HousePayload = {
   house: House | null;
+  homes: House[];
   items: InventoryItem[];
   properties: CampaignProperty[];
   access: HouseAccess;
@@ -35,6 +36,7 @@ export function normalizeHouse(value: unknown): House | null {
   return {
     id,
     ownerUserId,
+    source: source.source === 'mobile' ? 'mobile' : 'static',
     name: String(source.name ?? (source.kind === 'wagon-home' ? 'Wagon Home' : source.kind === 'caged-wagon' ? 'Caged Wagon Stable' : 'House')),
     stableName: String(source.stableName ?? (source.kind === 'caged-wagon' ? 'Caged Wagon Stable' : 'Stable')),
     cityName: String(source.cityName ?? 'Calostrynn'),
@@ -42,7 +44,8 @@ export function normalizeHouse(value: unknown): House | null {
     stableSlots: Math.max(0, numberFrom(source.stableSlots, 5)),
     propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
     locked: Boolean(source.locked),
-    kind: source.kind === 'wagon-home' || source.kind === 'caged-wagon' ? source.kind : 'house',
+    isMain: Boolean(source.isMain),
+    kind: source.kind === 'wagon-home' || source.kind === 'caged-wagon' || source.kind === 'stable' ? source.kind : 'house',
     storageItemId: source.storageItemId ? String(source.storageItemId) : null,
     storageCharacterId: source.storageCharacterId ? String(source.storageCharacterId) : null,
     stableStorageItemId: source.stableStorageItemId ? String(source.stableStorageItemId) : null,
@@ -91,6 +94,7 @@ export function normalizeHousePayload(value: unknown): HousePayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     house: normalizeHouse(source.house),
+    homes: Array.isArray(source.homes) ? source.homes.map(normalizeHouse).filter((home): home is House => Boolean(home)) : [],
     items: Array.isArray(source.items) ? source.items.map(normalizeInventoryItem).filter((item) => item.id) : [],
     properties: Array.isArray(source.properties) ? source.properties.map(normalizeProperty).filter((property) => property.id) : [],
     access: normalizeHouseAccess(source.access),

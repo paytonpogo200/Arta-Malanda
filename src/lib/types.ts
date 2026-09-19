@@ -221,6 +221,7 @@ export type PropertyLocation = 'with_character' | 'at_house';
 export type House = {
   id: string;
   ownerUserId: string;
+  source: 'static' | 'mobile';
   name: string;
   stableName: string;
   cityName: string;
@@ -228,7 +229,8 @@ export type House = {
   stableSlots: number;
   propertySlots: number;
   locked: boolean;
-  kind?: 'house' | 'wagon-home' | 'caged-wagon';
+  isMain: boolean;
+  kind: 'house' | 'stable' | 'wagon-home' | 'caged-wagon';
   storageItemId?: string | null;
   storageCharacterId?: string | null;
   stableStorageItemId?: string | null;
