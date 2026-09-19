@@ -1106,11 +1106,6 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const productEditorIsStable = Boolean(productEditorVendor && isStableVendor(productEditorVendor));
   const selectedBulkCatalogItems = itemCatalog.filter((item) => bulkCatalogKeys.includes(item.key) && (!managingVendor || !isStableVendor(managingVendor) || item.type === 'pet'));
   const selectedBulkSpells = spellCatalog.filter((spell) => bulkCatalogKeys.includes(spell.key));
-  const visibleBulkCatalogKeys = managingVendor?.blueprintType === 'spell_registrar'
-    ? filteredSpellCatalog.map((spell) => spell.key)
-    : filteredProductCatalog.map((item) => item.key);
-  const allVisibleBulkCatalogSelected = visibleBulkCatalogKeys.length > 0
-    && visibleBulkCatalogKeys.every((key) => bulkCatalogKeys.includes(key));
   const payoutCharacterForVendor = useCallback((vendor: ShopVendor | null | undefined) => (
     vendor?.payoutCharacterId ? payload.characters.find((character) => character.id === vendor.payoutCharacterId) ?? null : null
   ), [payload.characters]);
@@ -1556,18 +1551,28 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     setSaving(true);
     setError('');
     try {
-      const products = [
-        ...selectedItems.map((item) => productDraftFromCatalogItem(vendor, selectedCity, section, item)),
-        ...selectedSpells.map((spell) => ({ ...productDraftFromSpell(vendor, selectedCity, spell), section }))
-      ];
-      const response = await fetch('/api/cities/products', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vendorId: vendor.id, products })
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? 'Shop items could not be added.');
-      setPayload(normalizeCitiesPayload(body));
+      let latestPayload: CitiesPayload | null = null;
+      for (const item of selectedItems) {
+        const response = await fetch('/api/cities/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...productDraftFromCatalogItem(vendor, selectedCity, section, item), vendorId: vendor.id })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error ?? 'Shop items could not be added.');
+        latestPayload = normalizeCitiesPayload(body);
+      }
+      for (const spell of selectedSpells) {
+        const response = await fetch('/api/cities/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...productDraftFromSpell(vendor, selectedCity, spell), vendorId: vendor.id, section })
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error ?? 'Shop spells could not be added.');
+        latestPayload = normalizeCitiesPayload(body);
+      }
+      if (latestPayload) setPayload(latestPayload);
       setBulkCatalogKeys([]);
       setBulkProductPickerOpen(false);
       setCatalogSearch('');
@@ -3006,7 +3011,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     ) : canManageVendor(managingVendor) ? (
                       <>
                         <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => { setBulkProductPickerOpen(true); setBulkCatalogKeys([]); setCatalogSearch(''); }} disabled={saving || !activeManageSection}>
-                          <PackageCheck className="mr-2 inline" size={13} /> {managingVendor.blueprintType === 'spell_registrar' ? 'Add multiple spells' : isStableVendor(managingVendor) ? 'Add multiple animals' : 'Add multiple items'}
+                          <PackageCheck className="mr-2 inline" size={13} /> {managingVendor.blueprintType === 'spell_registrar' ? 'Add spells' : isStableVendor(managingVendor) ? 'Add animals' : 'Add catalog items'}
                         </Button>
                         <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => openProductCreate(managingVendor, activeManageSection)} disabled={saving || !activeManageSection}>
                           <Plus className="mr-2 inline" size={13} /> Custom product
@@ -3048,7 +3053,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {managingVendor && selectedCity && bulkProductPickerOpen && (
-        <Modal size="wide" title={`${managingVendor.blueprintType === 'spell_registrar' ? 'Add Multiple Spells' : isStableVendor(managingVendor) ? 'Add Multiple Animals' : 'Add Multiple Items'} to ${activeManageSection}`} onClose={() => { setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
+        <Modal size="wide" title={`${managingVendor.blueprintType === 'spell_registrar' ? 'Add Spells' : isStableVendor(managingVendor) ? 'Add Animals' : 'Add Items'} to ${activeManageSection}`} onClose={() => { setBulkProductPickerOpen(false); setBulkCatalogKeys([]); }}>
           <div className="grid gap-4">
             <label className="relative block">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]"><Search size={17} /></span>
@@ -3057,19 +3062,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-black">{managingVendor.blueprintType === 'spell_registrar' ? selectedBulkSpells.length : selectedBulkCatalogItems.length} selected</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="secondary"
-                    className="px-3 py-2 text-xs"
-                    onClick={() => setBulkCatalogKeys((current) => allVisibleBulkCatalogSelected
-                      ? current.filter((key) => !visibleBulkCatalogKeys.includes(key))
-                      : Array.from(new Set([...current, ...visibleBulkCatalogKeys])))}
-                    disabled={visibleBulkCatalogKeys.length === 0}
-                  >
-                    {allVisibleBulkCatalogSelected ? 'Deselect results' : `Select all ${visibleBulkCatalogKeys.length} shown`}
-                  </Button>
-                  <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => setBulkCatalogKeys([])} disabled={(managingVendor.blueprintType === 'spell_registrar' ? selectedBulkSpells.length : selectedBulkCatalogItems.length) === 0}>Clear</Button>
-                </div>
+                <Button variant="secondary" className="px-3 py-2 text-xs" onClick={() => setBulkCatalogKeys([])} disabled={(managingVendor.blueprintType === 'spell_registrar' ? selectedBulkSpells.length : selectedBulkCatalogItems.length) === 0}>Clear</Button>
               </div>
               <div className="thin-scrollbar max-h-[58vh] overflow-y-auto pr-1">
                 {managingVendor.blueprintType === 'spell_registrar' ? (
