@@ -310,6 +310,7 @@ export type MarketProduct = {
   vendorId: string;
   key: string;
   name: string;
+  displayName: string;
   description: string;
   type: ItemType;
   rarity: ItemRarity;

@@ -2209,7 +2209,11 @@ begin
   perform public.upsert_item_catalog_entry('Rainproof Wear', 'fabric', 'Uncommon', 'Market Clothing', array['Rainproof clothing']::text[], 1, true, '{}'::jsonb, '', false, 0, 'Clothing suited for wet weather.', true, 2230);
   perform public.upsert_item_catalog_entry('Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A riding horse.', true, 2280);
   perform public.upsert_item_catalog_entry('War Horse', 'pet', 'Rare', 'Market Stable', array['Mount']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A trained war horse.', true, 2290);
-  perform public.upsert_item_catalog_entry('Dog', 'pet', 'Epic', 'Market Stable', array['Pet']::text[], 1, false, '{}'::jsonb, '', false, 0, 'A loyal dog.', true, 2300);
+  perform public.upsert_item_catalog_entry('Dog', 'pet', 'Epic', 'Market Stable', array['Pet']::text[], 1, false, '{}'::jsonb, '', false, 0, '', true, 2300);
+
+  update public.item_catalog
+  set description = ''
+  where item_key = 'dog';
 
   update public.item_catalog
   set storage_capacity = case item_key
@@ -7667,6 +7671,7 @@ create table if not exists public.market_products (
   vendor_id uuid not null references public.shop_vendors(id) on delete cascade,
   product_key text not null unique,
   item_name text not null,
+  item_display_name text,
   description text not null default '',
   item_type text not null default 'misc',
   rarity public.item_rarity not null default 'Common',
@@ -7716,6 +7721,7 @@ alter table public.market_products
 
 alter table public.market_products
   add column if not exists catalog_item_key text,
+  add column if not exists item_display_name text,
   add column if not exists shop_section text not null default 'Wares',
   add column if not exists currency_system_key text not null default 'calostrynn',
   add column if not exists quantity_step numeric(12,1) not null default 1 check (quantity_step in (0.5, 1)),
@@ -8312,7 +8318,7 @@ join (values
   ('city-market-fine-inn', 'Fine Inn', 'Lucien offers a fine inn voucher.', 'quest', 'Common', 50, null, 'Lucien - Tavern Keep', 'fine-inn', 380),
   ('city-market-horse', 'Horse', 'Cassandra sells a riding horse.', 'pet', 'Rare', 1000, null, 'Cassandra - Stable Keeper', 'horse', 420),
   ('city-market-war-horse', 'War Horse', 'Cassandra sells a trained war horse.', 'pet', 'Rare', 5000, null, 'Cassandra - Stable Keeper', 'war-horse', 430),
-  ('city-market-dog', 'Dog', 'Cassandra sells a loyal dog.', 'pet', 'Epic', 1000, null, 'Cassandra - Stable Keeper', 'dog', 440)
+  ('city-market-dog', 'Dog', '', 'pet', 'Epic', 1000, null, 'Cassandra - Stable Keeper', 'dog', 440)
 ) as seed(product_key, item_name, description, item_type, rarity, price_coin, stock_quantity, shop_section, catalog_item_key, display_order)
 on v.vendor_key = 'calostrynn-city-market'
 where not exists (
@@ -8321,6 +8327,11 @@ where not exists (
 )
   and not exists (select 1 from public.app_data_repairs where repair_key = 'calostrynn-shop-defaults-preexisting-2026-08-24')
 on conflict (product_key) do nothing;
+
+update public.market_products
+set description = ''
+where public.catalog_key_for_name(item_name) = 'dog'
+   or catalog_item_key = 'dog';
 
 create or replace function public.city_record_to_json(p_city public.cities)
 returns jsonb
@@ -8476,6 +8487,7 @@ as $$
     'vendorId', p_product.vendor_id,
     'key', p_product.product_key,
     'name', p_product.item_name,
+    'displayName', p_product.item_display_name,
     'description', p_product.description,
     'type', p_product.item_type,
     'rarity', p_product.rarity,
@@ -8767,6 +8779,7 @@ alter table public.shop_vendors
 
 alter table public.market_products
   add column if not exists product_kind text not null default 'item',
+  add column if not exists item_display_name text,
   add column if not exists document_author text not null default '',
   add column if not exists document_content text not null default '',
   add column if not exists document_pages jsonb not null default '[]'::jsonb,
@@ -9706,6 +9719,7 @@ begin
   update public.market_products
   set
     item_name = case when v_patch ? 'name' then coalesce(nullif(trim(v_patch->>'name'), ''), item_name) else item_name end,
+    item_display_name = case when v_patch ? 'displayName' then nullif(left(trim(coalesce(v_patch->>'displayName', '')), 80), '') else item_display_name end,
     description = case when v_patch ? 'description' then coalesce(v_patch->>'description', '') else description end,
     item_type = case when v_patch ? 'type' then public.normalize_item_type(v_patch->>'type') else item_type end,
     rarity = case when v_patch ? 'rarity' then (v_patch->>'rarity')::public.item_rarity else rarity end,
@@ -14186,7 +14200,7 @@ begin
   end if;
 
   insert into public.market_products (
-    vendor_id, product_key, item_name, description, item_type, rarity, price_coin, currency_system_key,
+    vendor_id, product_key, item_name, item_display_name, description, item_type, rarity, price_coin, currency_system_key,
     stock_quantity, catalog_item_key, shop_section, quantity_step, product_kind,
     item_is_accessory, item_is_storage, item_storage_capacity, item_modifiers, item_enchantment,
     item_rune_name, item_material, item_enhancement_count, item_is_two_handed,
@@ -14196,6 +14210,7 @@ begin
     p_vendor_id,
     public.safe_slug(v_vendor.vendor_key || '-boarded-' || coalesce(v_inventory_item.item_name, v_house_item.item_name) || '-' || substring(gen_random_uuid()::text from 1 for 8)),
     coalesce(v_inventory_item.item_name, v_house_item.item_name),
+    nullif(left(trim(coalesce(v_inventory_item.display_name, v_house_item.display_name, '')), 80), ''),
     left(trim(coalesce(v_inventory_item.item_description, v_house_item.item_description, '')), 1500),
     'pet',
     coalesce(v_inventory_item.rarity, v_house_item.rarity),
@@ -14273,7 +14288,7 @@ begin
   perform public.place_pet_item_in_stable_for_character(
     v_character.id,
     v_product.item_name,
-    null,
+    v_product.item_display_name,
     v_product.description,
     v_product.rarity,
     1,

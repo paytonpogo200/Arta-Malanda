@@ -2334,13 +2334,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       )}
 
       {selectedProduct && (
-        <Modal size={selectedProduct.kind === 'document' ? 'wide' : 'default'} title={selectedProduct.name} onClose={() => { setSelectedProduct(null); setBookPage(0); }}>
+        <Modal size={selectedProduct.kind === 'document' ? 'wide' : 'default'} title={selectedProduct.displayName || selectedProduct.name} onClose={() => { setSelectedProduct(null); setBookPage(0); }}>
           <div className="space-y-4">
             <div className={`rounded-2xl border p-4 ${productCardClass(selectedProduct)}`}>
               <div className="flex items-center gap-3">
                 <span className="text-[var(--brass)]"><ItemIcon type={selectedProduct.type} size={22} /></span>
                 <div>
-                  <p className="font-black">{isSpellProduct(selectedProduct) ? selectedProduct.section.replace(/\s+Spells$/i, '') : `${selectedProduct.rarity} ${selectedProduct.type}`}</p>
+                  <p className="font-black">{selectedProduct.displayName ? `${selectedProduct.name} · ${selectedProduct.rarity} ${selectedProduct.type}` : isSpellProduct(selectedProduct) ? selectedProduct.section.replace(/\s+Spells$/i, '') : `${selectedProduct.rarity} ${selectedProduct.type}`}</p>
                   <p className="text-sm text-[var(--muted)]">{selectedProduct.description}</p>
                 </div>
               </div>
@@ -4606,6 +4606,7 @@ function ProductGrid({ products, canManage, canPatchProduct = canManage, canDele
         const canOpen = canManage || isDisplayBook(product) || (!disabled && canShop) || canInspectUnavailable;
         const manaBadge = spellManaBadgeText(product);
         const bookProduct = isBookProduct(product);
+        const productTitle = product.displayName || product.name;
         const dmControls = canManage ? (
           <span className={`absolute right-2 top-2 gap-1 ${bookProduct ? 'grid' : 'flex'}`}>
             {canPatchProduct && <span role="button" tabIndex={0} aria-disabled={saving} onClick={(event) => { event.stopPropagation(); if (!saving) onPatchProduct(product, { available: !product.available }); }} className={`rounded-lg border border-[var(--line)] bg-black/40 text-[var(--muted)] backdrop-blur ${bookProduct ? 'p-1.5' : 'p-2'} ${saving ? 'pointer-events-none opacity-50' : ''}`}>
@@ -4630,7 +4631,7 @@ function ProductGrid({ products, canManage, canPatchProduct = canManage, canDele
                 <ItemIcon type={product.type} size={20} />
               </span>
               <span className="mx-auto mt-3 block w-full max-w-[15rem] px-2">
-                <span className="line-clamp-3 break-words text-lg font-black leading-tight">{product.name}</span>
+                <span className="line-clamp-3 break-words text-lg font-black leading-tight">{productTitle}</span>
                 {(product.documentAuthor || product.description) && (
                   <span className="mt-2 block line-clamp-2 break-words text-xs font-bold text-[var(--muted)]">
                     {product.documentAuthor ? `By ${product.documentAuthor}` : product.description}
@@ -4662,8 +4663,10 @@ function ProductGrid({ products, canManage, canPatchProduct = canManage, canDele
               <span className="flex min-w-0 items-center gap-2">
                 <span className="text-[var(--brass)]"><ItemIcon type={product.type} /></span>
                 <span className="min-w-0">
-                  <span className="line-clamp-2 break-words font-black leading-tight">{product.name}</span>
-                  <span className="block text-xs text-[var(--muted)]">{isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} - ${product.rarity}`}</span>
+                  <span className="line-clamp-2 break-words font-black leading-tight">{productTitle}</span>
+                  <span className="block text-xs text-[var(--muted)]">
+                    {product.displayName ? `${product.name} - ${product.rarity}` : isSpellProduct(product) ? product.section.replace(/\s+Spells$/i, '') : `${product.type} - ${product.rarity}`}
+                  </span>
                 </span>
               </span>
               {dmControls}

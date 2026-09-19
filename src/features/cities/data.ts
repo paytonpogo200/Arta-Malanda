@@ -180,6 +180,7 @@ export function normalizeProduct(value: unknown): MarketProduct {
     vendorId: String(source.vendorId ?? ''),
     key: String(source.key ?? ''),
     name: String(source.name ?? 'Unknown item'),
+    displayName: String(source.displayName ?? source.item_display_name ?? ''),
     description: String(source.description ?? ''),
     type: normalizeItemType(source.type),
     rarity: normalizeRarity(source.rarity),
