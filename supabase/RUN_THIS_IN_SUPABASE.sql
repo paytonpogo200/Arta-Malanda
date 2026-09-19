@@ -2212,7 +2212,7 @@ begin
   perform public.upsert_item_catalog_entry('Dog', 'pet', 'Epic', 'Market Stable', array['Pet']::text[], 1, false, '{}'::jsonb, '', false, 0, '', true, 2300);
 
   update public.item_catalog
-  set description = ''
+  set notes = ''
   where item_key = 'dog';
 
   update public.item_catalog
