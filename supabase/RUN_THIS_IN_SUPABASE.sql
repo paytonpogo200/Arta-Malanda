@@ -21725,6 +21725,284 @@ begin
 end;
 $$;
 
+create or replace function public.move_item_between_homes(
+  p_session_token text,
+  p_item_id uuid,
+  p_source_home_id uuid,
+  p_source text,
+  p_destination_home_id uuid,
+  p_destination text,
+  p_slot_index integer,
+  p_parent_item_id uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_owner_user_id uuid;
+  v_source_house public.player_houses%rowtype;
+  v_destination_house public.player_houses%rowtype;
+  v_source_mobile public.inventory_items%rowtype;
+  v_destination_mobile public.inventory_items%rowtype;
+  v_source_character public.characters%rowtype;
+  v_destination_character public.characters%rowtype;
+  v_house_item public.house_inventory_items%rowtype;
+  v_house_target public.house_inventory_items%rowtype;
+  v_mobile_item public.inventory_items%rowtype;
+  v_mobile_target public.inventory_items%rowtype;
+  v_source_parent uuid;
+  v_source_slot integer;
+  v_destination_capacity integer;
+  v_source_is_pet boolean;
+  v_target_is_pet boolean;
+  v_stackable boolean := false;
+  v_temporary_slot integer;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if p_source not in ('static', 'mobile') or p_destination not in ('static', 'mobile') then
+    raise exception 'Unknown property source.';
+  end if;
+  if p_source = p_destination and p_source_home_id = p_destination_home_id then
+    raise exception 'Use the property organizer when moving within the same home.';
+  end if;
+
+  if p_source = 'static' then
+    select * into v_source_house from public.player_houses where id = p_source_home_id;
+    select * into v_house_item from public.house_inventory_items
+    where id = p_item_id and house_id = p_source_home_id for update;
+    if v_source_house.id is null or v_house_item.id is null then raise exception 'Source home item was not found.'; end if;
+    v_owner_user_id := v_source_house.owner_user_id;
+    v_source_parent := v_house_item.parent_item_id;
+    v_source_slot := v_house_item.slot_index;
+    v_source_is_pet := public.normalize_item_type(v_house_item.item_type) = 'pet';
+    if not public.static_home_access(v_profile, v_source_house, v_source_is_pet) then
+      raise exception 'You do not have permission to use the source property.';
+    end if;
+  else
+    select * into v_source_mobile
+    from public.inventory_items root
+    where root.id = p_source_home_id and root.is_storage and root.parent_item_id is null and root.loadout_slot is null
+      and (public.inventory_item_is_mobile_home_storage(root.item_name, root.item_type)
+        or public.inventory_item_is_caged_wagon_storage(root.item_name, root.item_type));
+    select * into v_source_character from public.characters where id = v_source_mobile.character_id;
+    select * into v_mobile_item from public.inventory_items where id = p_item_id for update;
+    if v_source_mobile.id is null or v_mobile_item.id is null then raise exception 'Source mobile property item was not found.'; end if;
+    if not exists (
+      with recursive ancestry as (
+        select item.id, item.parent_item_id from public.inventory_items item where item.id = v_mobile_item.id
+        union all select parent.id, parent.parent_item_id from public.inventory_items parent join ancestry child on child.parent_item_id = parent.id
+      ) select 1 from ancestry where id = v_source_mobile.id
+    ) then raise exception 'That item is not inside the selected source property.'; end if;
+    v_owner_user_id := v_source_character.owner_user_id;
+    v_source_parent := v_mobile_item.parent_item_id;
+    v_source_slot := v_mobile_item.slot_index;
+    v_source_is_pet := public.normalize_item_type(v_mobile_item.item_type) = 'pet';
+    if not public.inventory_storage_visible_to_profile(v_profile, v_source_mobile, v_source_character) then
+      raise exception 'You do not have permission to use the source property.';
+    end if;
+  end if;
+
+  if p_destination = 'static' then
+    select * into v_destination_house from public.player_houses where id = p_destination_home_id;
+    if v_destination_house.id is null or v_destination_house.owner_user_id is distinct from v_owner_user_id then
+      raise exception 'Destination home was not found for this player.';
+    end if;
+    if not public.static_home_access(v_profile, v_destination_house, v_source_is_pet) then
+      raise exception 'You do not have permission to use the destination property.';
+    end if;
+    perform public.assert_house_item_slot_capacity(v_destination_house, p_parent_item_id, p_slot_index,
+      case when p_source = 'static' then v_house_item.item_type else v_mobile_item.item_type end);
+    if p_parent_item_id is not null and not exists (
+      select 1 from public.house_inventory_items parent
+      where parent.id = p_parent_item_id and parent.house_id = v_destination_house.id and parent.is_storage
+    ) then raise exception 'That destination container is not inside the selected home.'; end if;
+    select * into v_house_target from public.house_inventory_items target
+    where target.house_id = v_destination_house.id
+      and target.parent_item_id is not distinct from p_parent_item_id
+      and target.slot_index = p_slot_index for update;
+  else
+    select * into v_destination_mobile
+    from public.inventory_items root
+    where root.id = p_destination_home_id and root.is_storage and root.parent_item_id is null and root.loadout_slot is null
+      and (public.inventory_item_is_mobile_home_storage(root.item_name, root.item_type)
+        or public.inventory_item_is_caged_wagon_storage(root.item_name, root.item_type));
+    select * into v_destination_character from public.characters where id = v_destination_mobile.character_id;
+    if v_destination_mobile.id is null or v_destination_character.owner_user_id is distinct from v_owner_user_id then
+      raise exception 'Destination mobile property was not found for this player.';
+    end if;
+    if not public.inventory_storage_visible_to_profile(v_profile, v_destination_mobile, v_destination_character) then
+      raise exception 'You do not have permission to use the destination property.';
+    end if;
+    if p_parent_item_id is null then p_parent_item_id := v_destination_mobile.id; end if;
+    if p_parent_item_id <> v_destination_mobile.id and not exists (
+      with recursive ancestry as (
+        select item.id, item.parent_item_id from public.inventory_items item
+        where item.id = p_parent_item_id and item.character_id = v_destination_mobile.character_id and item.is_storage
+        union all select parent.id, parent.parent_item_id from public.inventory_items parent join ancestry child on child.parent_item_id = parent.id
+      ) select 1 from ancestry where id = v_destination_mobile.id
+    ) then raise exception 'That destination container is not inside the selected mobile property.'; end if;
+    if p_parent_item_id = v_destination_mobile.id then
+      v_destination_capacity := v_destination_mobile.storage_capacity;
+    else
+      select storage_capacity into v_destination_capacity from public.inventory_items where id = p_parent_item_id and is_storage;
+    end if;
+    if p_slot_index < 0 or p_slot_index >= coalesce(v_destination_capacity, 0) then raise exception 'That destination slot does not exist.'; end if;
+    if public.inventory_item_is_caged_wagon_storage(v_destination_mobile.item_name, v_destination_mobile.item_type) then
+      if not v_source_is_pet then raise exception 'Only animals can be placed in a Caged Wagon.'; end if;
+    elsif v_source_is_pet then raise exception 'Animals require a stable or Caged Wagon.';
+    end if;
+    select * into v_mobile_target from public.inventory_items target
+    where target.character_id = v_destination_mobile.character_id and target.parent_item_id = p_parent_item_id
+      and target.slot_index = p_slot_index and target.loadout_slot is null for update;
+  end if;
+
+  if p_source = 'static' and p_destination = 'static' then
+    if v_house_target.id is not null then
+      if public.house_inventory_items_stackable(v_house_target, v_house_item) then
+        update public.house_inventory_items set quantity = quantity + v_house_item.quantity where id = v_house_target.id;
+        delete from public.house_inventory_items where id = v_house_item.id;
+        return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_house.id, 'static');
+      end if;
+      v_target_is_pet := public.normalize_item_type(v_house_target.item_type) = 'pet';
+      perform public.assert_house_item_slot_capacity(v_source_house, v_source_parent, v_source_slot, v_house_target.item_type);
+      select coalesce(min(slot_index), 0) - 1 into v_temporary_slot from public.house_inventory_items where house_id = v_destination_house.id;
+      update public.house_inventory_items set slot_index = v_temporary_slot where id = v_house_target.id;
+      with recursive moved as (
+        select id from public.house_inventory_items where id = v_house_item.id
+        union all select child.id from public.house_inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.house_inventory_items set house_id = v_destination_house.id, owner_user_id = v_owner_user_id where id in (select id from moved);
+      update public.house_inventory_items set parent_item_id = p_parent_item_id, slot_index = p_slot_index where id = v_house_item.id;
+      with recursive moved as (
+        select id from public.house_inventory_items where id = v_house_target.id
+        union all select child.id from public.house_inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.house_inventory_items set house_id = v_source_house.id, owner_user_id = v_owner_user_id where id in (select id from moved);
+      update public.house_inventory_items set parent_item_id = v_source_parent, slot_index = v_source_slot where id = v_house_target.id;
+    else
+      with recursive moved as (
+        select id from public.house_inventory_items where id = v_house_item.id
+        union all select child.id from public.house_inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.house_inventory_items set house_id = v_destination_house.id, owner_user_id = v_owner_user_id where id in (select id from moved);
+      update public.house_inventory_items set parent_item_id = p_parent_item_id, slot_index = p_slot_index where id = v_house_item.id;
+    end if;
+    return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_house.id, 'static');
+  end if;
+
+  if p_source = 'mobile' and p_destination = 'mobile' then
+    if v_mobile_target.id is not null then
+      if public.inventory_items_stackable(v_mobile_target, v_mobile_item) then
+        update public.inventory_items set quantity = quantity + v_mobile_item.quantity where id = v_mobile_target.id;
+        delete from public.inventory_items where id = v_mobile_item.id;
+        return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_mobile.id, 'mobile');
+      end if;
+      v_target_is_pet := public.normalize_item_type(v_mobile_target.item_type) = 'pet';
+      if public.inventory_item_is_caged_wagon_storage(v_source_mobile.item_name, v_source_mobile.item_type) <> v_target_is_pet then
+        raise exception 'The swapped item is not valid for the source property.';
+      end if;
+      select coalesce(min(slot_index), 0) - 1 into v_temporary_slot from public.inventory_items where character_id = v_destination_mobile.character_id;
+      update public.inventory_items set slot_index = v_temporary_slot where id = v_mobile_target.id;
+      with recursive moved as (
+        select id from public.inventory_items where id = v_mobile_item.id
+        union all select child.id from public.inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.inventory_items set character_id = v_destination_mobile.character_id where id in (select id from moved);
+      update public.inventory_items set parent_item_id = p_parent_item_id, slot_index = p_slot_index, loadout_slot = null where id = v_mobile_item.id;
+      with recursive moved as (
+        select id from public.inventory_items where id = v_mobile_target.id
+        union all select child.id from public.inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.inventory_items set character_id = v_source_mobile.character_id where id in (select id from moved);
+      update public.inventory_items set parent_item_id = v_source_parent, slot_index = v_source_slot, loadout_slot = null where id = v_mobile_target.id;
+    else
+      with recursive moved as (
+        select id from public.inventory_items where id = v_mobile_item.id
+        union all select child.id from public.inventory_items child join moved parent on child.parent_item_id = parent.id
+      ) update public.inventory_items set character_id = v_destination_mobile.character_id where id in (select id from moved);
+      update public.inventory_items set parent_item_id = p_parent_item_id, slot_index = p_slot_index, loadout_slot = null where id = v_mobile_item.id;
+    end if;
+    return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_mobile.id, 'mobile');
+  end if;
+
+  if p_source = 'static' then
+    if v_house_item.is_storage and exists (select 1 from public.house_inventory_items where parent_item_id = v_house_item.id) then
+      raise exception 'Empty this storage item before moving it to a mobile home.';
+    end if;
+    if v_mobile_target.id is not null and v_mobile_target.is_storage and exists (select 1 from public.inventory_items where parent_item_id = v_mobile_target.id) then
+      raise exception 'Empty the destination storage item before swapping it between homes.';
+    end if;
+    if v_mobile_target.id is not null then
+      v_stackable := not v_house_item.is_storage and not v_mobile_target.is_storage
+        and public.item_catalog_stackable(v_house_item.item_name, v_house_item.item_type)
+        and lower(public.normalize_item_name(v_house_item.item_name)) = lower(public.normalize_item_name(v_mobile_target.item_name))
+        and public.normalize_item_type(v_house_item.item_type) = public.normalize_item_type(v_mobile_target.item_type)
+        and v_house_item.rarity = v_mobile_target.rarity and v_house_item.modifiers = v_mobile_target.modifiers
+        and coalesce(v_house_item.enchantment, '') = coalesce(v_mobile_target.enchantment, '')
+        and coalesce(v_house_item.rune_name, '') = coalesce(v_mobile_target.rune_name, '')
+        and coalesce(v_house_item.material, '') = coalesce(v_mobile_target.material, '')
+        and coalesce(v_house_item.potion_strength, '') = coalesce(v_mobile_target.potion_strength, '')
+        and coalesce(v_house_item.potion_property, '') = coalesce(v_mobile_target.potion_property, '')
+        and coalesce(v_house_item.potion_quality, '') = coalesce(v_mobile_target.potion_quality, '')
+        and v_house_item.enhancement_count = v_mobile_target.enhancement_count
+        and v_house_item.is_two_handed = v_mobile_target.is_two_handed and v_house_item.is_accessory = v_mobile_target.is_accessory;
+      if v_stackable then
+        update public.inventory_items set quantity = quantity + v_house_item.quantity where id = v_mobile_target.id;
+        delete from public.house_inventory_items where id = v_house_item.id;
+        return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_mobile.id, 'mobile');
+      end if;
+      v_target_is_pet := public.normalize_item_type(v_mobile_target.item_type) = 'pet';
+      perform public.assert_house_item_slot_capacity(v_source_house, v_source_parent, v_source_slot, v_mobile_target.item_type);
+      delete from public.inventory_items where id = v_mobile_target.id;
+      insert into public.house_inventory_items (id, house_id, owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description, item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form)
+      values (v_mobile_target.id, v_source_house.id, v_owner_user_id, v_source_parent, v_source_slot, v_mobile_target.item_name, v_mobile_target.display_name, v_mobile_target.item_description, v_mobile_target.item_type, v_mobile_target.rarity, v_mobile_target.quantity, v_mobile_target.is_accessory, v_mobile_target.is_storage, v_mobile_target.storage_capacity, v_mobile_target.modifiers, v_mobile_target.enchantment, v_mobile_target.rune_name, v_mobile_target.material, v_mobile_target.enhancement_count, v_mobile_target.is_two_handed, v_mobile_target.potion_strength, v_mobile_target.potion_property, v_mobile_target.potion_quality, v_mobile_target.spell_book_form);
+    end if;
+    delete from public.house_inventory_items where id = v_house_item.id;
+    insert into public.inventory_items (id, character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description, item_type, rarity, quantity, is_accessory, is_storage, storage_active, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form)
+    values (v_house_item.id, v_destination_mobile.character_id, p_parent_item_id, p_slot_index, null, v_house_item.item_name, v_house_item.display_name, v_house_item.item_description, v_house_item.item_type, v_house_item.rarity, v_house_item.quantity, v_house_item.is_accessory, v_house_item.is_storage, false, v_house_item.storage_capacity, v_house_item.modifiers, v_house_item.enchantment, v_house_item.rune_name, v_house_item.material, v_house_item.enhancement_count, v_house_item.is_two_handed, v_house_item.potion_strength, v_house_item.potion_property, v_house_item.potion_quality, v_house_item.spell_book_form);
+    return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_mobile.id, 'mobile');
+  end if;
+
+  if v_mobile_item.is_storage and exists (select 1 from public.inventory_items where parent_item_id = v_mobile_item.id) then
+    raise exception 'Empty this storage item before moving it to a physical home.';
+  end if;
+  if v_house_target.id is not null and v_house_target.is_storage and exists (select 1 from public.house_inventory_items where parent_item_id = v_house_target.id) then
+    raise exception 'Empty the destination storage item before swapping it between homes.';
+  end if;
+  if v_house_target.id is not null then
+    v_stackable := not v_mobile_item.is_storage and not v_house_target.is_storage
+      and public.item_catalog_stackable(v_mobile_item.item_name, v_mobile_item.item_type)
+      and lower(public.normalize_item_name(v_mobile_item.item_name)) = lower(public.normalize_item_name(v_house_target.item_name))
+      and public.normalize_item_type(v_mobile_item.item_type) = public.normalize_item_type(v_house_target.item_type)
+      and v_mobile_item.rarity = v_house_target.rarity and v_mobile_item.modifiers = v_house_target.modifiers
+      and coalesce(v_mobile_item.enchantment, '') = coalesce(v_house_target.enchantment, '')
+      and coalesce(v_mobile_item.rune_name, '') = coalesce(v_house_target.rune_name, '')
+      and coalesce(v_mobile_item.material, '') = coalesce(v_house_target.material, '')
+      and coalesce(v_mobile_item.potion_strength, '') = coalesce(v_house_target.potion_strength, '')
+      and coalesce(v_mobile_item.potion_property, '') = coalesce(v_house_target.potion_property, '')
+      and coalesce(v_mobile_item.potion_quality, '') = coalesce(v_house_target.potion_quality, '')
+      and v_mobile_item.enhancement_count = v_house_target.enhancement_count
+      and v_mobile_item.is_two_handed = v_house_target.is_two_handed and v_mobile_item.is_accessory = v_house_target.is_accessory;
+    if v_stackable then
+      update public.house_inventory_items set quantity = quantity + v_mobile_item.quantity where id = v_house_target.id;
+      delete from public.inventory_items where id = v_mobile_item.id;
+      return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_house.id, 'static');
+    end if;
+    v_target_is_pet := public.normalize_item_type(v_house_target.item_type) = 'pet';
+    if public.inventory_item_is_caged_wagon_storage(v_source_mobile.item_name, v_source_mobile.item_type) <> v_target_is_pet then
+      raise exception 'The swapped item is not valid for the source property.';
+    end if;
+    delete from public.house_inventory_items where id = v_house_target.id;
+    insert into public.inventory_items (id, character_id, parent_item_id, slot_index, loadout_slot, item_name, display_name, item_description, item_type, rarity, quantity, is_accessory, is_storage, storage_active, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form)
+    values (v_house_target.id, v_source_mobile.character_id, v_source_parent, v_source_slot, null, v_house_target.item_name, v_house_target.display_name, v_house_target.item_description, v_house_target.item_type, v_house_target.rarity, v_house_target.quantity, v_house_target.is_accessory, v_house_target.is_storage, false, v_house_target.storage_capacity, v_house_target.modifiers, v_house_target.enchantment, v_house_target.rune_name, v_house_target.material, v_house_target.enhancement_count, v_house_target.is_two_handed, v_house_target.potion_strength, v_house_target.potion_property, v_house_target.potion_quality, v_house_target.spell_book_form);
+  end if;
+  delete from public.inventory_items where id = v_mobile_item.id;
+  insert into public.house_inventory_items (id, house_id, owner_user_id, parent_item_id, slot_index, item_name, display_name, item_description, item_type, rarity, quantity, is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count, is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form)
+  values (v_mobile_item.id, v_destination_house.id, v_owner_user_id, p_parent_item_id, p_slot_index, v_mobile_item.item_name, v_mobile_item.display_name, v_mobile_item.item_description, v_mobile_item.item_type, v_mobile_item.rarity, v_mobile_item.quantity, v_mobile_item.is_accessory, v_mobile_item.is_storage, v_mobile_item.storage_capacity, v_mobile_item.modifiers, v_mobile_item.enchantment, v_mobile_item.rune_name, v_mobile_item.material, v_mobile_item.enhancement_count, v_mobile_item.is_two_handed, v_mobile_item.potion_strength, v_mobile_item.potion_property, v_mobile_item.potion_quality, v_mobile_item.spell_book_form);
+  return public.get_player_homes(p_session_token, v_owner_user_id, v_destination_house.id, 'static');
+end;
+$$;
+
+grant execute on function public.move_item_between_homes(text, uuid, uuid, text, uuid, text, integer, uuid) to anon, authenticated;
 grant execute on function public.static_home_access(public.profiles, public.player_houses, boolean) to anon, authenticated;
 grant execute on function public.home_summary_json(public.player_houses, boolean) to anon, authenticated;
 grant execute on function public.mobile_home_summary_json(public.inventory_items, public.characters, boolean) to anon, authenticated;
