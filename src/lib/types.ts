@@ -230,6 +230,7 @@ export type House = {
   propertySlots: number;
   locked: boolean;
   isMain: boolean;
+  displayOrder: number;
   kind: 'house' | 'stable' | 'wagon-home' | 'caged-wagon';
   storageItemId?: string | null;
   storageCharacterId?: string | null;

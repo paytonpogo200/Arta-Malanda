@@ -45,6 +45,7 @@ export function normalizeHouse(value: unknown): House | null {
     propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
     locked: Boolean(source.locked),
     isMain: Boolean(source.isMain),
+    displayOrder: Math.max(0, numberFrom(source.displayOrder, 0)),
     kind: source.kind === 'wagon-home' || source.kind === 'caged-wagon' || source.kind === 'stable' ? source.kind : 'house',
     storageItemId: source.storageItemId ? String(source.storageItemId) : null,
     storageCharacterId: source.storageCharacterId ? String(source.storageCharacterId) : null,

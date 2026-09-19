@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Settings, Trash2, Unlock, Users } from 'lucide-react';
+import { ChevronDown, ChevronUp, Home, Loader2, Lock, PawPrint, Plus, RefreshCw, Settings, Trash2, Unlock, Users } from 'lucide-react';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
 import { Button } from '@/components/ui/Button';
@@ -366,6 +366,32 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     });
   }
 
+  async function reorderHome(homeIndex: number, direction: -1 | 1) {
+    if (!ownerUserId || !canAdd) return;
+    const targetIndex = homeIndex + direction;
+    if (targetIndex < 0 || targetIndex >= homes.length) return;
+    const reordered = [...homes];
+    [reordered[homeIndex], reordered[targetIndex]] = [reordered[targetIndex], reordered[homeIndex]];
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/houses/${ownerUserId}/order`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ homes: reordered.map((home) => ({ id: home.id, source: home.source })) })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Property order could not be saved.');
+      const normalized = normalizeHousePayload(payload);
+      setHomes(normalized.homes);
+    } catch (orderError) {
+      setError(orderError instanceof Error ? orderError.message : 'Property order could not be saved.');
+      await loadHouse(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function openHouseSettings() {
     if (!selectedHome) return;
     setCreatingHome(false);
@@ -621,15 +647,6 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
             {homeIsMain && <span className="rounded-full border border-[var(--brass)]/50 bg-[var(--brass)]/10 px-2 py-1 text-[9px] font-black uppercase text-[var(--brass)]">Main House</span>}
           </h3>
           {houseLocked && <p className="mt-1 text-xs font-black uppercase tracking-wide text-[var(--red)]">Locked by DM</p>}
-          {homes.length > 1 && (
-            <SelectField className="mt-3 max-w-md" value={selectedHomeKey} onChange={(event) => setSelectedHomeKey(event.target.value)} aria-label="Choose house or stable">
-              {homes.map((home) => (
-                <option key={`${home.source}:${home.id}`} value={`${home.source}:${home.id}`}>
-                  {home.isMain ? 'Main - ' : ''}{home.kind === 'stable' || home.kind === 'caged-wagon' ? home.stableName : home.name} - {home.cityName}
-                </option>
-              ))}
-            </SelectField>
-          )}
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           {canAdd && <Button variant="primary" className="px-3 py-2 text-xs" onClick={() => openCreateHome('house')}><Home className="mr-2 inline" size={14} /> Add house</Button>}
@@ -660,6 +677,38 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       </div>
 
       {error && <div className="mb-3 rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-3 text-sm text-[var(--red)]">{error}</div>}
+
+      {homes.length > 0 && (
+        <div className="mb-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {homes.map((home, index) => {
+            const homeKey = `${home.source}:${home.id}`;
+            const active = homeKey === selectedHomeKey;
+            const stable = home.kind === 'stable' || home.kind === 'caged-wagon';
+            return (
+              <div
+                key={homeKey}
+                className={`flex min-w-0 items-stretch overflow-hidden rounded-lg border transition ${active ? 'border-[var(--brass)] bg-[var(--brass)]/12 shadow-[inset_3px_0_0_var(--brass)]' : 'border-[var(--line)] bg-black/15 hover:border-[var(--brass)]/55'}`}
+              >
+                <button type="button" className="min-w-0 flex-1 p-3 text-left" onClick={() => setSelectedHomeKey(homeKey)}>
+                  <span className="flex items-center gap-2">
+                    {stable ? <PawPrint size={16} className="shrink-0 text-[var(--brass)]" /> : <Home size={16} className="shrink-0 text-[var(--brass)]" />}
+                    <span className="truncate text-sm font-black">{stable ? home.stableName : home.name}</span>
+                  </span>
+                  <span className="mt-1 block truncate text-[10px] font-black uppercase text-[var(--muted)]">
+                    {home.isMain ? 'Main House · ' : ''}{home.cityName} · {home.source === 'mobile' ? 'Mobile' : stable ? 'Stable' : 'House'}
+                  </span>
+                </button>
+                {canAdd && (
+                  <div className="grid w-10 shrink-0 grid-rows-2 border-l border-[var(--line)]">
+                    <button type="button" disabled={saving || index === 0} className="grid place-items-center border-b border-[var(--line)] text-[var(--muted)] hover:bg-white/5 hover:text-[var(--brass)] disabled:opacity-20" onClick={() => void reorderHome(index, -1)} aria-label={`Move ${stable ? home.stableName : home.name} earlier`}><ChevronUp size={15} /></button>
+                    <button type="button" disabled={saving || index === homes.length - 1} className="grid place-items-center text-[var(--muted)] hover:bg-white/5 hover:text-[var(--brass)] disabled:opacity-20" onClick={() => void reorderHome(index, 1)} aria-label={`Move ${stable ? home.stableName : home.name} later`}><ChevronDown size={15} /></button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {loading ? (
         <div className="grid h-32 place-items-center rounded-2xl border border-[var(--line)] bg-black/10 text-[var(--muted)]">

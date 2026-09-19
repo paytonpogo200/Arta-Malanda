@@ -4166,10 +4166,20 @@ create table if not exists public.player_main_homes (
   home_id uuid not null,
   updated_at timestamptz not null default now()
 );
+create table if not exists public.player_home_display_orders (
+  owner_user_id uuid not null references public.profiles(id) on delete cascade,
+  home_source text not null check (home_source in ('static', 'mobile')),
+  home_id uuid not null,
+  display_order integer not null check (display_order >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (owner_user_id, home_source, home_id)
+);
 alter table public.house_unit_access_permissions enable row level security;
 alter table public.player_main_homes enable row level security;
+alter table public.player_home_display_orders enable row level security;
 revoke all on public.house_unit_access_permissions from anon, authenticated;
 revoke all on public.player_main_homes from anon, authenticated;
+revoke all on public.player_home_display_orders from anon, authenticated;
 
 insert into public.house_unit_access_permissions(house_id, grantee_user_id, can_access_house, can_access_stable)
 select house.id, permission.grantee_user_id, permission.can_access_house, permission.can_access_stable
@@ -4185,6 +4195,11 @@ where house.house_kind = 'house' and house.inventory_slots > 0
   and not exists (select 1 from public.player_main_homes preference where preference.owner_user_id = house.owner_user_id)
 order by house.owner_user_id, house.created_at, house.id
 on conflict (owner_user_id) do nothing;
+
+insert into public.player_home_display_orders(owner_user_id, home_source, home_id, display_order)
+select house.owner_user_id, 'static', house.id, greatest(0, house.created_order)
+from public.player_houses house
+on conflict (owner_user_id, home_source, home_id) do nothing;
 
 create or replace function public.static_home_access(
   p_profile public.profiles,
@@ -20088,6 +20103,13 @@ as $$
     'propertySlots', p_house.property_slots,
     'locked', p_house.is_locked,
     'isMain', p_is_main,
+    'displayOrder', coalesce((
+      select ordering.display_order
+      from public.player_home_display_orders ordering
+      where ordering.owner_user_id = p_house.owner_user_id
+        and ordering.home_source = 'static'
+        and ordering.home_id = p_house.id
+    ), greatest(0, p_house.created_order)),
     'kind', p_house.house_kind,
     'storageItemId', null,
     'storageCharacterId', null,
@@ -20118,6 +20140,13 @@ as $$
     'propertySlots', 0,
     'locked', false,
     'isMain', p_is_main,
+    'displayOrder', coalesce((
+      select ordering.display_order
+      from public.player_home_display_orders ordering
+      where ordering.owner_user_id = p_character.owner_user_id
+        and ordering.home_source = 'mobile'
+        and ordering.home_id = p_storage.id
+    ), 100000 + greatest(0, p_storage.slot_index)),
     'kind', case when public.inventory_item_is_caged_wagon_storage(p_storage.item_name, p_storage.item_type) then 'caged-wagon' else 'wagon-home' end,
     'storageItemId', case when public.inventory_item_is_mobile_home_storage(p_storage.item_name, p_storage.item_type) then p_storage.id else null end,
     'storageCharacterId', p_storage.character_id,
@@ -20249,7 +20278,7 @@ begin
       with visible_homes as (
         select public.home_summary_json(house, v_main.home_source = 'static' and v_main.home_id = house.id) as home_json,
           case when house.house_kind = 'house' then 0 else 2 end as source_order,
-          house.created_order as home_order,
+          coalesce((select ordering.display_order from public.player_home_display_orders ordering where ordering.owner_user_id = house.owner_user_id and ordering.home_source = 'static' and ordering.home_id = house.id), greatest(0, house.created_order)) as home_order,
           house.created_at,
           house.id
         from public.player_houses house
@@ -20258,7 +20287,7 @@ begin
         union all
         select public.mobile_home_summary_json(storage, owner_character, v_main.home_source = 'mobile' and v_main.home_id = storage.id),
           case when public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type) then 1 else 3 end,
-          storage.slot_index,
+          coalesce((select ordering.display_order from public.player_home_display_orders ordering where ordering.owner_user_id = owner_character.owner_user_id and ordering.home_source = 'mobile' and ordering.home_id = storage.id), 100000 + greatest(0, storage.slot_index)),
           storage.created_at,
           storage.id
         from public.inventory_items storage
@@ -20271,7 +20300,7 @@ begin
             or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
           and public.inventory_storage_visible_to_profile(v_profile, storage, owner_character)
       )
-      select coalesce(jsonb_agg(home_json order by (home_json->>'isMain')::boolean desc, source_order, home_order, created_at, id), '[]'::jsonb)
+      select coalesce(jsonb_agg(home_json order by home_order, source_order, created_at, id), '[]'::jsonb)
       from visible_homes
     ),
     'house', v_house_json,
@@ -20324,6 +20353,81 @@ begin
       where property.house_id = v_selected_house.id
     ) else '[]'::jsonb end
   );
+end;
+$$;
+
+create or replace function public.reorder_player_homes(
+  p_session_token text,
+  p_owner_user_id uuid,
+  p_homes jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_entry jsonb;
+  v_home_id uuid;
+  v_source text;
+  v_index integer := 0;
+  v_expected_count integer;
+  v_homes jsonb := coalesce(p_homes, '[]'::jsonb);
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can reorder properties.'; end if;
+  if jsonb_typeof(v_homes) <> 'array' then raise exception 'Property order must be a list.'; end if;
+
+  select
+    (select count(*) from public.player_houses house where house.owner_user_id = p_owner_user_id)
+    +
+    (select count(*)
+      from public.inventory_items storage
+      join public.characters owner_character on owner_character.id = storage.character_id
+      where owner_character.owner_user_id = p_owner_user_id
+        and storage.is_storage and storage.parent_item_id is null and storage.loadout_slot is null
+        and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+          or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type)))
+  into v_expected_count;
+
+  if jsonb_array_length(v_homes) <> v_expected_count then
+    raise exception 'The property list changed. Refresh and try the reorder again.';
+  end if;
+
+  for v_entry in select value from jsonb_array_elements(v_homes)
+  loop
+    v_home_id := nullif(v_entry->>'id', '')::uuid;
+    v_source := v_entry->>'source';
+    if v_home_id is null or v_source not in ('static', 'mobile') then raise exception 'Invalid property order entry.'; end if;
+    if v_source = 'static' and not exists (
+      select 1 from public.player_houses house where house.id = v_home_id and house.owner_user_id = p_owner_user_id
+    ) then raise exception 'A reordered house or stable was not found.'; end if;
+    if v_source = 'mobile' and not exists (
+      select 1
+      from public.inventory_items storage
+      join public.characters owner_character on owner_character.id = storage.character_id
+      where storage.id = v_home_id and owner_character.owner_user_id = p_owner_user_id
+        and storage.is_storage and storage.parent_item_id is null and storage.loadout_slot is null
+        and (public.inventory_item_is_mobile_home_storage(storage.item_name, storage.item_type)
+          or public.inventory_item_is_caged_wagon_storage(storage.item_name, storage.item_type))
+    ) then raise exception 'A reordered Wagon Home or Caged Wagon was not found.'; end if;
+    v_index := v_index + 1;
+  end loop;
+
+  delete from public.player_home_display_orders where owner_user_id = p_owner_user_id;
+  v_index := 0;
+  for v_entry in select value from jsonb_array_elements(v_homes)
+  loop
+    v_home_id := (v_entry->>'id')::uuid;
+    v_source := v_entry->>'source';
+    insert into public.player_home_display_orders(owner_user_id, home_source, home_id, display_order)
+    values (p_owner_user_id, v_source, v_home_id, v_index * 10);
+    v_index := v_index + 1;
+  end loop;
+
+  return public.get_player_homes(p_session_token, p_owner_user_id, null, null);
 end;
 $$;
 
@@ -20381,6 +20485,14 @@ begin
       v_kind,
       coalesce((select max(created_order) + 10 from public.player_houses where owner_user_id = p_owner_user_id), 10)
     ) returning * into v_house;
+
+    insert into public.player_home_display_orders(owner_user_id, home_source, home_id, display_order)
+    values (
+      p_owner_user_id,
+      'static',
+      v_house.id,
+      coalesce((select max(display_order) + 10 from public.player_home_display_orders where owner_user_id = p_owner_user_id), 0)
+    );
 
     if v_kind = 'house' and (
       v_is_main
@@ -20513,6 +20625,7 @@ begin
   end if;
 
   delete from public.player_main_homes where owner_user_id = p_owner_user_id and home_source = 'static' and home_id = v_house.id;
+  delete from public.player_home_display_orders where owner_user_id = p_owner_user_id and home_source = 'static' and home_id = v_house.id;
   delete from public.player_houses where id = v_house.id;
   return public.get_player_homes(p_session_token, p_owner_user_id, null, null);
 end;
@@ -21518,8 +21631,12 @@ begin
     if tg_op = 'DELETE' then
       delete from public.player_main_homes
       where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
+      delete from public.player_home_display_orders
+      where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
     elsif new.character_id is distinct from old.character_id then
       delete from public.player_main_homes
+      where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
+      delete from public.player_home_display_orders
       where owner_user_id = v_old_owner_user_id and home_source = 'mobile' and home_id = old.id;
     end if;
   end if;
@@ -21612,6 +21729,7 @@ grant execute on function public.static_home_access(public.profiles, public.play
 grant execute on function public.home_summary_json(public.player_houses, boolean) to anon, authenticated;
 grant execute on function public.mobile_home_summary_json(public.inventory_items, public.characters, boolean) to anon, authenticated;
 grant execute on function public.get_player_homes(text, uuid, uuid, text) to anon, authenticated;
+grant execute on function public.reorder_player_homes(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.save_player_home(text, uuid, uuid, text, jsonb) to anon, authenticated;
 grant execute on function public.delete_player_home(text, uuid, uuid, text) to anon, authenticated;
 grant execute on function public.set_player_home_permissions(text, uuid, uuid, text, jsonb) to anon, authenticated;
