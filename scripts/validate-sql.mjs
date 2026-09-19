@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
-const sqlPath = path.join(repoRoot, 'supabase', 'RUN_THIS_IN_SUPABASE.sql');
+const sqlPaths = [
+  path.join(repoRoot, 'supabase', 'RUN_THIS_IN_SUPABASE_PART_1.sql'),
+  path.join(repoRoot, 'supabase', 'RUN_THIS_IN_SUPABASE_PART_2.sql')
+];
 const srcRoot = path.join(repoRoot, 'src');
 
 function walkFiles(directory, files = []) {
@@ -31,7 +34,7 @@ function lineNumberAt(source, index) {
   return source.slice(0, index).split(/\r?\n/).length;
 }
 
-const sql = fs.readFileSync(sqlPath, 'utf8');
+const sql = sqlPaths.map((sqlPath) => fs.readFileSync(sqlPath, 'utf8')).join('\n');
 const createdPublicTables = new Set(
   Array.from(sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?public\.([a-zA-Z0-9_]+)/gi))
     .map((match) => match[1])

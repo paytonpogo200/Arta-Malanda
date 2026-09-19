@@ -62,6 +62,27 @@ type StockInventorySelection = {
   section: string;
 };
 
+type StableBoardingAnimal = {
+  itemId: string;
+  itemName: string;
+  displayName: string;
+  rarity: ItemRarity;
+  source: 'inventory' | 'house';
+  sourceLabel: string;
+};
+
+type StableBoardingOptions = {
+  vendorId: string;
+  vendorName: string;
+  boardingFeeCoin: number;
+  freeBoarding: boolean;
+  holdingSection: string;
+  slotCount: number;
+  usedSlots: number;
+  hasRoom: boolean;
+  animals: StableBoardingAnimal[];
+};
+
 type VendorDraft = {
   name: string;
   npcName: string;
@@ -970,6 +991,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [stockInventory, setStockInventory] = useState<CharacterInventoryPayload>({ items: [], wallet: [] });
   const [stockSelection, setStockSelection] = useState<StockInventorySelection | null>(null);
   const [stockLoading, setStockLoading] = useState(false);
+  const [boardingOptions, setBoardingOptions] = useState<StableBoardingOptions | null>(null);
+  const [boardingAnimalId, setBoardingAnimalId] = useState('');
+  const [boardingLoading, setBoardingLoading] = useState(false);
   const [bookPage, setBookPage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [researchType, setResearchType] = useState(MAGICAL_RESEARCH_TYPES[0]);
@@ -1114,7 +1138,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     return Boolean(payoutCharacter?.ownerUserId && payoutCharacter.ownerUserId === profile.id);
   }, [payoutCharacterForVendor, profile.id]);
   const canManageVendor = useCallback((vendor: ShopVendor | null | undefined) => (
-    Boolean(vendor && (isDm || (!isStableVendor(vendor) && isShopkeeperForVendor(vendor))))
+    Boolean(vendor && (isDm || isShopkeeperForVendor(vendor)))
   ), [isDm, isShopkeeperForVendor]);
   const canRenameStableVendor = useCallback((vendor: ShopVendor | null | undefined) => (
     Boolean(vendor && isStableVendor(vendor) && isShopkeeperForVendor(vendor))
@@ -1692,6 +1716,60 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       setSelectedProduct(null);
     } catch (retrieveError) {
       setError(retrieveError instanceof Error ? retrieveError.message : 'Boarded animal could not be taken out.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openBoardAnimal(vendor: ShopVendor) {
+    if (!selectedShopper || !canShop) return;
+    setBoardingLoading(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/cities/vendors/${vendor.id}/boarding?characterId=${encodeURIComponent(selectedShopper.id)}`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error ?? 'Boarding options could not be loaded.');
+      const animals = Array.isArray(body.animals) ? body.animals.map((entry: Record<string, unknown>) => ({
+        itemId: String(entry.itemId ?? ''),
+        itemName: String(entry.itemName ?? 'Animal'),
+        displayName: String(entry.displayName ?? entry.itemName ?? 'Animal'),
+        rarity: rarityOptions.includes(entry.rarity as ItemRarity) ? entry.rarity as ItemRarity : 'Common',
+        source: entry.source === 'house' ? 'house' as const : 'inventory' as const,
+        sourceLabel: String(entry.sourceLabel ?? 'Owned animal')
+      })).filter((entry: StableBoardingAnimal) => entry.itemId) : [];
+      setBoardingOptions({
+        vendorId: String(body.vendorId ?? vendor.id),
+        vendorName: String(body.vendorName ?? vendor.name),
+        boardingFeeCoin: Math.max(0, Number(body.boardingFeeCoin ?? 0)),
+        freeBoarding: Boolean(body.freeBoarding),
+        holdingSection: String(body.holdingSection ?? 'Holding Pens'),
+        slotCount: Math.max(0, Number(body.slotCount ?? 0)),
+        usedSlots: Math.max(0, Number(body.usedSlots ?? 0)),
+        hasRoom: Boolean(body.hasRoom),
+        animals
+      });
+      setBoardingAnimalId('');
+    } catch (boardingError) {
+      setError(boardingError instanceof Error ? boardingError.message : 'Boarding options could not be loaded.');
+    } finally {
+      setBoardingLoading(false);
+    }
+  }
+
+  async function boardSelectedAnimal() {
+    if (!boardingOptions || !boardingAnimalId || !selectedShopper) return;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch(`/api/cities/vendors/${boardingOptions.vendorId}/boarding`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: boardingAnimalId, characterId: selectedShopper.id })
+      }), 'Animal could not be boarded.');
+      setBoardingOptions(null);
+      setBoardingAnimalId('');
+    } catch (boardingError) {
+      setError(boardingError instanceof Error ? boardingError.message : 'Animal could not be boarded.');
     } finally {
       setSaving(false);
     }
@@ -2335,6 +2413,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           canManage={canManageVendor(selectedVendor)}
           saving={saving}
           canShop={canShop}
+          boardingLoading={boardingLoading}
+          onBoardAnimal={() => void openBoardAnimal(selectedVendor)}
           onSelectProduct={(product) => {
             setSelectedProduct(product);
             setQuantity(1);
@@ -2426,10 +2506,60 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
               {selectedProduct.boardedOwnerUserId ? (
-                <Button variant="teal" disabled={!selectedShopper || saving} onClick={retrieveBoardedAnimal}><PawPrint className="mr-2 inline" size={15} /> Take animal out</Button>
+                <Button variant="teal" disabled={!selectedShopper || saving} onClick={retrieveBoardedAnimal}><PawPrint className="mr-2 inline" size={15} /> Check Out Animal</Button>
               ) : !isDisplayBook(selectedProduct) && (
                 <Button variant="primary" disabled={!canShop || !selectedProductCanPurchase || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {selectedProductCanPurchase ? purchaseActionLabel(selectedProduct) : 'Holding only'}</Button>
               )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {boardingOptions && (
+        <Modal size="wide" title={`Board Animal at ${boardingOptions.vendorName}`} onClose={() => { setBoardingOptions(null); setBoardingAnimalId(''); }}>
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-2xl border border-[var(--line)] bg-black/15 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+              <div>
+                <p className="eyebrow">Holding Pen</p>
+                <p className="mt-1 text-lg font-black">{boardingOptions.usedSlots}/{boardingOptions.slotCount || 'Unlimited'} stalls occupied</p>
+                <p className="mt-1 text-sm font-bold text-[var(--muted)]">Choose any pet owned by the selected player, including active pets and animals housed in any stable or Caged Wagon.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--brass)]/40 bg-[var(--brass)]/10 px-4 py-3 text-right">
+                <p className="text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Entry fee</p>
+                <p className="font-black text-[var(--brass)]">{boardingOptions.freeBoarding ? 'Free for shop keeper' : formatCurrencyValue(boardingOptions.boardingFeeCoin, 'common')}</p>
+              </div>
+            </div>
+
+            {!boardingOptions.hasRoom ? (
+              <div className="rounded-2xl border border-[var(--red)]/40 bg-[var(--red)]/10 p-4 text-sm font-bold text-[var(--red)]">The holding pen is full. An animal must be checked out or moved before another can board.</div>
+            ) : boardingOptions.animals.length === 0 ? (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-4 text-sm font-bold text-[var(--muted)]">This player has no eligible animals available to board.</div>
+            ) : (
+              <div className="thin-scrollbar grid max-h-[55vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                {boardingOptions.animals.map((animal) => {
+                  const selected = boardingAnimalId === animal.itemId;
+                  return <button
+                    key={animal.itemId}
+                    type="button"
+                    onClick={() => setBoardingAnimalId(animal.itemId)}
+                    className={`min-w-0 rounded-2xl border p-3 text-left transition ${rarityClass(animal.rarity)} ${selected ? 'ring-2 ring-[var(--brass)] ring-offset-2 ring-offset-[#17120f]' : 'hover:border-[var(--brass)]/65'}`}
+                  >
+                    <span className="flex items-start gap-3">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 bg-black/25 text-[var(--brass)]"><ItemIcon type="pet" size={21} /></span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-black">{animal.displayName}</span>
+                        {animal.displayName !== animal.itemName && <span className="block truncate text-xs font-black uppercase text-[var(--brass)]">{animal.itemName}</span>}
+                        <span className="mt-1 block break-words text-xs font-bold text-[var(--muted)]">{animal.sourceLabel}</span>
+                      </span>
+                    </span>
+                  </button>;
+                })}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" onClick={() => { setBoardingOptions(null); setBoardingAnimalId(''); }}>Cancel</Button>
+              <Button variant="primary" onClick={boardSelectedAnimal} disabled={!boardingAnimalId || !boardingOptions.hasRoom || saving}><PawPrint className="mr-2 inline" size={15} /> Confirm Boarding</Button>
             </div>
           </div>
         </Modal>
@@ -3930,6 +4060,8 @@ function StablePage(props: {
   canManage: boolean;
   saving: boolean;
   canShop: boolean;
+  boardingLoading: boolean;
+  onBoardAnimal: () => void;
   onSelectProduct: (product: MarketProduct) => void;
   onEditProduct: (product: MarketProduct) => void;
   onDeleteProduct: (product: MarketProduct) => void;
@@ -3939,14 +4071,20 @@ function StablePage(props: {
   return (
     <div className="grid gap-4">
       <Card>
-        <div className="flex items-center gap-3">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[#c99f65]/45 bg-[#c99f65]/15 text-[#d9b987]">
-            <PawPrint size={24} />
-          </span>
-          <div>
-            <p className="eyebrow">Stable Services</p>
-            <h3 className="text-2xl font-black">{props.vendor.name}</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl border border-[#c99f65]/45 bg-[#c99f65]/15 text-[#d9b987]">
+              <PawPrint size={24} />
+            </span>
+            <div>
+              <p className="eyebrow">Stable Services</p>
+              <h3 className="text-2xl font-black">{props.vendor.name}</h3>
+              <p className="mt-1 text-xs font-bold text-[var(--muted)]">Boarding fee: {formatCurrencyValue(props.vendor.boardingFeeCoin, 'common')}</p>
+            </div>
           </div>
+          <Button variant="teal" onClick={props.onBoardAnimal} disabled={!props.canShop || props.saving || props.boardingLoading}>
+            <PawPrint className="mr-2 inline" size={15} /> {props.boardingLoading ? 'Loading animals...' : 'Board Animal'}
+          </Button>
         </div>
       </Card>
 
