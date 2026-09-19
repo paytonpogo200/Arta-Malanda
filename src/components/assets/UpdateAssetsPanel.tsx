@@ -305,8 +305,20 @@ export function UpdateAssetsPanel() {
                   <SelectField value={String(draft.type ?? 'misc')} onChange={(event) => updateDraft('type', event.target.value)}>{ITEM_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</SelectField>
                   <SelectField value={String(draft.rarity ?? 'Common')} onChange={(event) => updateDraft('rarity', event.target.value as ItemRarity)}>{rarityOptions.map((rarity) => <option key={rarity} value={rarity}>{rarity}</option>)}</SelectField>
                   <NumberInput value={Number(draft.priceCoin ?? 0)} onValueChange={(value) => updateDraft('priceCoin', value)} />
-                  <NumberInput value={Number(draft.stockQuantity ?? 0)} onValueChange={(value) => updateDraft('stockQuantity', value)} />
+                  <NumberInput value={Number(draft.stockQuantity ?? 0)} disabled={draft.stockQuantity === null} onValueChange={(value) => updateDraft('stockQuantity', value)} />
                 </div>
+                <label className="flex items-start gap-3 rounded-xl border border-[var(--brass)]/30 bg-[var(--brass)]/10 p-3 text-sm font-black">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 accent-[var(--brass)]"
+                    checked={draft.stockQuantity === null}
+                    onChange={(event) => updateDraft('stockQuantity', event.target.checked ? null : 1)}
+                  />
+                  <span>
+                    <span className="block">Infinite stock</span>
+                    <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">Overrides stock counts so purchases never reduce this listing.</span>
+                  </span>
+                </label>
                 <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/20 p-3 text-sm font-black"><input type="checkbox" checked={Boolean(draft.available)} onChange={(event) => updateDraft('available', event.target.checked)} /> Available</label>
               </>
             )}

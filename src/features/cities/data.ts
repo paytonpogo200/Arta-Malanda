@@ -130,6 +130,7 @@ export function normalizeCity(value: unknown): City {
     secondaryColor: String(source.secondaryColor ?? '#1f7875'),
     accentColor: String(source.accentColor ?? '#f5b44c'),
     locked: Boolean(source.locked),
+    visibleToPlayers: source.visibleToPlayers === undefined ? true : Boolean(source.visibleToPlayers),
     currentResidence: Boolean(source.currentResidence),
     showUnderConstruction: Boolean(source.showUnderConstruction),
     order: numberFrom(source.order, 0)

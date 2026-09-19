@@ -279,6 +279,7 @@ export type City = {
   secondaryColor: string;
   accentColor: string;
   locked: boolean;
+  visibleToPlayers: boolean;
   currentResidence: boolean;
   showUnderConstruction: boolean;
   order: number;

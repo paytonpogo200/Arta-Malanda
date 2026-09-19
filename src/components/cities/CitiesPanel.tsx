@@ -30,7 +30,7 @@ type ProductDraft = {
   rarity: ItemRarity;
   priceCoin: number;
   currencySystemKey: 'common' | 'calostrynn';
-  stockQuantity: number;
+  stockQuantity: number | null;
   available: boolean;
   section: string;
   quantityStep: number;
@@ -81,6 +81,7 @@ type CityDraft = {
   secondaryColor: string;
   accentColor: string;
   locked: boolean;
+  visibleToPlayers: boolean;
   currentResidence: boolean;
   showUnderConstruction: boolean;
   order: number;
@@ -232,7 +233,7 @@ function productToDraft(product: MarketProduct): ProductDraft {
     rarity: product.rarity,
     priceCoin: product.priceCoin,
     currencySystemKey: normalizeCurrencySystemKey(product.currencySystemKey),
-    stockQuantity: product.stockQuantity ?? 0,
+    stockQuantity: product.stockQuantity,
     available: product.available,
     section: product.section || '',
     quantityStep: product.quantityStep || quantityStepForItem(product),
@@ -940,6 +941,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const [shoppingAs, setShoppingAs] = useState('');
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [editCity, setEditCity] = useState<City | null>(null);
+  const [creatingCity, setCreatingCity] = useState(false);
   const [cityDraft, setCityDraft] = useState<CityDraft | null>(null);
   const [itemCatalog, setItemCatalog] = useState<ItemCatalogEntry[]>([]);
   const [spellCatalog, setSpellCatalog] = useState<Spell[]>([]);
@@ -1315,6 +1317,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   function openCityEdit(city: City) {
+    setCreatingCity(false);
     setEditCity(city);
     setCityDraft({
       name: city.name,
@@ -1323,6 +1326,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
       secondaryColor: city.secondaryColor,
       accentColor: city.accentColor,
       locked: city.locked,
+      visibleToPlayers: city.visibleToPlayers,
       currentResidence: city.currentResidence,
       showUnderConstruction: city.showUnderConstruction,
       order: city.order
@@ -1331,19 +1335,20 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
 
   async function saveCity(event: FormEvent) {
     event.preventDefault();
-    if (!editCity || !cityDraft || !isDm) return;
+    if ((!editCity && !creatingCity) || !cityDraft || !isDm) return;
     setSaving(true);
     setError('');
     try {
-      await replaceFromResponse(await fetch(`/api/cities/${editCity.key}`, {
-        method: 'PATCH',
+      await replaceFromResponse(await fetch(editCity ? `/api/cities/${editCity.key}` : '/api/cities', {
+        method: editCity ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cityDraft)
-      }), 'City settings could not be saved.');
+      }), editCity ? 'City settings could not be saved.' : 'City could not be created.');
       setEditCity(null);
+      setCreatingCity(false);
       setCityDraft(null);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'City settings could not be saved.');
+      setError(saveError instanceof Error ? saveError.message : editCity ? 'City settings could not be saved.' : 'City could not be created.');
     } finally {
       setSaving(false);
     }
@@ -1819,6 +1824,23 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     });
   }
 
+  function openCityCreate() {
+    setEditCity(null);
+    setCreatingCity(true);
+    setCityDraft({
+      name: 'New City',
+      description: '',
+      primaryColor: '#8f6a46',
+      secondaryColor: '#345c52',
+      accentColor: '#c99f65',
+      locked: true,
+      visibleToPlayers: false,
+      currentResidence: false,
+      showUnderConstruction: false,
+      order: Math.max(0, ...payload.cities.map((city) => city.order)) + 10
+    });
+  }
+
   function openSectionEdit(section: ShopSection) {
     setSectionDraft({
       id: section.id,
@@ -1868,7 +1890,9 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
           kind: 'item' as const,
           type: 'pet' as const,
           quantityStep: 1,
-          stockQuantity: Math.max(0, productDraft.stockQuantity || 0),
+          stockQuantity: productDraft.stockQuantity === null
+            ? null
+            : Math.max(0, productDraft.stockQuantity || 0),
           section: productDraft.section || defaultSectionForBlueprint('stable')
         }
       : productDraft;
@@ -2073,6 +2097,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             {selectedVendor && !canManageVendor(selectedVendor) && canRenameStableVendor(selectedVendor) && <Button variant="secondary" onClick={() => openVendorEdit(selectedVendor)} disabled={saving}><Pencil className="mr-2 inline" size={15} /> Rename stable</Button>}
             {!selectedVendor && cityDetailOpen && <Button variant="secondary" onClick={() => setCityDetailOpen(false)}><ArrowLeft className="mr-2 inline" size={15} /> City Hub</Button>}
             <Button variant="secondary" className="p-3" onClick={() => void loadCities()} aria-label="Refresh cities"><RefreshCw size={16} /></Button>
+            {isDm && !selectedVendor && !cityDetailOpen && <Button variant="primary" onClick={openCityCreate} disabled={saving}><Plus className="mr-2 inline" size={15} /> Create City</Button>}
             {isDm && !selectedVendor && selectedCity && <Button variant="secondary" onClick={() => openCityEdit(selectedCity)} disabled={saving}><Settings className="mr-2 inline" size={15} /> City Settings</Button>}
             {isDm && !selectedVendor && selectedCity && <Button variant={cityLocked ? 'danger' : 'teal'} onClick={toggleCityLock} disabled={saving}>{cityLocked ? <Lock className="mr-2 inline" size={15} /> : <Unlock className="mr-2 inline" size={15} />}{cityLocked ? 'Locked' : 'Open'}</Button>}
           </div>
@@ -2111,6 +2136,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-2 text-[10px] font-black uppercase tracking-wider">
                             {city.currentResidence && <span className="inline-flex items-center gap-1 rounded-full border px-2 py-1" style={{ borderColor: `${city.primaryColor}aa`, backgroundColor: `${city.primaryColor}24`, color: city.primaryColor }}><Star size={12} fill="currentColor" /> Residence</span>}
+                            {isDm && !city.visibleToPlayers && <span className="inline-flex items-center gap-1 rounded-full border border-[var(--muted)]/45 bg-black/25 px-2 py-1 text-[var(--muted)]"><EyeOff size={12} /> Hidden from players</span>}
                             <span className={`rounded-full border px-2 py-1 ${city.locked ? 'border-[var(--red)]/45 text-[var(--red)]' : 'border-[var(--teal)]/45 text-[var(--teal)]'}`}>{city.locked ? 'Locked' : 'Open'}</span>
                             {city.showUnderConstruction && <span className="rounded-full border border-[var(--line)] bg-black/25 px-2 py-1 text-[var(--muted)]">Building</span>}
                           </span>
@@ -2704,8 +2730,8 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
         </Modal>
       )}
 
-      {editCity && cityDraft && (
-        <Modal title={`Edit ${editCity.name}`} onClose={() => setEditCity(null)}>
+      {(editCity || creatingCity) && cityDraft && (
+        <Modal title={editCity ? `Edit ${editCity.name}` : 'Create City'} onClose={() => { setEditCity(null); setCreatingCity(false); setCityDraft(null); }}>
           <form onSubmit={saveCity} className="grid gap-3">
             <label>
               <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">City name</span>
@@ -2739,15 +2765,19 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                 Open to party
               </label>
               <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
+                <input type="checkbox" checked={cityDraft.visibleToPlayers} onChange={(event) => setCityDraft({ ...cityDraft, visibleToPlayers: event.target.checked })} />
+                Visible to players
+              </label>
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
                 <input type="checkbox" checked={cityDraft.currentResidence} onChange={(event) => setCityDraft({ ...cityDraft, currentResidence: event.target.checked })} />
                 Current residence
               </label>
-              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black sm:col-span-2">
+              <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">
                 <input type="checkbox" checked={cityDraft.showUnderConstruction} onChange={(event) => setCityDraft({ ...cityDraft, showUnderConstruction: event.target.checked })} />
                 Show Under Construction
               </label>
             </div>
-            <Button variant="primary" disabled={!cityDraft.name.trim() || saving}><PackageCheck className="mr-2 inline" size={15} /> Save city</Button>
+            <Button variant="primary" disabled={!cityDraft.name.trim() || saving}><PackageCheck className="mr-2 inline" size={15} /> {editCity ? 'Save city' : 'Create city'}</Button>
           </form>
         </Modal>
       )}
@@ -3398,7 +3428,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                     <div className="grid gap-3 sm:grid-cols-3">
                       <label>
                         <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Stock</span>
-                        <NumberInput min={0} step={productDraft.quantityStep || 1} value={productDraft.stockQuantity} onValueChange={(stockQuantity) => setProductDraft({ ...productDraft, stockQuantity })} />
+                        <NumberInput
+                          min={0}
+                          step={productDraft.quantityStep || 1}
+                          value={productDraft.stockQuantity ?? 0}
+                          disabled={productDraft.stockQuantity === null}
+                          onValueChange={(stockQuantity) => setProductDraft({ ...productDraft, stockQuantity })}
+                        />
                       </label>
                       <label>
                         <span className="mb-1 block text-[10px] font-black uppercase tracking-wider text-[var(--muted)]">Quantity step</span>
@@ -3414,6 +3450,25 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                         </SelectField>
                       </label>
                     </div>
+                    {isDm && (
+                      <label className="flex items-start gap-3 rounded-xl border border-[var(--brass)]/30 bg-[var(--brass)]/10 p-3 text-sm font-black">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 accent-[var(--brass)]"
+                          checked={productDraft.stockQuantity === null}
+                          onChange={(event) => setProductDraft({
+                            ...productDraft,
+                            stockQuantity: event.target.checked
+                              ? null
+                              : Math.max(productDraft.quantityStep || 1, 1)
+                          })}
+                        />
+                        <span>
+                          <span className="block">Infinite stock</span>
+                          <span className="mt-0.5 block text-xs font-bold text-[var(--muted)]">Overrides the stock amount. Purchases will never reduce or sell out this listing.</span>
+                        </span>
+                      </label>
+                    )}
                   </div>
                 </div>
                 <label className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-black">

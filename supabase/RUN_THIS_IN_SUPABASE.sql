@@ -9672,6 +9672,13 @@ begin
     raise exception 'You do not have permission to change this shop stock.';
   end if;
 
+  if v_profile.role <> 'dm'::public.user_role
+    and v_patch ? 'stockQuantity'
+    and ((v_product.stock_quantity is null) <> (jsonb_typeof(v_patch->'stockQuantity') = 'null'))
+  then
+    raise exception 'Only the Dungeon Master can change infinite stock.';
+  end if;
+
   if v_document_editor and not v_can_manage then
     v_patch := jsonb_strip_nulls(jsonb_build_object(
       'documentAuthor', v_patch->'documentAuthor',
@@ -9730,7 +9737,11 @@ begin
       when v_patch ? 'currencySystemKey' then 'calostrynn'
       else currency_system_key
     end,
-    stock_quantity = case when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric) else stock_quantity end,
+    stock_quantity = case
+      when v_patch ? 'stockQuantity' and jsonb_typeof(v_patch->'stockQuantity') = 'null' then null
+      when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric)
+      else stock_quantity
+    end,
     catalog_item_key = case when v_patch ? 'catalogItemKey' then nullif(trim(coalesce(v_patch->>'catalogItemKey', '')), '') else catalog_item_key end,
     shop_section = case when v_patch ? 'section' then coalesce(nullif(trim(v_patch->>'section'), ''), 'Wares') else shop_section end,
     product_kind = case when v_patch ? 'kind' and v_patch->>'kind' in ('item', 'spell', 'document', 'service') then v_patch->>'kind' else product_kind end,
@@ -13515,6 +13526,12 @@ begin
     raise exception 'You do not have permission to add products to this shop.';
   end if;
 
+  if v_profile.role <> 'dm'::public.user_role
+    and (not (v_patch ? 'stockQuantity') or jsonb_typeof(v_patch->'stockQuantity') = 'null')
+  then
+    raise exception 'Only the Dungeon Master can create infinite stock.';
+  end if;
+
   v_kind := case
     when v_patch ? 'kind' and v_patch->>'kind' in ('item', 'spell', 'document', 'service') then v_patch->>'kind'
     when v_vendor.blueprint_type = 'spell_registrar' then 'spell'
@@ -13627,6 +13644,7 @@ begin
     greatest(0, coalesce(nullif(v_patch->>'priceCoin', '')::int, 0)),
     case when v_currency = 'calostrynn' and v_patch ? 'currencySystemKey' and v_patch->>'currencySystemKey' = 'calostrynn' then 'calostrynn' else v_currency end,
     case
+      when v_patch ? 'stockQuantity' and jsonb_typeof(v_patch->'stockQuantity') = 'null' then null
       when v_vendor.blueprint_type = 'stable' then greatest(0, coalesce(nullif(v_patch->>'stockQuantity', '')::numeric, 1))
       when v_patch ? 'stockQuantity' then greatest(0, (v_patch->>'stockQuantity')::numeric)
       else null
@@ -19548,6 +19566,7 @@ alter table public.cities
   add column if not exists primary_color text not null default '#d1a85b',
   add column if not exists secondary_color text not null default '#1f7875',
   add column if not exists accent_color text not null default '#f5b44c',
+  add column if not exists is_player_visible boolean not null default true,
   add column if not exists is_current_residence boolean not null default false,
   add column if not exists show_under_construction boolean not null default false;
 
@@ -19705,6 +19724,7 @@ as $$
     'secondaryColor', p_city.secondary_color,
     'accentColor', p_city.accent_color,
     'locked', p_city.is_locked,
+    'visibleToPlayers', p_city.is_player_visible,
     'currentResidence', p_city.is_current_residence,
     'showUnderConstruction', p_city.show_under_construction,
     'order', p_city.display_order
@@ -19794,16 +19814,20 @@ begin
     'cities', (
       select coalesce(jsonb_agg(public.city_record_to_json(c) order by c.is_current_residence desc, c.display_order, c.name), '[]'::jsonb)
       from public.cities c
+      where v_profile.role = 'dm'::public.user_role or c.is_player_visible
     ),
     'vendors', (
       select coalesce(jsonb_agg(public.shop_vendor_record_to_json(v, v_profile.role = 'dm'::public.user_role) order by v.city_key, v.display_order, v.name), '[]'::jsonb)
       from public.shop_vendors v
-      where v_profile.role = 'dm'::public.user_role or not v.is_hidden
+      join public.cities c on c.city_key = v.city_key
+      where v_profile.role = 'dm'::public.user_role or (c.is_player_visible and not v.is_hidden)
     ),
     'constructionProjects', (
       select coalesce(jsonb_agg(public.city_construction_project_to_json(p) order by p.city_key, p.display_order, p.project_name), '[]'::jsonb)
       from public.city_construction_projects p
+      join public.cities c on c.city_key = p.city_key
       where p.status = 'active'
+        and (v_profile.role = 'dm'::public.user_role or c.is_player_visible)
     )
   );
 end;
@@ -19848,6 +19872,7 @@ begin
     secondary_color = case when v_patch ? 'secondaryColor' then coalesce(nullif(trim(v_patch->>'secondaryColor'), ''), secondary_color) else secondary_color end,
     accent_color = case when v_patch ? 'accentColor' then coalesce(nullif(trim(v_patch->>'accentColor'), ''), accent_color) else accent_color end,
     is_locked = case when v_patch ? 'locked' then coalesce((v_patch->>'locked')::boolean, false) else is_locked end,
+    is_player_visible = case when v_patch ? 'visibleToPlayers' then coalesce((v_patch->>'visibleToPlayers')::boolean, false) else is_player_visible end,
     show_under_construction = case when v_patch ? 'showUnderConstruction' then coalesce((v_patch->>'showUnderConstruction')::boolean, false) else show_under_construction end,
     is_current_residence = case when v_patch ? 'currentResidence' then coalesce((v_patch->>'currentResidence')::boolean, false) else is_current_residence end,
     display_order = case when v_patch ? 'order' then greatest(0, (v_patch->>'order')::int) else display_order end
@@ -19868,6 +19893,67 @@ begin
     set is_current_residence = true
     where city_key = p_city_key;
   end if;
+
+  return public.get_discovered_cities(p_session_token);
+end;
+$$;
+
+create or replace function public.create_discovered_city(
+  p_session_token text,
+  p_patch jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_patch jsonb := coalesce(p_patch, '{}'::jsonb);
+  v_name text := coalesce(nullif(trim(v_patch->>'name'), ''), 'New City');
+  v_city_key text;
+begin
+  v_profile := public.require_dm_profile(p_session_token);
+  v_city_key := public.safe_slug(v_name);
+
+  if v_city_key = '' then
+    v_city_key := 'city';
+  end if;
+
+  if exists (select 1 from public.cities where city_key = v_city_key) then
+    v_city_key := v_city_key || '-' || substring(gen_random_uuid()::text from 1 for 8);
+  end if;
+
+  if coalesce((v_patch->>'currentResidence')::boolean, false) then
+    update public.cities set is_current_residence = false where is_current_residence;
+  end if;
+
+  insert into public.cities (
+    city_key,
+    name,
+    description,
+    primary_color,
+    secondary_color,
+    accent_color,
+    is_locked,
+    is_player_visible,
+    is_current_residence,
+    show_under_construction,
+    display_order
+  )
+  values (
+    v_city_key,
+    v_name,
+    coalesce(v_patch->>'description', ''),
+    coalesce(nullif(trim(v_patch->>'primaryColor'), ''), '#8f6a46'),
+    coalesce(nullif(trim(v_patch->>'secondaryColor'), ''), '#345c52'),
+    coalesce(nullif(trim(v_patch->>'accentColor'), ''), '#c99f65'),
+    coalesce((v_patch->>'locked')::boolean, true),
+    coalesce((v_patch->>'visibleToPlayers')::boolean, false),
+    coalesce((v_patch->>'currentResidence')::boolean, false),
+    coalesce((v_patch->>'showUnderConstruction')::boolean, false),
+    greatest(0, coalesce((v_patch->>'order')::int, (select coalesce(max(display_order), 0) + 10 from public.cities)))
+  );
 
   return public.get_discovered_cities(p_session_token);
 end;
@@ -20128,6 +20214,7 @@ $$;
 grant execute on function public.city_construction_requirement_to_json(public.city_construction_requirements) to anon, authenticated;
 grant execute on function public.city_construction_project_to_json(public.city_construction_projects) to anon, authenticated;
 grant execute on function public.update_city_access(text, text, jsonb) to anon, authenticated;
+grant execute on function public.create_discovered_city(text, jsonb) to anon, authenticated;
 grant execute on function public.construction_source_item_accessible(public.profiles, public.characters, public.inventory_items) to anon, authenticated;
 grant execute on function public.create_city_construction_project(text, text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_city_construction_project(text, uuid, jsonb) to anon, authenticated;
