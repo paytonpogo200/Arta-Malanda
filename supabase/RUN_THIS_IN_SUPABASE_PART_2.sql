@@ -2156,10 +2156,45 @@ alter table public.loot_items add column if not exists is_stackable boolean not 
 alter table public.loot_items drop constraint if exists loot_item_type_valid;
 alter table public.loot_items drop constraint if exists loot_items_item_type_valid;
 
-alter table public.loot_items
-  alter column item_type type text using item_type::text,
-  alter column min_quantity type numeric(12,1) using min_quantity::numeric,
-  alter column max_quantity type numeric(12,1) using max_quantity::numeric;
+do $$
+begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.loot_items'::regclass
+      and attname = 'item_type'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'text'
+  ) then
+    alter table public.loot_items
+      alter column item_type type text using item_type::text;
+  end if;
+
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.loot_items'::regclass
+      and attname = 'min_quantity'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'numeric(12,1)'
+  ) then
+    alter table public.loot_items
+      alter column min_quantity type numeric(12,1) using min_quantity::numeric;
+  end if;
+
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.loot_items'::regclass
+      and attname = 'max_quantity'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'numeric(12,1)'
+  ) then
+    alter table public.loot_items
+      alter column max_quantity type numeric(12,1) using max_quantity::numeric;
+  end if;
+end;
+$$;
 
 alter table public.loot_items drop constraint if exists loot_items_min_quantity_check;
 alter table public.loot_items drop constraint if exists loot_items_max_quantity_check;

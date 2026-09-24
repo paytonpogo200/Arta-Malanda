@@ -174,9 +174,33 @@ create unique index if not exists inventory_loadout_slot_unique
 
 drop index if exists inventory_storage_kind_unique;
 
-alter table public.inventory_items
-  alter column item_type type text using item_type::text,
-  alter column quantity type numeric(12,1) using quantity::numeric;
+do $$
+begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.inventory_items'::regclass
+      and attname = 'item_type'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'text'
+  ) then
+    alter table public.inventory_items
+      alter column item_type type text using item_type::text;
+  end if;
+
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.inventory_items'::regclass
+      and attname = 'quantity'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'numeric(12,1)'
+  ) then
+    alter table public.inventory_items
+      alter column quantity type numeric(12,1) using quantity::numeric;
+  end if;
+end;
+$$;
 
 alter table public.inventory_items
   add column if not exists display_name text,
@@ -4056,9 +4080,33 @@ alter table public.house_inventory_items
   drop constraint if exists house_inventory_item_type_valid,
   drop constraint if exists house_inventory_items_item_type_valid;
 
-alter table public.house_inventory_items
-  alter column item_type type text using item_type::text,
-  alter column quantity type numeric(12,1) using quantity::numeric;
+do $$
+begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.house_inventory_items'::regclass
+      and attname = 'item_type'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'text'
+  ) then
+    alter table public.house_inventory_items
+      alter column item_type type text using item_type::text;
+  end if;
+
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.house_inventory_items'::regclass
+      and attname = 'quantity'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'numeric(12,1)'
+  ) then
+    alter table public.house_inventory_items
+      alter column quantity type numeric(12,1) using quantity::numeric;
+  end if;
+end;
+$$;
 
 alter table public.house_inventory_items
   drop constraint if exists house_inventory_items_slot_index_check;
@@ -8090,9 +8138,33 @@ alter table public.market_products
   drop constraint if exists market_products_item_type_valid,
   drop constraint if exists market_product_item_type_valid;
 
-alter table public.market_products
-  alter column item_type type text using item_type::text,
-  alter column stock_quantity type numeric(12,1) using stock_quantity::numeric;
+do $$
+begin
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.market_products'::regclass
+      and attname = 'item_type'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'text'
+  ) then
+    alter table public.market_products
+      alter column item_type type text using item_type::text;
+  end if;
+
+  if exists (
+    select 1
+    from pg_attribute
+    where attrelid = 'public.market_products'::regclass
+      and attname = 'stock_quantity'
+      and not attisdropped
+      and format_type(atttypid, atttypmod) <> 'numeric(12,1)'
+  ) then
+    alter table public.market_products
+      alter column stock_quantity type numeric(12,1) using stock_quantity::numeric;
+  end if;
+end;
+$$;
 
 alter table public.market_products
   add column if not exists catalog_item_key text,
