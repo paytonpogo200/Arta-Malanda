@@ -36,6 +36,15 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const supabase = createAuthDatabaseClient();
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
 
+    if (String(body.action ?? '').toLowerCase() === 'split') {
+      const { data, error } = await supabase.rpc('split_combatant_token', {
+        p_session_token: token,
+        p_combatant_id: id
+      });
+      if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
+      return NextResponse.json(normalizeBattleRoomPayload(data));
+    }
+
     const { data, error } = await supabase.rpc('update_combatant_statuses', {
       p_session_token: token,
       p_combatant_id: id,

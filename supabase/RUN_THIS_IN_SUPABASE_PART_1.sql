@@ -213,9 +213,10 @@ create table if not exists public.combatants (
   current_mana int not null default 0 check (current_mana >= 0),
   initiative int check (initiative between 1 and 20),
   statuses jsonb not null default '[]'::jsonb check (jsonb_typeof(statuses) = 'array'),
-  created_at timestamptz not null default now(),
-  unique (battle_id, character_id)
+  created_at timestamptz not null default now()
 );
+
+alter table public.combatants drop constraint if exists combatants_battle_id_character_id_key;
 
 create table if not exists public.battle_terrain (
   id uuid primary key default gen_random_uuid(),
@@ -7487,7 +7488,7 @@ begin
         and (v_patch->>'currentHp')::int > current_hp
         and exists (
           select 1 from jsonb_array_elements(statuses) effect
-          where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+          where effect->>'key' in ('burning', 'bleeding') and coalesce((effect->>'duration')::int, 0) > 0
         )
         then current_hp
       when v_patch ? 'currentHp' then greatest(0, (v_patch->>'currentHp')::int)
@@ -7497,6 +7498,14 @@ begin
     initiative = v_initiative
   where id = p_combatant_id
   returning * into v_combatant;
+
+  if v_patch ? 'currentHp' then
+    update public.combatants
+    set current_hp = v_combatant.current_hp
+    where battle_id = v_combatant.battle_id
+      and character_id = v_combatant.character_id
+      and id <> v_combatant.id;
+  end if;
 
   return public.combatant_record_to_json(v_combatant);
 end;
@@ -7531,6 +7540,7 @@ declare
   v_max_mana int := 0;
   v_health_gain int := 0;
   v_mana_gain int := 0;
+  v_healing_blocked boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -7603,7 +7613,15 @@ begin
     v_mana_regen := public.character_battle_attribute(v_combatant.character_id, 'mana_regen');
     v_max_hp := public.character_battle_resource_max(v_combatant.character_id, 'health');
     v_max_mana := public.character_battle_resource_max(v_combatant.character_id, 'mana');
-    v_health_gain := greatest(0, least(greatest(v_combatant.current_hp, v_max_hp), v_combatant.current_hp + v_recovery * 5) - v_combatant.current_hp);
+    v_healing_blocked := exists (
+      select 1 from jsonb_array_elements(v_statuses) effect
+      where effect->>'key' in ('burning', 'bleeding')
+        and coalesce((effect->>'duration')::int, 0) > 0
+    );
+    v_health_gain := case
+      when v_healing_blocked then 0
+      else greatest(0, least(greatest(v_combatant.current_hp, v_max_hp), v_combatant.current_hp + v_recovery * 5) - v_combatant.current_hp)
+    end;
     v_mana_gain := greatest(0, least(greatest(v_combatant.current_mana, v_max_mana), v_combatant.current_mana + v_mana_regen * 5) - v_combatant.current_mana);
 
     select
@@ -7639,6 +7657,14 @@ begin
   where id = p_combatant_id
   returning * into v_combatant;
 
+  update public.combatants
+  set statuses = v_combatant.statuses,
+      current_hp = v_combatant.current_hp,
+      current_mana = v_combatant.current_mana
+  where battle_id = v_combatant.battle_id
+    and character_id = v_combatant.character_id
+    and id <> v_combatant.id;
+
   if v_action = 'start-turn' then
     update public.characters set current_hp = v_combatant.current_hp, current_mana = v_combatant.current_mana where id = v_combatant.character_id;
   end if;
@@ -7649,6 +7675,62 @@ begin
     'healthRestored', case when v_action = 'start-turn' then v_health_gain else 0 end,
     'manaRestored', case when v_action = 'start-turn' then v_mana_gain else 0 end
   );
+end;
+$$;
+
+create or replace function public.split_combatant_token(
+  p_session_token text,
+  p_combatant_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_source public.combatants%rowtype;
+  v_battle public.battles%rowtype;
+  v_character public.characters%rowtype;
+  v_x int;
+  v_y int;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can split the Malignant Neoplasm.'; end if;
+
+  select * into v_source from public.combatants where id = p_combatant_id;
+  if v_source.id is null then raise exception 'Combatant not found.'; end if;
+  select * into v_battle from public.battles where id = v_source.battle_id and status = 'active'::public.battle_status;
+  if v_battle.id is null then raise exception 'That encounter is not active.'; end if;
+  select * into v_character from public.characters where id = v_source.character_id;
+  if lower(trim(coalesce(v_character.name, ''))) <> 'the malignant neoplasm' then
+    raise exception 'Only The Malignant Neoplasm can use Split.';
+  end if;
+
+  select candidate.x, candidate.y into v_x, v_y
+  from (
+    select grid_x as x, grid_y as y
+    from generate_series(0, v_battle.grid_width - 1) grid_x
+    cross join generate_series(0, v_battle.grid_height - 1) grid_y
+  ) candidate
+  where not exists (
+      select 1 from public.combatants combatant
+      where combatant.battle_id = v_battle.id and combatant.x = candidate.x and combatant.y = candidate.y
+    )
+    and not exists (
+      select 1 from public.battle_terrain terrain
+      where terrain.battle_id = v_battle.id and terrain.x = candidate.x and terrain.y = candidate.y and terrain.terrain_type = 'blocked'
+    )
+  order by ((candidate.x - v_source.x) * (candidate.x - v_source.x) + (candidate.y - v_source.y) * (candidate.y - v_source.y)), candidate.y, candidate.x
+  limit 1;
+
+  if v_x is null or v_y is null then raise exception 'There is no open map space for the Neoplasm to split into.'; end if;
+
+  insert into public.combatants (battle_id, character_id, x, y, current_hp, current_mana, initiative, statuses)
+  values (v_source.battle_id, v_source.character_id, v_x, v_y, v_source.current_hp, v_source.current_mana, v_source.initiative, v_source.statuses);
+
+  return public.get_battle_room(p_session_token);
 end;
 $$;
 
@@ -7922,6 +8004,7 @@ grant execute on function public.get_battle_room(text) to anon, authenticated;
 grant execute on function public.start_campaign_battle(text, uuid[], int, int) to anon, authenticated;
 grant execute on function public.update_combatant_state(text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.update_combatant_statuses(text, uuid, text, text, text, int) to anon, authenticated;
+grant execute on function public.split_combatant_token(text, uuid) to anon, authenticated;
 grant execute on function public.remove_combatant_from_battle(text, uuid) to anon, authenticated;
 grant execute on function public.end_active_battle(text) to anon, authenticated;
 grant execute on function public.set_battle_terrain(text, jsonb) to anon, authenticated;
@@ -13044,9 +13127,9 @@ begin
   if v_property = 'Healing' then
     if v_active_combatant.id is not null and exists (
       select 1 from jsonb_array_elements(v_active_combatant.statuses) effect
-      where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+      where effect->>'key' in ('burning', 'bleeding') and coalesce((effect->>'duration')::int, 0) > 0
     ) then
-      raise exception 'Healing cannot take effect while this character is burning.';
+      raise exception 'Healing cannot take effect while this character is burning or bleeding.';
     end if;
     v_effect := 'health';
     v_current := coalesce(v_active_combatant.current_hp, v_character.current_hp);

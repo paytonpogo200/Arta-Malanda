@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Clock3, Eye, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
+import { Clock3, CopyPlus, Eye, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { CombatStatusBadges } from '@/components/battle/CombatStatusBadges';
 import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
@@ -24,8 +24,8 @@ const SPECTATOR_VIEW = 'spectator';
 
 const BATTLE_EFFECT_OPTIONS: Array<{ key: string; name: string; kind: 'buff' | 'debuff'; description: string }> = [
   { key: 'better-dice', name: 'Better Dice', kind: 'buff', description: 'Marks improved dice rolls.' },
-  { key: 'bleeding', name: 'Bleeding', kind: 'debuff', description: 'Marks an ongoing bleeding effect.' },
-  { key: 'burning', name: 'Burning', kind: 'debuff', description: 'Deals 10 damage on Start Turn and prevents ordinary healing.' },
+  { key: 'bleeding', name: 'Bleeding', kind: 'debuff', description: 'Prevents every form of healing while active.' },
+  { key: 'burning', name: 'Burning', kind: 'debuff', description: 'Deals 10 damage on Start Turn and prevents every form of healing.' },
   { key: 'counterattack', name: 'Counterattack', kind: 'buff', description: 'Marks the target as ready to counterattack.' },
   { key: 'invisible', name: 'Invisible', kind: 'buff', description: 'Marks the target as invisible.' },
   { key: 'ironskin', name: 'Ironskin', kind: 'buff', description: 'Marks the target with hardened defenses.' },
@@ -267,7 +267,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     const previous = room.combatants;
     setRoom((current) => ({
       ...current,
-      combatants: current.combatants.map((entry) => entry.id === combatant.id ? { ...entry, ...patch } : entry)
+      combatants: current.combatants.map((entry) => entry.id === combatant.id || (patch.currentHp !== undefined && entry.characterId === combatant.characterId)
+        ? { ...entry, ...patch }
+        : entry)
     }));
 
     try {
@@ -282,12 +284,34 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       if (updated?.id) {
         setRoom((current) => ({
           ...current,
-          combatants: current.combatants.map((entry) => entry.id === updated.id ? updated : entry)
+          combatants: current.combatants.map((entry) => entry.id === updated.id
+            ? updated
+            : patch.currentHp !== undefined && entry.characterId === updated.characterId
+              ? { ...entry, currentHp: updated.currentHp }
+              : entry)
         }));
       }
     } catch (updateError) {
       setRoom((current) => ({ ...current, combatants: previous }));
       setError(updateError instanceof Error ? updateError.message : 'Combatant could not be changed.');
+    }
+  }
+
+  async function splitCombatant(combatant: Combatant) {
+    if (!canUseDmTools) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/battle/combatants/${combatant.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'split' })
+      });
+      await replaceRoomFromResponse(response, 'The Malignant Neoplasm could not split.');
+    } catch (splitError) {
+      setError(splitError instanceof Error ? splitError.message : 'The Malignant Neoplasm could not split.');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -306,7 +330,14 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       if (!response.ok) throw new Error(payload.error ?? 'Battle effects could not be changed.');
       const updated = payload.combatant as Combatant | undefined;
       if (updated?.id) {
-        setRoom((current) => ({ ...current, combatants: current.combatants.map((entry) => entry.id === updated.id ? updated : entry) }));
+        setRoom((current) => ({
+          ...current,
+          combatants: current.combatants.map((entry) => entry.id === updated.id
+            ? updated
+            : entry.characterId === updated.characterId
+              ? { ...entry, currentHp: updated.currentHp, currentMana: updated.currentMana, statuses: updated.statuses }
+              : entry)
+        }));
       }
       if (action === 'start-turn') {
         const gains = [payload.healthRestored > 0 ? `${payload.healthRestored} HP restored` : '', payload.manaRestored > 0 ? `${payload.manaRestored} Mana restored` : ''].filter(Boolean).join(' and ');
@@ -589,6 +620,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             <div className="flex flex-wrap gap-2">
               <Button variant="danger" className="px-3 py-2 text-xs" disabled={saving} onClick={() => openStatusEditor()}><Plus className="mr-1 inline" size={13} /> Add Buff/Debuff</Button>
               <Button variant="primary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'start-turn')}><Clock3 className="mr-1 inline" size={13} /> Start Turn</Button>
+              {selectedCharacter.name.trim().toLowerCase() === 'the malignant neoplasm' && <Button variant="teal" className="px-3 py-2 text-xs" disabled={saving} onClick={() => void splitCombatant(selectedCombatant)}><CopyPlus className="mr-1 inline" size={13} /> Split</Button>}
             </div>
           </div>
           <div className="grid gap-2 sm:grid-cols-3">
@@ -641,16 +673,38 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             })()}
             <section>
               <p className="eyebrow mb-2">Add an effect</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {BATTLE_EFFECT_OPTIONS.map((effect) => (
-                  <button key={effect.key} type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: effect.key })} className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition disabled:opacity-50 ${effect.kind === 'buff' ? 'border-[#4c9ed3] bg-[#174e7355] hover:bg-[#174e7377]' : 'border-[#d65b52] bg-[#72231f55] hover:bg-[#72231f77]'}`}>
-                    <CombatStatusBadges statuses={[{ id: `option-${effect.key}`, key: effect.key, name: effect.name, kind: effect.kind, duration: 1, amount: 0 }]} compact />
-                    <span><span className={`block font-black ${effect.kind === 'buff' ? 'text-[#9fdcff]' : 'text-[#ffafa7]'}`}>{effect.name}</span><span className="text-xs text-[var(--muted)]">{effect.description}</span></span>
-                  </button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(['buff', 'debuff'] as const).map((kind) => (
+                  <div key={kind} className={`rounded-2xl border p-3 ${kind === 'buff' ? 'border-[#4c9ed3]/70 bg-[#174e732b]' : 'border-[#d65b52]/70 bg-[#72231f2b]'}`}>
+                    <p className={`mb-2 text-xs font-black uppercase tracking-wider ${kind === 'buff' ? 'text-[#9fdcff]' : 'text-[#ffafa7]'}`}>{kind === 'buff' ? 'Buffs' : 'Debuffs'}</p>
+                    <div className="grid gap-2">
+                      {BATTLE_EFFECT_OPTIONS.filter((effect) => effect.kind === kind).map((effect) => (
+                        <button key={effect.key} type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: effect.key })} className={`flex items-center gap-3 rounded-xl border p-3 text-left transition disabled:opacity-50 ${kind === 'buff' ? 'border-[#4c9ed3] bg-[#174e7355] hover:bg-[#174e7377]' : 'border-[#d65b52] bg-[#72231f55] hover:bg-[#72231f77]'}`}>
+                          <CombatStatusBadges statuses={[{ id: `option-${effect.key}`, key: effect.key, name: effect.name, kind: effect.kind, duration: 1, amount: 0 }]} compact />
+                          <span><span className={`block font-black ${kind === 'buff' ? 'text-[#9fdcff]' : 'text-[#ffafa7]'}`}>{effect.name}</span><span className="text-xs text-[var(--muted)]">{effect.description}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             </section>
-            {!!selectedCombatant.statuses.filter((entry) => entry.kind === 'debuff').length && <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3"><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={(status) => setEditingStatusId(status.id)} /></div>}
+            {!!selectedCombatant.statuses.length && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-[#4c9ed3]/50 bg-[#174e7322] p-3">
+                  <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-[#9fdcff]">Active buffs</p>
+                  {selectedCombatant.statuses.some((entry) => entry.kind !== 'debuff')
+                    ? <CombatStatusBadges statuses={selectedCombatant.statuses.filter((entry) => entry.kind !== 'debuff')} onStatusClick={(status) => setEditingStatusId(status.id)} />
+                    : <p className="text-xs font-bold text-[var(--muted)]">None</p>}
+                </div>
+                <div className="rounded-2xl border border-[#d65b52]/50 bg-[#72231f22] p-3">
+                  <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-[#ffafa7]">Active debuffs</p>
+                  {selectedCombatant.statuses.some((entry) => entry.kind === 'debuff')
+                    ? <CombatStatusBadges statuses={selectedCombatant.statuses.filter((entry) => entry.kind === 'debuff')} onStatusClick={(status) => setEditingStatusId(status.id)} />
+                    : <p className="text-xs font-bold text-[var(--muted)]">None</p>}
+                </div>
+              </div>
+            )}
             {selectedCombatant.statuses.some((entry) => entry.key === 'poison') && <Button variant="secondary" className="w-full" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'extend-poison')}><FlaskConical className="mr-2 inline" size={15} /> Increase all poison durations by 1</Button>}
             {statusNotice && <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold">{statusNotice}</p>}
             <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-3"><Button variant="teal" disabled={saving || !selectedCombatant.statuses.some((entry) => entry.kind === 'debuff')} onClick={() => void updateCombatantStatuses(selectedCombatant, 'cleanse')}><ShieldCheck className="mr-2 inline" size={16} /> Cleanse</Button><Button variant="secondary" onClick={() => { setStatusEditorOpen(false); setEditingStatusId(null); }}>Close</Button></div>

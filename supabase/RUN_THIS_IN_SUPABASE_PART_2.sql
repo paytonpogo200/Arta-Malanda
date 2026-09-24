@@ -1920,6 +1920,7 @@ declare
   v_form int;
   v_caster_is_burning boolean := false;
   v_target_is_burning boolean := false;
+  v_target_healing_blocked boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -1972,6 +1973,10 @@ begin
       select 1 from jsonb_array_elements(v_target_combatant.statuses) effect
       where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
     );
+    v_target_healing_blocked := exists (
+      select 1 from jsonb_array_elements(v_target_combatant.statuses) effect
+      where effect->>'key' in ('burning', 'bleeding') and coalesce((effect->>'duration')::int, 0) > 0
+    );
   end if;
 
   if v_form = 2 and v_caster_is_burning then raise exception 'Form 2 cannot be used while the caster is burning.'; end if;
@@ -1992,7 +1997,7 @@ begin
     v_restore_mana := 75;
   end if;
 
-  if v_target_is_burning then v_heal_amount := 0; end if;
+  if v_target_healing_blocked then v_heal_amount := 0; end if;
 
   v_remaining_mana := v_current_mana - v_mana_cost;
   v_target_hp := least(v_target.max_hp, coalesce(v_target_combatant.current_hp, v_target.current_hp) + v_heal_amount);
@@ -2030,7 +2035,8 @@ begin
     'healedHp', v_heal_amount,
     'restoredMana', v_restore_mana,
     'casterOnFire', v_caster_is_burning,
-    'targetWasBurning', v_target_is_burning
+    'targetWasBurning', v_target_is_burning,
+    'targetHealingBlocked', v_target_healing_blocked
   );
 end;
 $$;
