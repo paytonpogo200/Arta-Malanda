@@ -212,6 +212,7 @@ create table if not exists public.combatants (
   current_hp int not null default 0 check (current_hp >= 0),
   current_mana int not null default 0 check (current_mana >= 0),
   initiative int check (initiative between 1 and 20),
+  statuses jsonb not null default '[]'::jsonb check (jsonb_typeof(statuses) = 'array'),
   created_at timestamptz not null default now(),
   unique (battle_id, character_id)
 );
@@ -575,6 +576,8 @@ create table if not exists public.bestiary_entities (
   summary text not null default '',
   details text not null default '',
   stats jsonb not null default '{}'::jsonb check (jsonb_typeof(stats) = 'object'),
+  token_color text,
+  token_color_secondary text,
   is_unlocked boolean not null default false,
   display_order int not null default 0,
   created_at timestamptz not null default now(),
@@ -586,6 +589,19 @@ drop constraint if exists bestiary_entities_category_check;
 
 alter table public.bestiary_entities
 add column if not exists stats jsonb not null default '{}'::jsonb;
+
+alter table public.bestiary_entities
+add column if not exists token_color text,
+add column if not exists token_color_secondary text;
+
+alter table public.bestiary_entities
+drop constraint if exists bestiary_entities_token_color_check;
+
+alter table public.bestiary_entities
+add constraint bestiary_entities_token_color_check check (
+  (token_color is null or token_color ~ '^#[0-9A-Fa-f]{6}$')
+  and (token_color_secondary is null or token_color_secondary ~ '^#[0-9A-Fa-f]{6}$')
+);
 
 create index if not exists bestiary_entities_category_idx on public.bestiary_entities(category);
 create index if not exists bestiary_entities_unlocked_idx on public.bestiary_entities(is_unlocked);
@@ -656,6 +672,8 @@ as $$
     'summary', p_entity.summary,
     'details', p_entity.details,
     'stats', p_entity.stats,
+    'tokenColor', coalesce(p_entity.token_color, ''),
+    'tokenColorSecondary', p_entity.token_color_secondary,
     'unlocked', p_entity.is_unlocked,
     'order', p_entity.display_order
   )
@@ -704,6 +722,12 @@ as $$
 declare
   v_color text := lower(trim(coalesce(p_entity.stats->>'Color', p_entity.stats->>'color', '')));
 begin
+  if p_entity.token_color is not null and p_entity.token_color_secondary is not null then
+    return format('linear-gradient(135deg, %s 0%%, %s 100%%)', p_entity.token_color, p_entity.token_color_secondary);
+  elsif p_entity.token_color is not null then
+    return p_entity.token_color;
+  end if;
+
   if p_entity.category = 'bosses' then
     if v_color like '%turquoise%' and v_color like '%lime%' then
       return 'linear-gradient(135deg, #18d3c5 0%, #55f2e8 32%, #a3e635 68%, #f4ff8f 100%)';
@@ -842,8 +866,77 @@ begin
     summary = case when v_patch ? 'summary' then coalesce(v_patch->>'summary', '') else summary end,
     details = case when v_patch ? 'details' then coalesce(v_patch->>'details', '') else details end,
     stats = case when v_patch ? 'stats' then coalesce(v_patch->'stats', '{}'::jsonb) else stats end,
+    token_color = case when v_patch ? 'tokenColor' then nullif(trim(v_patch->>'tokenColor'), '') else token_color end,
+    token_color_secondary = case when v_patch ? 'tokenColorSecondary' then nullif(trim(v_patch->>'tokenColorSecondary'), '') else token_color_secondary end,
     display_order = case when v_patch ? 'order' then (v_patch->>'order')::int else display_order end
   where id = p_entity_id;
+
+  return public.get_bestiary(p_session_token);
+end;
+$$;
+
+create or replace function public.create_bestiary_entity(
+  p_session_token text,
+  p_entry jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_entry jsonb := coalesce(p_entry, '{}'::jsonb);
+  v_name text;
+  v_category_key text;
+  v_category_name text;
+  v_entity_key text;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can create bestiary entries.'; end if;
+
+  v_name := nullif(trim(v_entry->>'name'), '');
+  if v_name is null then raise exception 'Give the beast a name.'; end if;
+
+  v_category_key := nullif(trim(v_entry->>'category'), '');
+  if v_category_key is not null and exists (select 1 from public.bestiary_categories where category_key = v_category_key) then
+    select name into v_category_name from public.bestiary_categories where category_key = v_category_key;
+  else
+    v_category_name := coalesce(nullif(trim(v_entry->>'categoryName'), ''), 'Uncategorized');
+    v_category_key := lower(regexp_replace(v_category_name, '[^a-zA-Z0-9]+', '-', 'g'));
+    v_category_key := trim(both '-' from v_category_key);
+    if v_category_key = '' then v_category_key := 'uncategorized'; end if;
+  end if;
+
+  insert into public.bestiary_categories (category_key, name, display_order)
+  values (v_category_key, v_category_name, coalesce((select max(display_order) + 10 from public.bestiary_categories), 10))
+  on conflict (category_key) do nothing;
+
+  v_entity_key := lower(regexp_replace(v_name, '[^a-zA-Z0-9]+', '-', 'g'));
+  v_entity_key := trim(both '-' from v_entity_key) || '-' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8);
+
+  insert into public.bestiary_entities (
+    entity_key, name, category, habitat, temperament, wild_score, hp, mana,
+    summary, details, stats, token_color, token_color_secondary, is_unlocked, display_order
+  )
+  values (
+    v_entity_key,
+    v_name,
+    v_category_key,
+    coalesce(v_entry->>'habitat', ''),
+    coalesce(v_entry->>'temperament', ''),
+    greatest(0, coalesce(nullif(v_entry->>'wildScore', '')::int, 0)),
+    greatest(1, coalesce(nullif(v_entry->>'hp', '')::int, 1)),
+    greatest(0, coalesce(nullif(v_entry->>'mana', '')::int, 0)),
+    coalesce(v_entry->>'summary', ''),
+    coalesce(v_entry->>'details', ''),
+    case when jsonb_typeof(v_entry->'stats') = 'object' then v_entry->'stats' else '{}'::jsonb end,
+    coalesce(nullif(trim(v_entry->>'tokenColor'), ''), '#7f514d'),
+    nullif(trim(v_entry->>'tokenColorSecondary'), ''),
+    coalesce((v_entry->>'unlocked')::boolean, true),
+    coalesce((select max(display_order) + 10 from public.bestiary_entities where category = v_category_key), 10)
+  );
 
   return public.get_bestiary(p_session_token);
 end;
@@ -857,6 +950,7 @@ grant execute on function public.bestiary_token_color(public.bestiary_entities) 
 grant execute on function public.get_bestiary(text) to anon, authenticated;
 grant execute on function public.update_bestiary_category(text, text, jsonb) to anon, authenticated;
 grant execute on function public.update_bestiary_entity(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.create_bestiary_entity(text, jsonb) to anon, authenticated;
 
 
 -- ============================================================
@@ -4163,6 +4257,15 @@ create table if not exists public.house_unit_access_permissions (
   primary key (house_id, grantee_user_id),
   constraint house_unit_access_permissions_some_access check (can_access_house or can_access_stable)
 );
+
+alter table public.combatants
+add column if not exists statuses jsonb not null default '[]'::jsonb;
+
+alter table public.combatants
+drop constraint if exists combatants_statuses_check;
+
+alter table public.combatants
+add constraint combatants_statuses_check check (jsonb_typeof(statuses) = 'array');
 create table if not exists public.player_main_homes (
   owner_user_id uuid primary key references public.profiles(id) on delete cascade,
   home_source text not null check (home_source in ('static', 'mobile')),
@@ -7055,7 +7158,8 @@ as $$
     'y', p_combatant.y,
     'currentHp', p_combatant.current_hp,
     'currentMana', p_combatant.current_mana,
-    'initiative', p_combatant.initiative
+    'initiative', p_combatant.initiative,
+    'statuses', p_combatant.statuses
   )
 $$;
 
@@ -7309,13 +7413,137 @@ begin
   set
     x = v_x,
     y = v_y,
-    current_hp = case when v_patch ? 'currentHp' then greatest(0, (v_patch->>'currentHp')::int) else current_hp end,
+    current_hp = case
+      when v_patch ? 'currentHp'
+        and (v_patch->>'currentHp')::int > current_hp
+        and exists (
+          select 1 from jsonb_array_elements(statuses) effect
+          where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+        )
+        then current_hp
+      when v_patch ? 'currentHp' then greatest(0, (v_patch->>'currentHp')::int)
+      else current_hp
+    end,
     current_mana = case when v_patch ? 'currentMana' then greatest(0, (v_patch->>'currentMana')::int) else current_mana end,
     initiative = v_initiative
   where id = p_combatant_id
   returning * into v_combatant;
 
   return public.combatant_record_to_json(v_combatant);
+end;
+$$;
+
+create or replace function public.update_combatant_statuses(
+  p_session_token text,
+  p_combatant_id uuid,
+  p_action text,
+  p_status_key text default null,
+  p_status_id text default null,
+  p_duration int default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_combatant public.combatants%rowtype;
+  v_battle public.battles%rowtype;
+  v_action text := lower(trim(coalesce(p_action, '')));
+  v_status_key text := lower(trim(coalesce(p_status_key, '')));
+  v_statuses jsonb;
+  v_damage int := 0;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can change battle effects.'; end if;
+
+  select * into v_combatant from public.combatants where id = p_combatant_id for update;
+  if v_combatant.id is null then raise exception 'Combatant not found.'; end if;
+  select * into v_battle from public.battles where id = v_combatant.battle_id and status = 'active'::public.battle_status;
+  if v_battle.id is null then raise exception 'That encounter is not active.'; end if;
+  v_statuses := coalesce(v_combatant.statuses, '[]'::jsonb);
+
+  if v_action = 'add' then
+    if v_status_key = 'poison' then
+      v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
+        'id', gen_random_uuid()::text, 'key', 'poison', 'name', 'Poison', 'kind', 'debuff', 'duration', 1
+      ));
+    elsif v_status_key = 'burning' then
+      if exists (select 1 from jsonb_array_elements(v_statuses) effect where effect->>'key' = 'burning') then
+        select coalesce(jsonb_agg(
+          case when effect->>'key' = 'burning'
+            then jsonb_set(effect, '{duration}', to_jsonb(least(99, coalesce((effect->>'duration')::int, 0) + 1)))
+            else effect end
+          order by ordinality
+        ), '[]'::jsonb)
+        into v_statuses
+        from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
+      else
+        v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
+          'id', gen_random_uuid()::text, 'key', 'burning', 'name', 'Burning', 'kind', 'debuff', 'duration', 1
+        ));
+      end if;
+    else
+      raise exception 'That battle effect is not supported.';
+    end if;
+  elsif v_action = 'set-duration' then
+    if nullif(trim(coalesce(p_status_id, '')), '') is null then raise exception 'Choose an effect to edit.'; end if;
+    select coalesce(jsonb_agg(
+      case when effect->>'id' = p_status_id
+        then jsonb_set(effect, '{duration}', to_jsonb(greatest(1, least(99, coalesce(p_duration, 1)))))
+        else effect end
+      order by ordinality
+    ), '[]'::jsonb)
+    into v_statuses
+    from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
+  elsif v_action = 'extend-poison' then
+    select coalesce(jsonb_agg(
+      case when effect->>'key' = 'poison'
+        then jsonb_set(effect, '{duration}', to_jsonb(least(99, coalesce((effect->>'duration')::int, 0) + 1)))
+        else effect end
+      order by ordinality
+    ), '[]'::jsonb)
+    into v_statuses
+    from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
+  elsif v_action = 'start-turn' then
+    select
+      count(*) filter (where effect->>'key' = 'poison')::int * 5
+      + case when count(*) filter (where effect->>'key' = 'burning') > 0 then 10 else 0 end
+    into v_damage
+    from jsonb_array_elements(v_statuses) effect
+    where coalesce((effect->>'duration')::int, 0) > 0;
+
+    select coalesce(jsonb_agg(
+      jsonb_set(effect, '{duration}', to_jsonb((effect->>'duration')::int - 1))
+      order by case when effect->>'key' = 'burning' then 0 else 1 end, ordinality
+    ) filter (where (effect->>'duration')::int > 1), '[]'::jsonb)
+    into v_statuses
+    from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
+  elsif v_action = 'cleanse' then
+    select coalesce(jsonb_agg(effect order by ordinality), '[]'::jsonb)
+    into v_statuses
+    from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality)
+    where coalesce(effect->>'kind', 'debuff') <> 'debuff';
+  else
+    raise exception 'Unknown battle effect action.';
+  end if;
+
+  update public.combatants
+  set statuses = v_statuses,
+      current_hp = greatest(0, current_hp - case when v_action = 'start-turn' then v_damage else 0 end)
+  where id = p_combatant_id
+  returning * into v_combatant;
+
+  if v_action = 'start-turn' then
+    update public.characters set current_hp = v_combatant.current_hp where id = v_combatant.character_id;
+  end if;
+
+  return jsonb_build_object(
+    'combatant', public.combatant_record_to_json(v_combatant),
+    'damage', case when v_action = 'start-turn' then v_damage else 0 end
+  );
 end;
 $$;
 
@@ -7455,7 +7683,6 @@ declare
   v_x int;
   v_y int;
   v_armor_hide int := 0;
-  v_vitality int := 0;
   v_magic_resist int := 0;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
@@ -7487,7 +7714,6 @@ begin
   if v_x is null or v_y is null then raise exception 'No open battlefield cell is available.'; end if;
 
   v_armor_hide := public.bestiary_stat_number(v_entity.stats, array['Armor / Hide', 'Armor', 'Hide']);
-  v_vitality := public.bestiary_stat_number(v_entity.stats, array['Vitality']);
   v_magic_resist := public.bestiary_stat_number(v_entity.stats, array['Magic Resistance', 'Magic Resist', 'Magic Res']);
 
   insert into public.characters (
@@ -7509,18 +7735,18 @@ begin
     0,
     0,
     jsonb_build_object(
-      'strength', 0,
-      'accuracy', 0,
-      'intelligence', 0,
-      'vitality', greatest(0, v_armor_hide + v_vitality),
-      'recovery', 0,
-      'mana_regen', 0,
-      'charisma', 0,
-      'wisdom_cunning', 0,
-      'perception', 0,
-      'alchemy', 0,
-      'stealth', 0,
-      'agility', 0
+      'strength', public.bestiary_stat_number(v_entity.stats, array['Strength']),
+      'accuracy', public.bestiary_stat_number(v_entity.stats, array['Accuracy']),
+      'intelligence', public.bestiary_stat_number(v_entity.stats, array['Intelligence']),
+      'vitality', v_armor_hide + public.bestiary_stat_number(v_entity.stats, array['Vitality']),
+      'recovery', public.bestiary_stat_number(v_entity.stats, array['Recovery']),
+      'mana_regen', public.bestiary_stat_number(v_entity.stats, array['Mana Regen']),
+      'charisma', public.bestiary_stat_number(v_entity.stats, array['Charisma']),
+      'wisdom_cunning', public.bestiary_stat_number(v_entity.stats, array['Wisdom / Cunning', 'Wisdom/Cunning']),
+      'perception', public.bestiary_stat_number(v_entity.stats, array['Perception']),
+      'alchemy', public.bestiary_stat_number(v_entity.stats, array['Alchemy']),
+      'stealth', public.bestiary_stat_number(v_entity.stats, array['Stealth']),
+      'agility', public.bestiary_stat_number(v_entity.stats, array['Agility'])
     ),
     jsonb_build_array(coalesce(nullif(v_entity.summary, ''), v_entity.temperament)),
     v_entity.details,
@@ -7587,6 +7813,7 @@ grant execute on function public.battle_terrain_record_to_json(public.battle_ter
 grant execute on function public.get_battle_room(text) to anon, authenticated;
 grant execute on function public.start_campaign_battle(text, uuid[], int, int) to anon, authenticated;
 grant execute on function public.update_combatant_state(text, uuid, jsonb) to anon, authenticated;
+grant execute on function public.update_combatant_statuses(text, uuid, text, text, text, int) to anon, authenticated;
 grant execute on function public.remove_combatant_from_battle(text, uuid) to anon, authenticated;
 grant execute on function public.end_active_battle(text) to anon, authenticated;
 grant execute on function public.set_battle_terrain(text, jsonb) to anon, authenticated;
@@ -12707,6 +12934,12 @@ begin
   limit 1;
 
   if v_property = 'Healing' then
+    if v_active_combatant.id is not null and exists (
+      select 1 from jsonb_array_elements(v_active_combatant.statuses) effect
+      where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+    ) then
+      raise exception 'Healing cannot take effect while this character is burning.';
+    end if;
     v_effect := 'health';
     v_current := coalesce(v_active_combatant.current_hp, v_character.current_hp);
     if v_current >= v_character.max_hp then raise exception 'Health is already full.'; end if;

@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { LocateFixed, Minus, PaintBucket, Pencil, Plus, RotateCcw, RotateCw, Square, Trash2 } from 'lucide-react';
 import { characterLevelTokenClass, LevelPips } from '@/components/characters/LevelBadge';
+import { CombatStatusBadges } from '@/components/battle/CombatStatusBadges';
 import { Button } from '@/components/ui/Button';
 import { percent, clamp } from '@/lib/utils/format';
 import type { Battle, BattleTerrain, Character, Combatant, Profile } from '@/lib/types';
@@ -58,6 +59,7 @@ const BattleToken = memo(function BattleToken({
           <span className="block h-full rounded-full bg-gradient-to-r from-[#336cbb] to-[#9ed1ff]" style={{ width: `${percent(token.currentMana, character?.maxMana ?? 1)}%` }} />
         </span>
       </span>
+      {!!token.statuses.length && <span className="pointer-events-none absolute left-1/2 top-[74px] z-30 w-[150px] -translate-x-1/2"><CombatStatusBadges statuses={token.statuses} compact /></span>}
     </button>
   );
 });

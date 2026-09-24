@@ -1918,6 +1918,8 @@ declare
   v_target_hp int;
   v_target_mana int;
   v_form int;
+  v_caster_is_burning boolean := false;
+  v_target_is_burning boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -1943,7 +1945,6 @@ begin
   if v_target.id is null then raise exception 'Target ally not found.'; end if;
   if v_target.id = v_character.id then raise exception 'Peaceful Restoration must target an ally, not the caster.'; end if;
   if v_form not in (1, 2) then raise exception 'Choose Peaceful Restoration form 1 or form 2.'; end if;
-  if v_form = 2 and coalesce(p_caster_on_fire, false) then raise exception 'Form 2 cannot be used while the caster is on fire.'; end if;
 
   select cb.* into v_caster_combatant
   from public.combatants cb
@@ -1954,6 +1955,10 @@ begin
   limit 1;
 
   if v_caster_combatant.id is not null then
+    v_caster_is_burning := exists (
+      select 1 from jsonb_array_elements(v_caster_combatant.statuses) effect
+      where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+    );
     select cb.* into v_target_combatant
     from public.combatants cb
     where cb.battle_id = v_caster_combatant.battle_id
@@ -1963,13 +1968,19 @@ begin
     if v_target_combatant.id is null then
       raise exception 'Peaceful Restoration can only target an ally in the same active battle.';
     end if;
+    v_target_is_burning := exists (
+      select 1 from jsonb_array_elements(v_target_combatant.statuses) effect
+      where effect->>'key' = 'burning' and coalesce((effect->>'duration')::int, 0) > 0
+    );
   end if;
+
+  if v_form = 2 and v_caster_is_burning then raise exception 'Form 2 cannot be used while the caster is burning.'; end if;
 
   v_current_mana := coalesce(v_caster_combatant.current_mana, v_character.current_mana);
   if v_current_mana < v_mana_cost then raise exception 'Not enough mana.'; end if;
 
   if v_form = 1 then
-    if coalesce(p_caster_on_fire, false) then
+    if v_caster_is_burning then
       v_heal_amount := 20;
       v_restore_mana := 10;
     else
@@ -1980,6 +1991,8 @@ begin
     v_heal_amount := 25;
     v_restore_mana := 75;
   end if;
+
+  if v_target_is_burning then v_heal_amount := 0; end if;
 
   v_remaining_mana := v_current_mana - v_mana_cost;
   v_target_hp := least(v_target.max_hp, coalesce(v_target_combatant.current_hp, v_target.current_hp) + v_heal_amount);
@@ -2016,7 +2029,8 @@ begin
     'form', v_form,
     'healedHp', v_heal_amount,
     'restoredMana', v_restore_mana,
-    'casterOnFire', coalesce(p_caster_on_fire, false)
+    'casterOnFire', v_caster_is_burning,
+    'targetWasBurning', v_target_is_burning
   );
 end;
 $$;

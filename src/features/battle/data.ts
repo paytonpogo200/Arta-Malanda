@@ -1,7 +1,7 @@
 import { normalizeCharacter, normalizeClassTemplate } from '@/features/characters/data';
 import { normalizeInventoryItem } from '@/features/inventory/data';
 import { normalizeBestiaryEntity } from '@/features/bestiary/data';
-import type { Battle, BattleTerrain, BestiaryEntity, Character, ClassTemplate, Combatant, InventoryItem } from '@/lib/types';
+import type { Battle, BattleTerrain, BestiaryEntity, Character, ClassTemplate, Combatant, CombatStatus, InventoryItem } from '@/lib/types';
 
 export type BattleRoomPayload = {
   battle: Battle | null;
@@ -43,7 +43,20 @@ export function normalizeCombatant(value: unknown): Combatant {
     y: Math.max(0, numberFrom(source.y, 0)),
     currentHp: Math.max(0, numberFrom(source.currentHp, 0)),
     currentMana: Math.max(0, numberFrom(source.currentMana, 0)),
-    initiative: source.initiative === null || source.initiative === undefined ? null : Math.max(1, Math.min(20, numberFrom(source.initiative, 1)))
+    initiative: source.initiative === null || source.initiative === undefined ? null : Math.max(1, Math.min(20, numberFrom(source.initiative, 1))),
+    statuses: Array.isArray(source.statuses) ? source.statuses.map(normalizeCombatStatus).filter((status) => status.id && status.key) : []
+  };
+}
+
+export function normalizeCombatStatus(value: unknown): CombatStatus {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const key = String(source.key ?? '').trim().toLowerCase();
+  return {
+    id: String(source.id ?? ''),
+    key,
+    name: String(source.name ?? (key ? key[0].toUpperCase() + key.slice(1) : 'Effect')),
+    kind: source.kind === 'buff' ? 'buff' : 'debuff',
+    duration: Math.max(1, Math.min(99, Math.round(numberFrom(source.duration, 1))))
   };
 }
 

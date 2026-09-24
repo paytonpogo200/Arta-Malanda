@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, PawPrint, RefreshCw, Search, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, PawPrint, Plus, RefreshCw, Search, Upload } from 'lucide-react';
+import { BeastCreatorModal } from '@/components/bestiary/BeastCreatorModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { TextField } from '@/components/ui/Field';
@@ -105,6 +106,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const isDm = profile.role === 'dm';
 
@@ -249,6 +251,25 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
     }
   }
 
+  async function createBeast(entry: Record<string, unknown>) {
+    if (!isDm) return false;
+    setSaving(true);
+    setError('');
+    try {
+      await replaceFromResponse(await fetch('/api/bestiary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry)
+      }), 'Bestiary beast could not be created.');
+      return true;
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : 'Bestiary beast could not be created.');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <Card><div className="grid h-32 place-items-center text-[var(--muted)]"><Loader2 className="animate-spin" /></div></Card>;
   }
@@ -264,6 +285,9 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
           <div className="flex flex-wrap gap-2">
             {isDm && (
               <>
+                <Button variant="primary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => setCreating(true)}>
+                  <Plus className="mr-2 inline" size={14} /> Add beast
+                </Button>
                 <input ref={fileRef} type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" className="hidden" onChange={(event) => void importWorkbook(event.target.files?.[0] ?? null)} />
                 <Button variant="teal" className="px-3 py-2 text-xs" disabled={saving} onClick={() => fileRef.current?.click()}>
                   <Upload className="mr-2 inline" size={14} /> Import .xlsx
@@ -354,6 +378,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
         })}
         {!grouped.length && <Card><p className="text-sm text-[var(--muted)]">{isDm ? 'No matching entries.' : 'The bestiary is blank for now.'}</p></Card>}
       </div>
+      {creating && <BeastCreatorModal categories={payload.categories} saving={saving} onClose={() => setCreating(false)} onCreate={createBeast} />}
     </div>
   );
 }

@@ -470,6 +470,8 @@ export type BestiaryEntity = {
   summary: string;
   details: string;
   stats: Record<string, string>;
+  tokenColor: string;
+  tokenColorSecondary: string | null;
   unlocked: boolean;
   order: number;
 };
@@ -533,6 +535,15 @@ export type Combatant = {
   currentHp: number;
   currentMana: number;
   initiative: number | null;
+  statuses: CombatStatus[];
+};
+
+export type CombatStatus = {
+  id: string;
+  key: string;
+  name: string;
+  kind: 'buff' | 'debuff';
+  duration: number;
 };
 
 export type CampaignState = {

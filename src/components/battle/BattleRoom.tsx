@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Eye, Heart, Loader2, ShieldAlert, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
+import { Clock3, Eye, Flame, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
+import { CombatStatusBadges } from '@/components/battle/CombatStatusBadges';
 import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
 import { InventoryPanel } from '@/components/inventory/InventoryPanel';
 import { SpellsPanel } from '@/components/spells/SpellsPanel';
@@ -10,10 +11,11 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ResourceBar } from '@/components/ui/ResourceBar';
 import { SelectField, TextField } from '@/components/ui/Field';
+import { Modal } from '@/components/ui/Modal';
 import { calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeBattleRoomPayload, type BattleRoomPayload } from '@/features/battle/data';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
-import type { Character, Combatant, InventoryItem, Profile } from '@/lib/types';
+import type { Character, Combatant, CombatStatus, InventoryItem, Profile } from '@/lib/types';
 
 type TokenView = Combatant & { character: Character | undefined };
 
@@ -95,6 +97,9 @@ export function BattleRoom({ profile }: { profile: Profile }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [statusEditorOpen, setStatusEditorOpen] = useState(false);
+  const [editingStatusId, setEditingStatusId] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState('');
   const isDm = profile.role === 'dm';
   const [viewingAs, setViewingAs] = useState(isDm ? DM_VIEW : SPECTATOR_VIEW);
 
@@ -269,6 +274,38 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       setRoom((current) => ({ ...current, combatants: previous }));
       setError(updateError instanceof Error ? updateError.message : 'Combatant could not be changed.');
     }
+  }
+
+  async function updateCombatantStatuses(combatant: Combatant, action: 'add' | 'set-duration' | 'extend-poison' | 'start-turn' | 'cleanse', options: { statusKey?: string; statusId?: string; duration?: number } = {}) {
+    if (!canUseDmTools) return;
+    setSaving(true);
+    setError('');
+    setStatusNotice('');
+    try {
+      const response = await fetch(`/api/battle/combatants/${combatant.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...options })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Battle effects could not be changed.');
+      const updated = payload.combatant as Combatant | undefined;
+      if (updated?.id) {
+        setRoom((current) => ({ ...current, combatants: current.combatants.map((entry) => entry.id === updated.id ? updated : entry) }));
+      }
+      if (action === 'start-turn') setStatusNotice(payload.damage > 0 ? `${payload.damage} damage dealt as durations advanced.` : 'Durations advanced. No damage was dealt.');
+      if (action === 'cleanse') setStatusNotice('All debuffs cleansed without dealing damage.');
+    } catch (statusError) {
+      setError(statusError instanceof Error ? statusError.message : 'Battle effects could not be changed.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openStatusEditor(status?: CombatStatus) {
+    setEditingStatusId(status?.id ?? null);
+    setStatusNotice('');
+    setStatusEditorOpen(true);
   }
 
   function updateLocalCombatant(combatantId: string, patch: Partial<Combatant>) {
@@ -512,6 +549,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
                       <span className="block text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Initiative</span>
                       <span className="mt-1 block text-lg font-black text-[var(--paper)]">{entry.initiative ?? 'Unset'}</span>
                     </span>
+                    {!!entry.statuses.length && <span className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-black/15 p-2"><span className="text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Effects</span><CombatStatusBadges statuses={entry.statuses} compact /></span>}
                   </div>
                 </button>
                 {canUseDmTools && (
@@ -527,12 +565,20 @@ export function BattleRoom({ profile }: { profile: Profile }) {
 
       {canUseDmTools && selectedCombatant && selectedCharacter && (
         <Card>
-          <div className="mb-4 flex items-center gap-2"><ShieldAlert size={18} className="text-[var(--brass)]" /><h3 className="font-black">DM Controls - {selectedCharacter.name}</h3></div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2"><ShieldAlert size={18} className="text-[var(--brass)]" /><h3 className="font-black">DM Controls - {selectedCharacter.name}</h3></div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="danger" className="px-3 py-2 text-xs" disabled={saving} onClick={() => openStatusEditor()}><Plus className="mr-1 inline" size={13} /> Add Buff/Debuff</Button>
+              <Button variant="primary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'start-turn')}><Clock3 className="mr-1 inline" size={13} /> Start Turn</Button>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
             <CombatantStatField label="Health" icon={<Heart className="mr-1 inline" size={11} />} toneClass="text-[var(--red)]" value={selectedCombatant.currentHp} onCommit={(currentHp) => updateCombatant(selectedCombatant, { currentHp })} />
             <CombatantStatField label="Mana" icon={<Sparkles className="mr-1 inline" size={11} />} toneClass="text-[var(--blue)]" value={selectedCombatant.currentMana} onCommit={(currentMana) => updateCombatant(selectedCombatant, { currentMana })} />
             <CombatantStatField label="Initiative" toneClass="text-[var(--muted)]" value={selectedCombatant.initiative ?? 1} min={1} max={20} onCommit={(initiative) => updateCombatant(selectedCombatant, { initiative })} />
           </div>
+          {!!selectedCombatant.statuses.length && <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/15 p-3"><p className="mb-2 text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Active effects - tap one to edit duration</p><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={openStatusEditor} /></div>}
+          {statusNotice && <p className="mt-3 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--paper)]">{statusNotice}</p>}
         </Card>
       )}
 
@@ -564,6 +610,28 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             }}
           />
         </div>
+      )}
+      {statusEditorOpen && selectedCombatant && selectedCharacter && (
+        <Modal title={`Battle Effects - ${selectedCharacter.name}`} onClose={() => { setStatusEditorOpen(false); setEditingStatusId(null); }}>
+          <div className="space-y-4 pb-2">
+            {editingStatusId && (() => {
+              const status = selectedCombatant.statuses.find((entry) => entry.id === editingStatusId);
+              if (!status) return null;
+              return <section className="rounded-2xl border border-[var(--line)] bg-black/15 p-4"><p className="eyebrow">Edit duration</p><div className="mt-2 flex items-center justify-between gap-3"><CombatStatusBadges statuses={[status]} /><div className="flex items-center gap-2"><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || status.duration <= 1} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: status.duration - 1 })}>-</Button><span className="min-w-10 text-center text-xl font-black">{status.duration}</span><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || status.duration >= 99} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: status.duration + 1 })}>+</Button></div></div></section>;
+            })()}
+            <section>
+              <p className="eyebrow mb-2">Add an effect</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: 'burning' })} className="flex items-center gap-3 rounded-2xl border border-[#d65b48] bg-[#7a241d55] p-4 text-left transition hover:bg-[#7a241d77] disabled:opacity-50"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#9c3025] text-[#ffe0d5]"><Flame /></span><span><span className="block font-black text-[#ffb4a5]">Burning</span><span className="text-xs text-[var(--muted)]">10 damage at start of turn. Prevents healing.</span></span></button>
+                <button type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: 'poison' })} className="flex items-center gap-3 rounded-2xl border border-[#bd4e79] bg-[#5f1d3755] p-4 text-left transition hover:bg-[#5f1d3777] disabled:opacity-50"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#792641] text-[#ffd9e6]"><FlaskConical /></span><span><span className="block font-black text-[#ff9fc0]">Poison</span><span className="text-xs text-[var(--muted)]">Adds a separate 1-turn stack. Each stack deals 5 damage.</span></span></button>
+              </div>
+            </section>
+            {!!selectedCombatant.statuses.filter((entry) => entry.kind === 'debuff').length && <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3"><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={(status) => setEditingStatusId(status.id)} /></div>}
+            {selectedCombatant.statuses.some((entry) => entry.key === 'poison') && <Button variant="secondary" className="w-full" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'extend-poison')}><FlaskConical className="mr-2 inline" size={15} /> Increase all poison durations by 1</Button>}
+            {statusNotice && <p className="rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold">{statusNotice}</p>}
+            <div className="flex justify-end gap-2 border-t border-[var(--line)] pt-3"><Button variant="teal" disabled={saving || !selectedCombatant.statuses.some((entry) => entry.kind === 'debuff')} onClick={() => void updateCombatantStatuses(selectedCombatant, 'cleanse')}><ShieldCheck className="mr-2 inline" size={16} /> Cleanse</Button><Button variant="secondary" onClick={() => { setStatusEditorOpen(false); setEditingStatusId(null); }}>Close</Button></div>
+          </div>
+        </Modal>
       )}
     </div>
   );

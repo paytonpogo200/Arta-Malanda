@@ -55,6 +55,8 @@ export function normalizeBestiaryEntity(value: unknown): BestiaryEntity {
     summary: String(source.summary ?? ''),
     details: String(source.details ?? ''),
     stats: stringRecordFrom(source.stats),
+    tokenColor: String(source.tokenColor ?? '').trim(),
+    tokenColorSecondary: String(source.tokenColorSecondary ?? '').trim() || null,
     unlocked: Boolean(source.unlocked),
     order: numberFrom(source.order, 0)
   };
