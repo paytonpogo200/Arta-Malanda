@@ -146,11 +146,10 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     return (a.character?.name ?? '').localeCompare(b.character?.name ?? '');
   }), [tokens]);
   const rosterTokens = useMemo(() => {
-    const listedNeoplasms = new Set<string>();
+    const listedCharacters = new Set<string>();
     return orderedTokens.filter((entry) => {
-      if (entry.character?.name.trim().toLowerCase() !== 'the malignant neoplasm') return true;
-      if (listedNeoplasms.has(entry.characterId)) return false;
-      listedNeoplasms.add(entry.characterId);
+      if (listedCharacters.has(entry.characterId)) return false;
+      listedCharacters.add(entry.characterId);
       return true;
     });
   }, [orderedTokens]);
