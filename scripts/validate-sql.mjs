@@ -94,6 +94,27 @@ const missingRlsTables = Array.from(createdPublicTables)
   .filter((name) => !rlsEnabledPublicTables.has(name))
   .sort();
 const failures = [];
+const requiredCityPayloadFields = [
+  'description',
+  'primaryColor',
+  'secondaryColor',
+  'accentColor',
+  'visibleToPlayers',
+  'currentResidence',
+  'showUnderConstruction'
+];
+const cityContractProblems = [];
+
+for (const sqlPath of sqlPaths) {
+  const source = fs.readFileSync(sqlPath, 'utf8');
+  const serializer = source.match(/create\s+or\s+replace\s+function\s+public\.city_record_to_json[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+  const cityLoader = source.match(/create\s+or\s+replace\s+function\s+public\.get_discovered_cities[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+  const label = path.basename(sqlPath);
+  const missingFields = requiredCityPayloadFields.filter((field) => !serializer.includes(`'${field}'`));
+  if (missingFields.length) cityContractProblems.push(`${label}: city payload is missing ${missingFields.join(', ')}`);
+  if (!cityLoader.includes("'constructionProjects'")) cityContractProblems.push(`${label}: discovered cities payload is missing constructionProjects`);
+}
+
 const destructiveSeedPatterns = [
   {
     label: 'market product seed conflict updates can reset DM-edited shop names, sections, prices, or stock',
@@ -180,6 +201,10 @@ if (destructiveSeedProblems.length) {
 
 if (compositeIntoProblems.length) {
   failures.push(`Invalid PostgreSQL composite-row INTO lists:\n${compositeIntoProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (cityContractProblems.length) {
+  failures.push(`Incomplete discovered-city SQL contracts:\n${cityContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (failures.length) {

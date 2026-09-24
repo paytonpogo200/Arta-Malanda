@@ -8031,6 +8031,15 @@ create table if not exists public.cities (
   updated_at timestamptz not null default now()
 );
 
+alter table public.cities
+  add column if not exists description text not null default '',
+  add column if not exists primary_color text not null default '#d1a85b',
+  add column if not exists secondary_color text not null default '#1f7875',
+  add column if not exists accent_color text not null default '#f5b44c',
+  add column if not exists is_player_visible boolean not null default true,
+  add column if not exists is_current_residence boolean not null default false,
+  add column if not exists show_under_construction boolean not null default false;
+
 create table if not exists public.shop_vendors (
   id uuid primary key default gen_random_uuid(),
   city_key text not null references public.cities(city_key) on delete cascade,
@@ -8720,7 +8729,14 @@ as $$
     'id', p_city.id,
     'key', p_city.city_key,
     'name', p_city.name,
+    'description', p_city.description,
+    'primaryColor', p_city.primary_color,
+    'secondaryColor', p_city.secondary_color,
+    'accentColor', p_city.accent_color,
     'locked', p_city.is_locked,
+    'visibleToPlayers', p_city.is_player_visible,
+    'currentResidence', p_city.is_current_residence,
+    'showUnderConstruction', p_city.show_under_construction,
     'order', p_city.display_order
   )
 $$;
@@ -9380,10 +9396,25 @@ set search_path = public, extensions
 as $$
 declare
   v_profile public.profiles%rowtype;
+  v_construction_projects jsonb := '[]'::jsonb;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
     raise exception 'Invalid or expired session.';
+  end if;
+
+  if to_regclass('public.city_construction_projects') is not null
+    and to_regprocedure('public.city_construction_project_to_json(public.city_construction_projects)') is not null
+  then
+    execute $query$
+      select coalesce(jsonb_agg(public.city_construction_project_to_json(project) order by project.city_key, project.display_order, project.project_name), '[]'::jsonb)
+      from public.city_construction_projects project
+      join public.cities city on city.city_key = project.city_key
+      where project.status = 'active'
+        and ($1 = 'dm'::public.user_role or city.is_player_visible)
+    $query$
+    into v_construction_projects
+    using v_profile.role;
   end if;
 
   return jsonb_build_object(
@@ -9403,14 +9434,17 @@ begin
         and (v_profile.role = 'dm'::public.user_role or c.owner_user_id = v_profile.id)
     ),
     'cities', (
-      select coalesce(jsonb_agg(public.city_record_to_json(c) order by c.display_order, c.name), '[]'::jsonb)
+      select coalesce(jsonb_agg(public.city_record_to_json(c) order by c.is_current_residence desc, c.display_order, c.name), '[]'::jsonb)
       from public.cities c
+      where v_profile.role = 'dm'::public.user_role or c.is_player_visible
     ),
     'vendors', (
-      select coalesce(jsonb_agg(public.shop_vendor_record_to_json(v, v_profile.role = 'dm'::public.user_role) order by v.display_order, v.name), '[]'::jsonb)
+      select coalesce(jsonb_agg(public.shop_vendor_record_to_json(v, v_profile.role = 'dm'::public.user_role) order by v.city_key, v.display_order, v.name), '[]'::jsonb)
       from public.shop_vendors v
-      where v_profile.role = 'dm'::public.user_role or not v.is_hidden
-    )
+      join public.cities c on c.city_key = v.city_key
+      where v_profile.role = 'dm'::public.user_role or (c.is_player_visible and not v.is_hidden)
+    ),
+    'constructionProjects', v_construction_projects
   );
 end;
 $$;
