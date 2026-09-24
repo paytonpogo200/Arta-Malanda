@@ -55,8 +55,9 @@ export function normalizeCombatStatus(value: unknown): CombatStatus {
     id: String(source.id ?? ''),
     key,
     name: String(source.name ?? (key ? key[0].toUpperCase() + key.slice(1) : 'Effect')),
-    kind: source.kind === 'buff' ? 'buff' : 'debuff',
-    duration: Math.max(1, Math.min(99, Math.round(numberFrom(source.duration, 1))))
+    kind: source.kind === 'permanent' ? 'permanent' : source.kind === 'buff' ? 'buff' : 'debuff',
+    duration: source.duration === null || source.duration === undefined ? null : Math.max(1, Math.min(99, Math.round(numberFrom(source.duration, 1)))),
+    amount: Math.max(0, Math.round(numberFrom(source.amount, 0)))
   };
 }
 

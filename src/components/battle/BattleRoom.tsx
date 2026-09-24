@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Clock3, Eye, Flame, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
+import { Clock3, Eye, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { CombatStatusBadges } from '@/components/battle/CombatStatusBadges';
 import { characterLevelFrameClass, LevelBadge } from '@/components/characters/LevelBadge';
@@ -21,6 +21,21 @@ type TokenView = Combatant & { character: Character | undefined };
 
 const DM_VIEW = 'dm';
 const SPECTATOR_VIEW = 'spectator';
+
+const BATTLE_EFFECT_OPTIONS: Array<{ key: string; name: string; kind: 'buff' | 'debuff'; description: string }> = [
+  { key: 'better-dice', name: 'Better Dice', kind: 'buff', description: 'Marks improved dice rolls.' },
+  { key: 'bleeding', name: 'Bleeding', kind: 'debuff', description: 'Marks an ongoing bleeding effect.' },
+  { key: 'burning', name: 'Burning', kind: 'debuff', description: 'Deals 10 damage on Start Turn and prevents ordinary healing.' },
+  { key: 'counterattack', name: 'Counterattack', kind: 'buff', description: 'Marks the target as ready to counterattack.' },
+  { key: 'invisible', name: 'Invisible', kind: 'buff', description: 'Marks the target as invisible.' },
+  { key: 'ironskin', name: 'Ironskin', kind: 'buff', description: 'Marks the target with hardened defenses.' },
+  { key: 'poison', name: 'Poison', kind: 'debuff', description: 'Adds a separate stack that deals 5 damage on Start Turn.' },
+  { key: 'slowness', name: 'Slowness', kind: 'debuff', description: 'Marks reduced movement or speed.' },
+  { key: 'strength', name: 'Strength', kind: 'buff', description: 'Marks increased physical strength.' },
+  { key: 'stunned', name: 'Stunned', kind: 'debuff', description: 'Marks the target as stunned.' },
+  { key: 'swiftness', name: 'Swiftness', kind: 'buff', description: 'Marks increased movement or speed.' },
+  { key: 'weakness', name: 'Weakness', kind: 'debuff', description: 'Marks reduced physical power.' }
+];
 
 const EMPTY_ROOM: BattleRoomPayload = {
   battle: null,
@@ -293,7 +308,11 @@ export function BattleRoom({ profile }: { profile: Profile }) {
       if (updated?.id) {
         setRoom((current) => ({ ...current, combatants: current.combatants.map((entry) => entry.id === updated.id ? updated : entry) }));
       }
-      if (action === 'start-turn') setStatusNotice(payload.damage > 0 ? `${payload.damage} damage dealt as durations advanced.` : 'Durations advanced. No damage was dealt.');
+      if (action === 'start-turn') {
+        const gains = [payload.healthRestored > 0 ? `${payload.healthRestored} HP restored` : '', payload.manaRestored > 0 ? `${payload.manaRestored} Mana restored` : ''].filter(Boolean).join(' and ');
+        const damage = payload.damage > 0 ? `${payload.damage} damage dealt` : 'no damage dealt';
+        setStatusNotice(`${gains ? `${gains}, then ` : ''}${damage}. Durations advanced.`);
+      }
       if (action === 'cleanse') setStatusNotice('All debuffs cleansed without dealing damage.');
     } catch (statusError) {
       setError(statusError instanceof Error ? statusError.message : 'Battle effects could not be changed.');
@@ -577,7 +596,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
             <CombatantStatField label="Mana" icon={<Sparkles className="mr-1 inline" size={11} />} toneClass="text-[var(--blue)]" value={selectedCombatant.currentMana} onCommit={(currentMana) => updateCombatant(selectedCombatant, { currentMana })} />
             <CombatantStatField label="Initiative" toneClass="text-[var(--muted)]" value={selectedCombatant.initiative ?? 1} min={1} max={20} onCommit={(initiative) => updateCombatant(selectedCombatant, { initiative })} />
           </div>
-          {!!selectedCombatant.statuses.length && <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/15 p-3"><p className="mb-2 text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Active effects - tap one to edit duration</p><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={openStatusEditor} /></div>}
+          {!!selectedCombatant.statuses.length && <div className="mt-3 rounded-xl border border-[var(--line)] bg-black/15 p-3"><p className="mb-2 text-[10px] font-black uppercase tracking-wide text-[var(--muted)]">Active effects - tap a timed effect to edit its duration</p><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={openStatusEditor} /></div>}
           {statusNotice && <p className="mt-3 rounded-xl border border-[var(--line)] bg-black/15 p-3 text-sm font-bold text-[var(--paper)]">{statusNotice}</p>}
         </Card>
       )}
@@ -616,14 +635,19 @@ export function BattleRoom({ profile }: { profile: Profile }) {
           <div className="space-y-4 pb-2">
             {editingStatusId && (() => {
               const status = selectedCombatant.statuses.find((entry) => entry.id === editingStatusId);
-              if (!status) return null;
-              return <section className="rounded-2xl border border-[var(--line)] bg-black/15 p-4"><p className="eyebrow">Edit duration</p><div className="mt-2 flex items-center justify-between gap-3"><CombatStatusBadges statuses={[status]} /><div className="flex items-center gap-2"><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || status.duration <= 1} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: status.duration - 1 })}>-</Button><span className="min-w-10 text-center text-xl font-black">{status.duration}</span><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || status.duration >= 99} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: status.duration + 1 })}>+</Button></div></div></section>;
+              if (!status || status.duration === null) return null;
+              const duration = status.duration;
+              return <section className="rounded-2xl border border-[var(--line)] bg-black/15 p-4"><p className="eyebrow">Edit duration</p><div className="mt-2 flex items-center justify-between gap-3"><CombatStatusBadges statuses={[status]} /><div className="flex items-center gap-2"><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration <= 1} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration - 1 })}>-</Button><span className="min-w-10 text-center text-xl font-black">{duration}</span><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration >= 99} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration + 1 })}>+</Button></div></div></section>;
             })()}
             <section>
               <p className="eyebrow mb-2">Add an effect</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                <button type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: 'burning' })} className="flex items-center gap-3 rounded-2xl border border-[#d65b48] bg-[#7a241d55] p-4 text-left transition hover:bg-[#7a241d77] disabled:opacity-50"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#9c3025] text-[#ffe0d5]"><Flame /></span><span><span className="block font-black text-[#ffb4a5]">Burning</span><span className="text-xs text-[var(--muted)]">10 damage at start of turn. Prevents healing.</span></span></button>
-                <button type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: 'poison' })} className="flex items-center gap-3 rounded-2xl border border-[#bd4e79] bg-[#5f1d3755] p-4 text-left transition hover:bg-[#5f1d3777] disabled:opacity-50"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[#792641] text-[#ffd9e6]"><FlaskConical /></span><span><span className="block font-black text-[#ff9fc0]">Poison</span><span className="text-xs text-[var(--muted)]">Adds a separate 1-turn stack. Each stack deals 5 damage.</span></span></button>
+                {BATTLE_EFFECT_OPTIONS.map((effect) => (
+                  <button key={effect.key} type="button" disabled={saving} onClick={() => void updateCombatantStatuses(selectedCombatant, 'add', { statusKey: effect.key })} className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition disabled:opacity-50 ${effect.kind === 'buff' ? 'border-[#4c9ed3] bg-[#174e7355] hover:bg-[#174e7377]' : 'border-[#d65b52] bg-[#72231f55] hover:bg-[#72231f77]'}`}>
+                    <CombatStatusBadges statuses={[{ id: `option-${effect.key}`, key: effect.key, name: effect.name, kind: effect.kind, duration: 1, amount: 0 }]} compact />
+                    <span><span className={`block font-black ${effect.kind === 'buff' ? 'text-[#9fdcff]' : 'text-[#ffafa7]'}`}>{effect.name}</span><span className="text-xs text-[var(--muted)]">{effect.description}</span></span>
+                  </button>
+                ))}
               </div>
             </section>
             {!!selectedCombatant.statuses.filter((entry) => entry.kind === 'debuff').length && <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3"><CombatStatusBadges statuses={selectedCombatant.statuses} onStatusClick={(status) => setEditingStatusId(status.id)} /></div>}

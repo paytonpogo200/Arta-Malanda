@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, PawPrint, Plus, RefreshCw, Search, Upload } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Loader2, PawPrint, Pencil, Plus, RefreshCw, Search, Upload } from 'lucide-react';
 import { BeastCreatorModal } from '@/components/bestiary/BeastCreatorModal';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -17,7 +17,8 @@ const EMPTY: BestiaryPayload = {
   totalCount: 0
 };
 
-const PRIMARY_STAT_LABELS = ['HP', 'Mana', 'Mana Pool', 'Wild Score', 'Damage', 'Strength', 'Vitality', 'Magic Res', 'Magic Resistance', 'Armor / Hide', 'Armor', 'Str/Acc/Int', 'Strength / Accuracy / Intelligence'];
+const PRIMARY_STAT_LABELS = ['HP', 'Mana', 'Mana Pool', 'Wild Score', 'Damage', 'Strength', 'Accuracy', 'Intelligence', 'Vitality', 'Magic Res', 'Magic Resistance', 'Armor / Hide', 'Armor', 'Str/Acc/Int', 'Strength / Accuracy / Intelligence'];
+const OMIT_WHEN_ZERO = new Set(['recovery', 'manaregen', 'charisma', 'wisdomcunning', 'perception', 'alchemy', 'stealth', 'agility']);
 
 function cleanStatValue(value: string | number | undefined) {
   const text = String(value ?? '').trim();
@@ -26,12 +27,16 @@ function cleanStatValue(value: string | number | undefined) {
 
 function entityStatEntries(entity: BestiaryEntity) {
   const stats = { ...entity.stats };
-  if (entity.hp) stats.HP = String(entity.hp);
-  if (entity.mana) stats.Mana = String(entity.mana);
-  if (entity.wildScore) stats['Wild Score'] = String(entity.wildScore);
+  stats.HP = String(entity.hp);
+  stats.Mana = String(entity.mana);
+  stats['Wild Score'] = String(entity.wildScore);
   return Object.entries(stats)
     .map(([label, value]) => [label, cleanStatValue(value)] as const)
-    .filter(([, value]) => value);
+    .filter(([label, value]) => {
+      if (!value) return false;
+      const normalized = label.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      return !OMIT_WHEN_ZERO.has(normalized) || Number(value) !== 0;
+    });
 }
 
 function EntityCard({
@@ -39,13 +44,15 @@ function EntityCard({
   categoryName,
   isDm,
   saving,
-  onToggle
+  onToggle,
+  onEdit
 }: {
   entity: BestiaryEntity;
   categoryName: string;
   isDm: boolean;
   saving: boolean;
   onToggle: (entity: BestiaryEntity) => void;
+  onEdit: (entity: BestiaryEntity) => void;
 }) {
   const statEntries = entityStatEntries(entity);
   const primaryStats = statEntries.filter(([label]) => PRIMARY_STAT_LABELS.includes(label));
@@ -59,10 +66,13 @@ function EntityCard({
           <h3 className="mt-1 text-xl font-black leading-tight">{entity.name}</h3>
         </div>
         {isDm && (
-          <Button variant={entity.unlocked ? 'teal' : 'secondary'} className="shrink-0 px-3 py-2 text-xs" disabled={saving} onClick={() => onToggle(entity)}>
-            {entity.unlocked ? <Eye className="mr-1 inline" size={13} /> : <EyeOff className="mr-1 inline" size={13} />}
-            {entity.unlocked ? 'Visible' : 'Hidden'}
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="secondary" className="px-3 py-2 text-xs" disabled={saving} onClick={() => onEdit(entity)}><Pencil className="mr-1 inline" size={13} /> Edit</Button>
+            <Button variant={entity.unlocked ? 'teal' : 'secondary'} className="px-3 py-2 text-xs" disabled={saving} onClick={() => onToggle(entity)}>
+              {entity.unlocked ? <Eye className="mr-1 inline" size={13} /> : <EyeOff className="mr-1 inline" size={13} />}
+              {entity.unlocked ? 'Visible' : 'Hidden'}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -107,6 +117,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editingEntity, setEditingEntity] = useState<BestiaryEntity | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const isDm = profile.role === 'dm';
 
@@ -251,19 +262,19 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
     }
   }
 
-  async function createBeast(entry: Record<string, unknown>) {
+  async function saveBeast(entry: Record<string, unknown>) {
     if (!isDm) return false;
     setSaving(true);
     setError('');
     try {
-      await replaceFromResponse(await fetch('/api/bestiary', {
-        method: 'POST',
+      await replaceFromResponse(await fetch(editingEntity ? `/api/bestiary/entities/${editingEntity.id}` : '/api/bestiary', {
+        method: editingEntity ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(entry)
-      }), 'Bestiary beast could not be created.');
+      }), editingEntity ? 'Bestiary entry could not be updated.' : 'Bestiary beast could not be created.');
       return true;
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Bestiary beast could not be created.');
+      setError(createError instanceof Error ? createError.message : editingEntity ? 'Bestiary entry could not be updated.' : 'Bestiary beast could not be created.');
       return false;
     } finally {
       setSaving(false);
@@ -368,6 +379,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
                       isDm={isDm}
                       saving={saving}
                       onToggle={toggleEntity}
+                      onEdit={setEditingEntity}
                     />
                   ))}
                   {!entities.length && <p className="rounded-2xl border border-[var(--line)] bg-black/10 p-3 text-sm text-[var(--muted)]">{isDm ? 'No matching entries in this category.' : 'No known entries here yet.'}</p>}
@@ -378,7 +390,7 @@ export function BestiaryPanel({ profile }: { profile: Profile }) {
         })}
         {!grouped.length && <Card><p className="text-sm text-[var(--muted)]">{isDm ? 'No matching entries.' : 'The bestiary is blank for now.'}</p></Card>}
       </div>
-      {creating && <BeastCreatorModal categories={payload.categories} saving={saving} onClose={() => setCreating(false)} onCreate={createBeast} />}
+      {(creating || editingEntity) && <BeastCreatorModal categories={payload.categories} initialEntity={editingEntity} saving={saving} onClose={() => { setCreating(false); setEditingEntity(null); }} onSave={saveBeast} />}
     </div>
   );
 }

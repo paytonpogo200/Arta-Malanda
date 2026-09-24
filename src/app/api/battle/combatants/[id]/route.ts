@@ -47,7 +47,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
 
     const result = data && typeof data === 'object' ? data as Record<string, unknown> : {};
-    return NextResponse.json({ combatant: normalizeCombatant(result.combatant), damage: Number(result.damage ?? 0) });
+    return NextResponse.json({
+      combatant: normalizeCombatant(result.combatant),
+      damage: Number(result.damage ?? 0),
+      healthRestored: Number(result.healthRestored ?? 0),
+      manaRestored: Number(result.manaRestored ?? 0)
+    });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Battle effects could not be changed.' }, { status: 500 });
   }

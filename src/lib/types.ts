@@ -542,8 +542,9 @@ export type CombatStatus = {
   id: string;
   key: string;
   name: string;
-  kind: 'buff' | 'debuff';
-  duration: number;
+  kind: 'permanent' | 'buff' | 'debuff';
+  duration: number | null;
+  amount: number;
 };
 
 export type CampaignState = {

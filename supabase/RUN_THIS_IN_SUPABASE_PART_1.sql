@@ -849,7 +849,7 @@ begin
   if v_patch ? 'category' then
     v_category_key := coalesce(nullif(trim(v_patch->>'category'), ''), 'uncategorized');
     insert into public.bestiary_categories (category_key, name, display_order)
-    values (v_category_key, initcap(replace(v_category_key, '-', ' ')), 1000)
+    values (v_category_key, coalesce(nullif(trim(v_patch->>'categoryName'), ''), initcap(replace(v_category_key, '-', ' '))), 1000)
     on conflict (category_key) do nothing;
   end if;
 
@@ -7145,6 +7145,75 @@ as $$
   ) end
 $$;
 
+create or replace function public.character_battle_attribute(p_character_id uuid, p_attribute_key text)
+returns int
+language sql
+stable
+set search_path = public
+as $$
+  select greatest(0, coalesce((
+    select public.bestiary_stat_number(c.attributes, array[p_attribute_key])
+      + coalesce((
+        select sum(public.bestiary_stat_number(i.modifiers, array[p_attribute_key]))
+        from public.inventory_items i
+        where i.character_id = c.id and i.loadout_slot is not null
+      ), 0)
+    from public.characters c
+    where c.id = p_character_id
+  ), 0))
+$$;
+
+create or replace function public.character_battle_resource_max(p_character_id uuid, p_resource text)
+returns int
+language sql
+stable
+set search_path = public
+as $$
+  select greatest(0, coalesce((
+    select case when p_resource = 'mana' then c.max_mana else c.max_hp end
+      + coalesce((
+        select sum(public.bestiary_stat_number(
+          i.modifiers,
+          case when p_resource = 'mana'
+            then array['mana', 'maxMana', 'max_mana']
+            else array['health', 'hp', 'maxHp', 'max_hp']
+          end
+        ))
+        from public.inventory_items i
+        where i.character_id = c.id and i.loadout_slot is not null
+      ), 0)
+    from public.characters c
+    where c.id = p_character_id
+  ), 0))
+$$;
+
+create or replace function public.combatant_statuses_to_json(p_combatant public.combatants)
+returns jsonb
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_statuses jsonb := '[]'::jsonb;
+  v_recovery int := public.character_battle_attribute(p_combatant.character_id, 'recovery');
+  v_mana_regen int := public.character_battle_attribute(p_combatant.character_id, 'mana_regen');
+begin
+  if v_recovery > 0 then
+    v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
+      'id', 'permanent-health-regeneration', 'key', 'health-regeneration', 'name', 'Health Regeneration',
+      'kind', 'permanent', 'duration', null, 'amount', v_recovery
+    ));
+  end if;
+  if v_mana_regen > 0 then
+    v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
+      'id', 'permanent-mana-regeneration', 'key', 'mana-regeneration', 'name', 'Mana Regeneration',
+      'kind', 'permanent', 'duration', null, 'amount', v_mana_regen
+    ));
+  end if;
+  return v_statuses || coalesce(p_combatant.statuses, '[]'::jsonb);
+end;
+$$;
+
 create or replace function public.combatant_record_to_json(p_combatant public.combatants)
 returns jsonb
 language sql
@@ -7159,7 +7228,7 @@ as $$
     'currentHp', p_combatant.current_hp,
     'currentMana', p_combatant.current_mana,
     'initiative', p_combatant.initiative,
-    'statuses', p_combatant.statuses
+    'statuses', public.combatant_statuses_to_json(p_combatant)
   )
 $$;
 
@@ -7454,6 +7523,14 @@ declare
   v_status_key text := lower(trim(coalesce(p_status_key, '')));
   v_statuses jsonb;
   v_damage int := 0;
+  v_status_name text;
+  v_status_kind text;
+  v_recovery int := 0;
+  v_mana_regen int := 0;
+  v_max_hp int := 0;
+  v_max_mana int := 0;
+  v_health_gain int := 0;
+  v_mana_gain int := 0;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
@@ -7466,27 +7543,41 @@ begin
   v_statuses := coalesce(v_combatant.statuses, '[]'::jsonb);
 
   if v_action = 'add' then
+    v_status_name := case v_status_key
+      when 'better-dice' then 'Better Dice'
+      when 'bleeding' then 'Bleeding'
+      when 'burning' then 'Burning'
+      when 'counterattack' then 'Counterattack'
+      when 'invisible' then 'Invisible'
+      when 'ironskin' then 'Ironskin'
+      when 'poison' then 'Poison'
+      when 'slowness' then 'Slowness'
+      when 'strength' then 'Strength'
+      when 'stunned' then 'Stunned'
+      when 'swiftness' then 'Swiftness'
+      when 'weakness' then 'Weakness'
+      else null
+    end;
+    if v_status_name is null then raise exception 'That battle effect is not supported.'; end if;
+    v_status_kind := case when v_status_key in ('better-dice', 'counterattack', 'invisible', 'ironskin', 'strength', 'swiftness') then 'buff' else 'debuff' end;
+
     if v_status_key = 'poison' then
       v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
-        'id', gen_random_uuid()::text, 'key', 'poison', 'name', 'Poison', 'kind', 'debuff', 'duration', 1
+        'id', gen_random_uuid()::text, 'key', v_status_key, 'name', v_status_name, 'kind', v_status_kind, 'duration', 1
       ));
-    elsif v_status_key = 'burning' then
-      if exists (select 1 from jsonb_array_elements(v_statuses) effect where effect->>'key' = 'burning') then
-        select coalesce(jsonb_agg(
-          case when effect->>'key' = 'burning'
-            then jsonb_set(effect, '{duration}', to_jsonb(least(99, coalesce((effect->>'duration')::int, 0) + 1)))
-            else effect end
-          order by ordinality
-        ), '[]'::jsonb)
-        into v_statuses
-        from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
-      else
-        v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
-          'id', gen_random_uuid()::text, 'key', 'burning', 'name', 'Burning', 'kind', 'debuff', 'duration', 1
-        ));
-      end if;
+    elsif exists (select 1 from jsonb_array_elements(v_statuses) effect where effect->>'key' = v_status_key) then
+      select coalesce(jsonb_agg(
+        case when effect->>'key' = v_status_key
+          then jsonb_set(effect, '{duration}', to_jsonb(least(99, coalesce((effect->>'duration')::int, 0) + 1)))
+          else effect end
+        order by ordinality
+      ), '[]'::jsonb)
+      into v_statuses
+      from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
     else
-      raise exception 'That battle effect is not supported.';
+      v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
+        'id', gen_random_uuid()::text, 'key', v_status_key, 'name', v_status_name, 'kind', v_status_kind, 'duration', 1
+      ));
     end if;
   elsif v_action = 'set-duration' then
     if nullif(trim(coalesce(p_status_id, '')), '') is null then raise exception 'Choose an effect to edit.'; end if;
@@ -7508,6 +7599,13 @@ begin
     into v_statuses
     from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
   elsif v_action = 'start-turn' then
+    v_recovery := public.character_battle_attribute(v_combatant.character_id, 'recovery');
+    v_mana_regen := public.character_battle_attribute(v_combatant.character_id, 'mana_regen');
+    v_max_hp := public.character_battle_resource_max(v_combatant.character_id, 'health');
+    v_max_mana := public.character_battle_resource_max(v_combatant.character_id, 'mana');
+    v_health_gain := greatest(0, least(greatest(v_combatant.current_hp, v_max_hp), v_combatant.current_hp + v_recovery * 5) - v_combatant.current_hp);
+    v_mana_gain := greatest(0, least(greatest(v_combatant.current_mana, v_max_mana), v_combatant.current_mana + v_mana_regen * 5) - v_combatant.current_mana);
+
     select
       count(*) filter (where effect->>'key' = 'poison')::int * 5
       + case when count(*) filter (where effect->>'key' = 'burning') > 0 then 10 else 0 end
@@ -7532,17 +7630,24 @@ begin
 
   update public.combatants
   set statuses = v_statuses,
-      current_hp = greatest(0, current_hp - case when v_action = 'start-turn' then v_damage else 0 end)
+      current_hp = case when v_action = 'start-turn'
+        then greatest(0, current_hp + v_health_gain - v_damage)
+        else current_hp end,
+      current_mana = case when v_action = 'start-turn'
+        then current_mana + v_mana_gain
+        else current_mana end
   where id = p_combatant_id
   returning * into v_combatant;
 
   if v_action = 'start-turn' then
-    update public.characters set current_hp = v_combatant.current_hp where id = v_combatant.character_id;
+    update public.characters set current_hp = v_combatant.current_hp, current_mana = v_combatant.current_mana where id = v_combatant.character_id;
   end if;
 
   return jsonb_build_object(
     'combatant', public.combatant_record_to_json(v_combatant),
-    'damage', case when v_action = 'start-turn' then v_damage else 0 end
+    'damage', case when v_action = 'start-turn' then v_damage else 0 end,
+    'healthRestored', case when v_action = 'start-turn' then v_health_gain else 0 end,
+    'manaRestored', case when v_action = 'start-turn' then v_mana_gain else 0 end
   );
 end;
 $$;
@@ -7808,6 +7913,9 @@ end;
 $$;
 
 grant execute on function public.battle_record_to_json(public.battles) to anon, authenticated;
+grant execute on function public.character_battle_attribute(uuid, text) to anon, authenticated;
+grant execute on function public.character_battle_resource_max(uuid, text) to anon, authenticated;
+grant execute on function public.combatant_statuses_to_json(public.combatants) to anon, authenticated;
 grant execute on function public.combatant_record_to_json(public.combatants) to anon, authenticated;
 grant execute on function public.battle_terrain_record_to_json(public.battle_terrain) to anon, authenticated;
 grant execute on function public.get_battle_room(text) to anon, authenticated;
