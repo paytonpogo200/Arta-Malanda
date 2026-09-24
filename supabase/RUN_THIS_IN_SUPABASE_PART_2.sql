@@ -8018,7 +8018,7 @@ begin
         from public.player_houses house
         left join public.player_main_homes main on main.owner_user_id = house.owner_user_id
         where house.owner_user_id = v_character.owner_user_id
-          and (v_profile.role = 'dm'::public.user_role or not house.is_locked)
+          and public.static_home_access(v_profile, house, v_is_pet)
           and ((v_is_pet and house.house_kind = 'stable' and house.stable_slots > 0)
             or (not v_is_pet and house.house_kind = 'house' and house.inventory_slots > 0))
         union all
@@ -8143,9 +8143,11 @@ begin
     return public.get_player_homes(p_session_token, v_character.owner_user_id, v_storage.id, 'mobile');
   end if;
 
-  select * into v_house from public.player_houses where id = v_home_id and owner_user_id = v_character.owner_user_id;
+  select * into v_house from public.player_houses where id = v_home_id;
   if v_house.id is null then raise exception 'House or stable not found.'; end if;
-  if v_house.is_locked and v_profile.role <> 'dm'::public.user_role then raise exception 'That property is locked by the Dungeon Master.'; end if;
+  if not public.static_home_access(v_profile, v_house, v_is_pet) then
+    raise exception 'You do not have permission to use that property.';
+  end if;
   if v_is_pet and (v_house.house_kind <> 'stable' or v_house.stable_slots <= 0) then raise exception 'Animals require a stable or Caged Wagon.'; end if;
   if not v_is_pet and (v_house.house_kind <> 'house' or v_house.inventory_slots <= 0) then raise exception 'Items require a house or Wagon Home.'; end if;
   if p_parent_item_id is not null and not exists (select 1 from public.house_inventory_items parent where parent.id = p_parent_item_id and parent.house_id = v_house.id and parent.is_storage) then
@@ -8164,7 +8166,7 @@ begin
     if v_house_target.id is not null then
       update public.house_inventory_items set quantity = quantity + v_item.quantity where id = v_house_target.id;
       delete from public.inventory_items where id = v_item.id;
-      return public.get_player_homes(p_session_token, v_character.owner_user_id, v_house.id, 'static');
+      return public.get_player_homes(p_session_token, v_house.owner_user_id, v_house.id, 'static');
     end if;
   end if;
 
@@ -8195,13 +8197,13 @@ begin
     is_accessory, is_storage, storage_capacity, modifiers, enchantment, rune_name, material, enhancement_count,
     is_two_handed, potion_strength, potion_property, potion_quality, spell_book_form
   ) values (
-    v_house.id, v_character.owner_user_id, p_parent_item_id, v_slot, v_item.item_name, v_item.display_name, v_item.item_description,
+    v_house.id, v_house.owner_user_id, p_parent_item_id, v_slot, v_item.item_name, v_item.display_name, v_item.item_description,
     v_item.item_type, v_item.rarity, v_item.quantity, v_item.is_accessory, v_item.is_storage, v_item.storage_capacity,
     v_item.modifiers, v_item.enchantment, v_item.rune_name, v_item.material, v_item.enhancement_count,
     v_item.is_two_handed, v_item.potion_strength, v_item.potion_property, v_item.potion_quality, v_item.spell_book_form
   );
   delete from public.inventory_items where id = v_item.id;
-  return public.get_player_homes(p_session_token, v_character.owner_user_id, v_house.id, 'static');
+  return public.get_player_homes(p_session_token, v_house.owner_user_id, v_house.id, 'static');
 end;
 $$;
 
@@ -9521,6 +9523,26 @@ declare
   v_slot integer;
   v_temp_slot integer;
 begin
+  -- Early custom homes could be saved as stable records even though the DM
+  -- supplied a house name. Restore only unambiguous, animal-free records.
+  update public.player_houses home
+  set house_kind = 'house',
+      inventory_slots = case
+        when greatest(home.inventory_slots, home.stable_slots) > 0 then greatest(home.inventory_slots, home.stable_slots)
+        else 45
+      end,
+      stable_slots = 0,
+      updated_at = now()
+  where home.house_kind = 'stable'
+    and lower(trim(coalesce(home.house_name, ''))) <> 'house'
+    and lower(trim(coalesce(home.stable_name, ''))) in ('', 'stable')
+    and not exists (
+      select 1
+      from public.house_inventory_items item
+      where item.house_id = home.id
+        and public.normalize_item_type(item.item_type) = 'pet'
+    );
+
   -- Preserve a DM-entered capacity that an older form saved into the wrong column.
   update public.player_houses
   set inventory_slots = greatest(inventory_slots, least(500, stable_slots))

@@ -1029,7 +1029,15 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   const activeCityKey = selectedCity?.key ?? '';
   const cityLocked = Boolean(selectedCity?.locked);
   const shopperInCity = characterInCity(selectedShopper, selectedCity);
-  const canShop = Boolean(selectedShopper && selectedCity && !cityLocked && shopperInCity);
+  const viewerRunsSelectedVendor = Boolean(
+    selectedVendor?.payoutCharacterId
+      && payload.characters.some((character) => character.id === selectedVendor.payoutCharacterId && character.ownerUserId === profile.id)
+  );
+  const canShop = Boolean(
+    selectedShopper
+      && selectedCity
+      && (isDm || viewerRunsSelectedVendor || (!cityLocked && shopperInCity))
+  );
   const cityProjects = payload.constructionProjects
     .filter((project) => project.cityKey === activeCityKey && project.status === 'active')
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));

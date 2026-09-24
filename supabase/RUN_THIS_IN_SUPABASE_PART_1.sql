@@ -9485,6 +9485,7 @@ declare
   v_enchantment text;
   v_rune_name text;
   v_spell_book_form int := 1;
+  v_privileged_buyer boolean := false;
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then
@@ -9547,7 +9548,10 @@ begin
     raise exception 'City not found.';
   end if;
 
-  if v_city.is_locked then
+  v_privileged_buyer := v_profile.role = 'dm'::public.user_role
+    or public.profile_runs_shop_vendor(v_profile, v_vendor);
+
+  if v_city.is_locked and not v_privileged_buyer then
     raise exception 'That city is currently locked.';
   end if;
 
@@ -9558,7 +9562,7 @@ begin
     end if;
   end if;
 
-  if not public.character_is_in_city(v_character, v_city.city_key) then
+  if not v_privileged_buyer and not public.character_is_in_city(v_character, v_city.city_key) then
     raise exception 'That character is not in %.', v_city.name;
   end if;
 
@@ -9573,7 +9577,7 @@ begin
     end if;
 
     v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
-    if v_vendor.payout_character_id is not distinct from v_character.id then
+    if v_privileged_buyer then
       v_cost := 0;
     end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
@@ -9615,7 +9619,7 @@ begin
     end if;
 
     v_cost := v_product.price_coin;
-    if v_vendor.payout_character_id is not distinct from v_character.id then
+    if v_privileged_buyer then
       v_cost := 0;
     end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
@@ -9694,7 +9698,7 @@ begin
     end if;
 
     v_cost := v_product.price_coin;
-    if v_vendor.payout_character_id is not distinct from v_character.id then
+    if v_privileged_buyer then
       v_cost := 0;
     end if;
     v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
@@ -9778,7 +9782,7 @@ begin
   end if;
 
   v_cost := ceil((v_product.price_coin * v_quantity)::numeric)::int;
-  if v_vendor.payout_character_id is not distinct from v_character.id then
+  if v_privileged_buyer then
     v_cost := 0;
   end if;
   v_wallet := public.wallet_total_currency(v_character.id, v_product.currency_system_key);
