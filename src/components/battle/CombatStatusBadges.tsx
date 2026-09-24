@@ -1,6 +1,6 @@
 'use client';
 
-import { Accessibility, BicepsFlexed, Cross, Dices, Droplet, Flame, FlaskConical, Link2, RefreshCcw, Shield, Shell, Sparkles } from 'lucide-react';
+import { Accessibility, BicepsFlexed, Cross, Dices, Droplet, Flame, FlaskConical, Heater, Link2, RefreshCcw, Shield, Shell, Sparkles } from 'lucide-react';
 import type { CombatStatus } from '@/lib/types';
 
 export function orderedCombatStatuses(statuses: CombatStatus[]) {
@@ -18,6 +18,7 @@ function StatusIcon({ status, size }: { status: CombatStatus; size: number }) {
     ironskin: Shield,
     'better-dice': Dices,
     counterattack: RefreshCcw,
+    'stoke-the-flames': Heater,
     burning: Flame,
     poison: FlaskConical,
     stunned: Shell
@@ -70,7 +71,9 @@ export function CombatStatusBadges({
             ? '[--status-icon-cut:#174e73] border-[#83ccfa] bg-[#174e73] text-white shadow-[0_0_8px_rgba(89,185,245,0.38),inset_0_1px_0_rgba(255,255,255,0.18)]'
             : '[--status-icon-cut:#72231f] border-[#ff8278] bg-[#72231f] text-white shadow-[0_0_8px_rgba(239,91,80,0.38),inset_0_1px_0_rgba(255,255,255,0.18)]';
         const effectText = status.duration === null ? (status.amount > 0 ? `+${status.amount * 5}` : '') : String(status.duration);
-        const title = status.duration === null
+        const title = status.key === 'stoke-the-flames'
+          ? `${status.name}: ${status.duration ?? 0} stack${status.duration === 1 ? '' : 's'}`
+          : status.duration === null
           ? `${status.name}: permanent${status.amount > 0 ? `, restores ${status.amount * 5} per turn` : ''}`
           : `${status.name}: ${status.duration} turn${status.duration === 1 ? '' : 's'}`;
         const content = <><StatusIcon status={status} size={compact ? 11 : 14} />{effectText && <span className="font-black leading-none">{effectText}</span>}</>;

@@ -31,6 +31,7 @@ const BATTLE_EFFECT_OPTIONS: Array<{ key: string; name: string; kind: 'buff' | '
   { key: 'ironskin', name: 'Ironskin', kind: 'buff', description: 'Marks the target with hardened defenses.' },
   { key: 'poison', name: 'Poison', kind: 'debuff', description: 'Adds a separate stack that deals 5 damage on Start Turn.' },
   { key: 'slowness', name: 'Slowness', kind: 'debuff', description: 'Marks reduced movement or speed.' },
+  { key: 'stoke-the-flames', name: 'Stoke the Flames', kind: 'buff', description: 'A persistent stack counter that does not expire on Start Turn.' },
   { key: 'strength', name: 'Strength', kind: 'buff', description: 'Marks increased physical strength.' },
   { key: 'stunned', name: 'Stunned', kind: 'debuff', description: 'Marks the target as stunned.' },
   { key: 'swiftness', name: 'Swiftness', kind: 'buff', description: 'Marks increased movement or speed.' },
@@ -677,7 +678,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
               const status = selectedCombatant.statuses.find((entry) => entry.id === editingStatusId);
               if (!status || status.duration === null) return null;
               const duration = status.duration;
-              return <section className="rounded-2xl border border-[var(--line)] bg-black/15 p-4"><p className="eyebrow">Edit duration</p><div className="mt-2 flex items-center justify-between gap-3"><CombatStatusBadges statuses={[status]} /><div className="flex items-center gap-2"><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration <= 1} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration - 1 })}>-</Button><span className="min-w-10 text-center text-xl font-black">{duration}</span><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration >= 99} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration + 1 })}>+</Button></div></div></section>;
+              return <section className="rounded-2xl border border-[var(--line)] bg-black/15 p-4"><p className="eyebrow">{status.key === 'stoke-the-flames' ? 'Edit stacks' : 'Edit duration'}</p><div className="mt-2 flex items-center justify-between gap-3"><CombatStatusBadges statuses={[status]} /><div className="flex items-center gap-2"><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration <= 1} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration - 1 })}>-</Button><span className="min-w-10 text-center text-xl font-black">{duration}</span><Button variant="secondary" className="h-10 w-10 p-0" disabled={saving || duration >= 99} onClick={() => void updateCombatantStatuses(selectedCombatant, 'set-duration', { statusId: status.id, duration: duration + 1 })}>+</Button></div></div></section>;
             })()}
             <section>
               <p className="eyebrow mb-2">Add an effect</p>

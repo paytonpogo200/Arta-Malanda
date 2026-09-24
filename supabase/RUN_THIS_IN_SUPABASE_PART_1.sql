@@ -7562,6 +7562,7 @@ begin
       when 'ironskin' then 'Ironskin'
       when 'poison' then 'Poison'
       when 'slowness' then 'Slowness'
+      when 'stoke-the-flames' then 'Stoke the Flames'
       when 'strength' then 'Strength'
       when 'stunned' then 'Stunned'
       when 'swiftness' then 'Swiftness'
@@ -7569,7 +7570,7 @@ begin
       else null
     end;
     if v_status_name is null then raise exception 'That battle effect is not supported.'; end if;
-    v_status_kind := case when v_status_key in ('better-dice', 'counterattack', 'invisible', 'ironskin', 'strength', 'swiftness') then 'buff' else 'debuff' end;
+    v_status_kind := case when v_status_key in ('better-dice', 'counterattack', 'invisible', 'ironskin', 'stoke-the-flames', 'strength', 'swiftness') then 'buff' else 'debuff' end;
 
     if v_status_key = 'poison' then
       v_statuses := v_statuses || jsonb_build_array(jsonb_build_object(
@@ -7632,9 +7633,12 @@ begin
     where coalesce((effect->>'duration')::int, 0) > 0;
 
     select coalesce(jsonb_agg(
-      jsonb_set(effect, '{duration}', to_jsonb((effect->>'duration')::int - 1))
+      case
+        when effect->>'key' = 'stoke-the-flames' then effect
+        else jsonb_set(effect, '{duration}', to_jsonb((effect->>'duration')::int - 1))
+      end
       order by case when effect->>'key' = 'burning' then 0 else 1 end, ordinality
-    ) filter (where (effect->>'duration')::int > 1), '[]'::jsonb)
+    ) filter (where effect->>'key' = 'stoke-the-flames' or (effect->>'duration')::int > 1), '[]'::jsonb)
     into v_statuses
     from jsonb_array_elements(v_statuses) with ordinality as entries(effect, ordinality);
   elsif v_action = 'cleanse' then
