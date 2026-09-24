@@ -16,7 +16,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const { data, error } = await supabase.rpc('retrieve_boarded_stable_pet', {
       p_session_token: token,
       p_product_id: id,
-      p_character_id: String(body.characterId ?? '')
+      p_character_id: body.characterId ? String(body.characterId) : null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

@@ -41,7 +41,7 @@ export function normalizeHouse(value: unknown): House | null {
     stableName: String(source.stableName ?? (source.kind === 'caged-wagon' ? 'Caged Wagon Stable' : 'Stable')),
     cityName: String(source.cityName ?? 'Calostrynn'),
     inventorySlots: Math.max(0, numberFrom(source.inventorySlots, 45)),
-    stableSlots: Math.max(0, numberFrom(source.stableSlots, 5)),
+    stableSlots: Math.max(0, numberFrom(source.stableSlots, 0)),
     propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
     locked: Boolean(source.locked),
     isMain: Boolean(source.isMain),

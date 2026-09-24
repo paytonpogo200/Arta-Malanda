@@ -74,7 +74,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
   const [permissions, setPermissions] = useState<Record<string, { house: boolean; stable: boolean }>>({});
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [inventorySlots, setInventorySlots] = useState(45);
-  const [stableSlots, setStableSlots] = useState(5);
+  const [stableSlots, setStableSlots] = useState(0);
   const [propertySlots, setPropertySlots] = useState(10);
   const [houseName, setHouseName] = useState('House');
   const [stableName, setStableName] = useState('Stable');
@@ -88,7 +88,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
     stableName: 'Stable',
     cityName: 'Wild',
     inventorySlots: 45,
-    stableSlots: 5,
+    stableSlots: 0,
     propertySlots: 10,
     locked: false,
     isMain: false
@@ -167,7 +167,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
       setStableName(normalized.house?.stableName ?? 'Stable');
       setHouseCityName(normalized.house?.cityName ?? 'Wild');
       setInventorySlots(normalized.house?.inventorySlots ?? 45);
-      setStableSlots(normalized.house?.stableSlots ?? 5);
+      setStableSlots(normalized.house?.stableSlots ?? 0);
       setPropertySlots(normalized.house?.propertySlots ?? 10);
       setHouseLocked(Boolean(normalized.house?.locked));
       setHomeKind(normalized.house?.kind ?? 'house');
@@ -738,7 +738,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                   </div>}
                 </div>
                 {!detail ? <div className="grid h-24 place-items-center text-[var(--muted)]"><Loader2 className="animate-spin" size={18} /></div> : <div className="space-y-4 p-3">
-                  {home.inventorySlots > 0 && <div>
+                  {!stable && home.inventorySlots > 0 && <div>
                     <p className="mb-2 text-[10px] font-black uppercase text-[var(--muted)]">Inventory · {homeMainItems.length}/{home.inventorySlots}</p>
                     <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
                       {Array.from({ length: home.inventorySlots }, (_, slot) => {
@@ -750,7 +750,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                       })}
                     </div>
                   </div>}
-                  {home.stableSlots > 0 && <div>
+                  {stable && home.stableSlots > 0 && <div>
                     <p className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase text-[var(--muted)]"><PawPrint size={13} className="text-[var(--brass)]" /> {home.stableName} · {homeStableItems.length}/{home.stableSlots}</p>
                     <div className="grid grid-cols-2 gap-2 min-[430px]:grid-cols-3 sm:grid-cols-5 lg:grid-cols-5">
                       {Array.from({ length: home.stableSlots }, (_, slot) => {
@@ -928,7 +928,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     <p className="font-black">{entry.displayName || entry.username || 'Player'}</p>
                     {entry.username && <p className="text-xs text-[var(--muted)]">{entry.username}</p>}
                   </div>
-                  {homeAvailable && inventorySlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
+                  {homeAvailable && (homeKind === 'house' || homeKind === 'wagon-home') && inventorySlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.house}
@@ -936,7 +936,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     />
                     {houseName}
                   </label>}
-                  {homeAvailable && stableSlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
+                  {homeAvailable && (homeKind === 'stable' || homeKind === 'caged-wagon') && stableSlots > 0 && <label className="flex items-center gap-2 text-sm font-black">
                     <input
                       type="checkbox"
                       checked={access.stable}
@@ -987,10 +987,6 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
               <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">{houseSettingsDraft.kind === 'stable' ? 'Stable name' : 'House name'}</span>
               <TextField value={houseSettingsDraft.name} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, name: event.target.value })} />
             </label>
-            {houseSettingsDraft.kind === 'house' && stableSlots > 0 && !creatingHome && <label>
-              <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable name</span>
-              <TextField value={houseSettingsDraft.stableName} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, stableName: event.target.value })} />
-            </label>}
             {houseSettingsDraft.kind === 'house' && homeKind !== 'caged-wagon' && (
               <label className="flex items-center gap-2 rounded-xl border border-[var(--brass)]/35 bg-[var(--brass)]/10 p-3 text-sm font-black">
                 <input type="checkbox" checked={houseSettingsDraft.isMain} onChange={(event) => setHouseSettingsDraft({ ...houseSettingsDraft, isMain: event.target.checked })} />
@@ -1010,7 +1006,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, pr
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Home slots</span>
                     <NumberInput min={0} max={500} value={houseSettingsDraft.inventorySlots} onValueChange={(inventorySlots) => setHouseSettingsDraft({ ...houseSettingsDraft, inventorySlots })} />
                   </label>}
-                  {(houseSettingsDraft.kind === 'stable' || (!creatingHome && stableSlots > 0)) && <label>
+                  {houseSettingsDraft.kind === 'stable' && <label>
                     <span className="mb-1 block text-[10px] font-black uppercase text-[var(--muted)]">Stable slots</span>
                     <NumberInput min={0} max={200} value={houseSettingsDraft.stableSlots} onValueChange={(stableSlots) => setHouseSettingsDraft({ ...houseSettingsDraft, stableSlots })} />
                   </label>}

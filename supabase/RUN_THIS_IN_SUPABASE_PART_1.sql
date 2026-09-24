@@ -3996,7 +3996,7 @@ create table if not exists public.player_houses (
   owner_user_id uuid not null unique references public.profiles(id) on delete cascade,
   city_name text not null default 'Calostrynn',
   inventory_slots int not null default 45 check (inventory_slots between 0 and 500),
-  stable_slots int not null default 5 check (stable_slots between 0 and 200),
+  stable_slots int not null default 0 check (stable_slots between 0 and 200),
   property_slots int not null default 10 check (property_slots between 0 and 200),
   is_locked boolean not null default false,
   created_at timestamptz not null default now(),
@@ -4089,11 +4089,11 @@ alter table public.player_houses
   add column if not exists house_name text not null default 'House',
   add column if not exists stable_name text not null default 'Stable',
   add column if not exists is_locked boolean not null default false,
-  add column if not exists stable_slots int not null default 5 check (stable_slots between 0 and 200);
+  add column if not exists stable_slots int not null default 0 check (stable_slots between 0 and 200);
 
 alter table public.player_houses
   alter column inventory_slots set default 45,
-  alter column stable_slots set default 5;
+  alter column stable_slots set default 0;
 
 update public.house_inventory_items
 set item_type = public.normalize_item_type(item_type),
@@ -4220,7 +4220,7 @@ alter table public.player_houses drop constraint if exists player_houses_house_k
 alter table public.player_houses add constraint player_houses_house_kind_check check (house_kind in ('house', 'stable'));
 
 insert into public.player_houses (owner_user_id, city_name, inventory_slots, stable_slots, property_slots, house_name, stable_name, house_kind, created_order)
-select owner.id, 'Wild', 45, 5, 10, 'House', 'Stable', 'house', 10
+select owner.id, 'Wild', 45, 0, 10, 'House', 'Stable', 'house', 10
 from (
   select owner_user_id as id from public.house_inventory_items
   union
@@ -4700,38 +4700,26 @@ security definer
 set search_path = public
 as $$
 declare
-  v_capacity int;
+  v_is_pet boolean := public.normalize_item_type(p_item_type) = 'pet';
   v_stable_start int := public.house_stable_slot_offset();
 begin
-  if p_slot_index < 0 then
-    raise exception 'House slot is invalid.';
-  end if;
+  if p_slot_index < 0 then raise exception 'Property slot is invalid.'; end if;
 
-  if p_parent_item_id is null and p_slot_index >= v_stable_start then
-    if public.normalize_item_type(p_item_type) <> 'pet' then
-      raise exception 'Only animals can be placed in stable slots.';
-    end if;
-
-    if p_slot_index >= v_stable_start + p_house.stable_slots then
+  if p_house.house_kind = 'stable' then
+    if p_parent_item_id is not null then raise exception 'Animals must occupy a direct stable slot.'; end if;
+    if not v_is_pet then raise exception 'Stable slots are only for animals.'; end if;
+    if p_slot_index < v_stable_start or p_slot_index >= v_stable_start + p_house.stable_slots then
       raise exception 'Stable slot is outside the stable capacity.';
     end if;
-
     return p_house.stable_slots;
   end if;
 
-  if public.normalize_item_type(p_item_type) = 'pet' then
-    raise exception 'Animals can only be placed in stable slots.';
+  if v_is_pet then raise exception 'Animals require a stable or Caged Wagon.'; end if;
+  if p_parent_item_id is null then
+    if p_slot_index >= p_house.inventory_slots then raise exception 'House slot is outside the house capacity.'; end if;
+    return p_house.inventory_slots;
   end if;
-
-  v_capacity := public.assert_house_slot_capacity(p_house, p_parent_item_id, p_slot_index);
-
-  if p_parent_item_id is null
-    and p_slot_index >= p_house.inventory_slots
-  then
-    raise exception 'Only animals can be placed in stable slots.';
-  end if;
-
-  return v_capacity;
+  return public.assert_house_slot_capacity(p_house, p_parent_item_id, p_slot_index);
 end;
 $$;
 

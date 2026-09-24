@@ -1178,6 +1178,17 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
   const selectedProductSection = selectedVendor && selectedProduct ? sectionRecordForProduct(selectedVendor, selectedProduct) : null;
   const selectedProductCanPurchase = !selectedProductSection || selectedProductSection.sectionType !== 'holding';
+  const selectedBoardedAnimalBelongsToViewer = Boolean(selectedProduct?.boardedOwnerUserId && selectedProduct.boardedOwnerUserId === profile.id);
+  const canReturnSelectedBoardedAnimal = Boolean(
+    selectedProduct?.boardedOwnerUserId
+      && selectedVendor
+      && (isDm || isShopkeeperForVendor(selectedVendor) || selectedBoardedAnimalBelongsToViewer)
+  );
+  const returningSelectedBoardedAnimalForOwner = Boolean(
+    selectedProduct?.boardedOwnerUserId
+      && (isDm || (selectedVendor && isShopkeeperForVendor(selectedVendor)))
+      && !selectedBoardedAnimalBelongsToViewer
+  );
   const productEditorPriceOnly = Boolean(editProduct && productEditorVendor && !canManageVendor(productEditorVendor) && canPriceStableVendor(productEditorVendor));
   const vendorEditorRenameOnly = Boolean(editVendor && !canManageVendor(editVendor) && canRenameStableVendor(editVendor));
 
@@ -1704,18 +1715,18 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
   }
 
   async function retrieveBoardedAnimal() {
-    if (!selectedProduct || !selectedShopper) return;
+    if (!selectedProduct || !canReturnSelectedBoardedAnimal) return;
     setSaving(true);
     setError('');
     try {
       await replaceFromResponse(await fetch(`/api/cities/products/${selectedProduct.id}/retrieve-boarded`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ characterId: selectedShopper.id })
-      }), 'Boarded animal could not be taken out.');
+        body: JSON.stringify({ characterId: selectedShopper?.id ?? null })
+      }), returningSelectedBoardedAnimalForOwner ? 'Animal could not be returned to its owner.' : 'Boarded animal could not be taken out.');
       setSelectedProduct(null);
     } catch (retrieveError) {
-      setError(retrieveError instanceof Error ? retrieveError.message : 'Boarded animal could not be taken out.');
+      setError(retrieveError instanceof Error ? retrieveError.message : returningSelectedBoardedAnimalForOwner ? 'Animal could not be returned to its owner.' : 'Boarded animal could not be taken out.');
     } finally {
       setSaving(false);
     }
@@ -2506,7 +2517,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => setSelectedProduct(null)}>I&rsquo;ll pass</Button>
               {selectedProduct.boardedOwnerUserId ? (
-                <Button variant="teal" disabled={!selectedShopper || saving} onClick={retrieveBoardedAnimal}><PawPrint className="mr-2 inline" size={15} /> Check Out Animal</Button>
+                <Button variant="teal" disabled={!canReturnSelectedBoardedAnimal || saving} onClick={retrieveBoardedAnimal}><PawPrint className="mr-2 inline" size={15} /> {returningSelectedBoardedAnimalForOwner ? 'Return to Owner' : 'Check Out Animal'}</Button>
               ) : !isDisplayBook(selectedProduct) && (
                 <Button variant="primary" disabled={!canShop || !selectedProductCanPurchase || saving} onClick={buyProduct}><ShoppingBag className="mr-2 inline" size={15} /> {selectedProductCanPurchase ? purchaseActionLabel(selectedProduct) : 'Holding only'}</Button>
               )}
