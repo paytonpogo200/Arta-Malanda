@@ -145,6 +145,15 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     if (initiativeA !== initiativeB) return initiativeB - initiativeA;
     return (a.character?.name ?? '').localeCompare(b.character?.name ?? '');
   }), [tokens]);
+  const rosterTokens = useMemo(() => {
+    const listedNeoplasms = new Set<string>();
+    return orderedTokens.filter((entry) => {
+      if (entry.character?.name.trim().toLowerCase() !== 'the malignant neoplasm') return true;
+      if (listedNeoplasms.has(entry.characterId)) return false;
+      listedNeoplasms.add(entry.characterId);
+      return true;
+    });
+  }, [orderedTokens]);
   const selectedCombatant = room.combatants.find((entry) => entry.id === selectedCombatantId) ?? null;
   const selectedCharacter = selectedCombatant ? characterById.get(selectedCombatant.characterId) ?? null : null;
   const playerViewTokens = useMemo(() => orderedTokens.filter((entry) => entry.character?.kind === 'player'), [orderedTokens]);
@@ -566,7 +575,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
           </div>
         )}
         <div className="grid gap-2 sm:grid-cols-2">
-          {orderedTokens.map((entry) => {
+          {rosterTokens.map((entry) => {
             const character = entry.character;
             const loadoutItems = character ? loadoutItemsByCharacterId.get(character.id) ?? [] : [];
             const sheetStats = character ? calculateCharacterSheetStats(character, loadoutItems, classByKey.get(character.classKey)) : null;
