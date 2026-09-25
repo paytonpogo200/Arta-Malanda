@@ -12,6 +12,7 @@ export async function POST(request: NextRequest) {
     if (!supabase) return NextResponse.json({ error: 'The campaign database is not connected yet.' }, { status: 503 });
     const { data, error } = await supabase.rpc('move_item_between_homes', {
       p_session_token: token,
+      p_actor_character_id: body.actorCharacterId || null,
       p_item_id: String(body.itemId ?? ''),
       p_source_home_id: String(body.sourceHomeId ?? ''),
       p_source: String(body.source ?? ''),

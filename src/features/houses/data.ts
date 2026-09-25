@@ -1,29 +1,16 @@
 import { normalizeInventoryItem } from '@/features/inventory/data';
-import type { CampaignProperty, House, HouseAccess, HousePermission, InventoryItem, PropertyLocation, PropertyType } from '@/lib/types';
-
-export const PROPERTY_TYPES: PropertyType[] = ['animal', 'wagon', 'pet', 'mount', 'other'];
-export const PROPERTY_LOCATIONS: PropertyLocation[] = ['with_character', 'at_house'];
+import type { House, HouseAccess, InventoryItem } from '@/lib/types';
 
 export type HousePayload = {
   house: House | null;
   homes: House[];
   items: InventoryItem[];
-  properties: CampaignProperty[];
   access: HouseAccess;
-  permissions: HousePermission[];
 };
 
 function numberFrom(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function normalizePropertyType(value: unknown): PropertyType {
-  return PROPERTY_TYPES.includes(value as PropertyType) ? value as PropertyType : 'other';
-}
-
-function normalizePropertyLocation(value: unknown): PropertyLocation {
-  return PROPERTY_LOCATIONS.includes(value as PropertyLocation) ? value as PropertyLocation : 'at_house';
 }
 
 export function normalizeHouse(value: unknown): House | null {
@@ -42,31 +29,16 @@ export function normalizeHouse(value: unknown): House | null {
     cityName: String(source.cityName ?? 'Calostrynn'),
     inventorySlots: Math.max(0, numberFrom(source.inventorySlots, 45)),
     stableSlots: Math.max(0, numberFrom(source.stableSlots, 0)),
-    propertySlots: Math.max(0, numberFrom(source.propertySlots, 10)),
     locked: Boolean(source.locked),
     isMain: Boolean(source.isMain),
     displayOrder: Math.max(0, numberFrom(source.displayOrder, 0)),
+    accessible: source.accessible === undefined ? true : Boolean(source.accessible),
+    accessReason: String(source.accessReason ?? ''),
     kind: source.kind === 'wagon-home' || source.kind === 'caged-wagon' || source.kind === 'stable' ? source.kind : 'house',
     storageItemId: source.storageItemId ? String(source.storageItemId) : null,
     storageCharacterId: source.storageCharacterId ? String(source.storageCharacterId) : null,
     stableStorageItemId: source.stableStorageItemId ? String(source.stableStorageItemId) : null,
     stableStorageCharacterId: source.stableStorageCharacterId ? String(source.stableStorageCharacterId) : null
-  };
-}
-
-export function normalizeProperty(value: unknown): CampaignProperty {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-
-  return {
-    id: String(source.id ?? ''),
-    ownerUserId: String(source.ownerUserId ?? ''),
-    caretakerCharacterId: source.caretakerCharacterId ? String(source.caretakerCharacterId) : null,
-    name: String(source.name ?? 'Property'),
-    type: normalizePropertyType(source.type),
-    location: normalizePropertyLocation(source.location),
-    isPet: Boolean(source.isPet),
-    slotIndex: Math.max(0, numberFrom(source.slotIndex, 0)),
-    storageCapacity: Math.max(0, numberFrom(source.storageCapacity, 0))
   };
 }
 
@@ -80,25 +52,12 @@ export function normalizeHouseAccess(value: unknown): HouseAccess {
   };
 }
 
-export function normalizeHousePermission(value: unknown): HousePermission {
-  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  return {
-    ownerUserId: String(source.ownerUserId ?? ''),
-    granteeUserId: String(source.granteeUserId ?? ''),
-    granteeName: String(source.granteeName ?? 'Player'),
-    house: Boolean(source.house),
-    stable: Boolean(source.stable)
-  };
-}
-
 export function normalizeHousePayload(value: unknown): HousePayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return {
     house: normalizeHouse(source.house),
     homes: Array.isArray(source.homes) ? source.homes.map(normalizeHouse).filter((home): home is House => Boolean(home)) : [],
     items: Array.isArray(source.items) ? source.items.map(normalizeInventoryItem).filter((item) => item.id) : [],
-    properties: Array.isArray(source.properties) ? source.properties.map(normalizeProperty).filter((property) => property.id) : [],
-    access: normalizeHouseAccess(source.access),
-    permissions: Array.isArray(source.permissions) ? source.permissions.map(normalizeHousePermission).filter((permission) => permission.granteeUserId) : []
+    access: normalizeHouseAccess(source.access)
   };
 }

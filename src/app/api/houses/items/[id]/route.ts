@@ -16,6 +16,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const { data, error } = await supabase.rpc('update_house_inventory_item_state', {
       p_session_token: token,
       p_item_id: id,
+      p_actor_character_id: patch.actorCharacterId || null,
       p_patch: patch
     });
 
@@ -40,6 +41,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const { data, error } = await supabase.rpc('drop_house_inventory_item_quantity', {
       p_session_token: token,
       p_item_id: id,
+      p_actor_character_id: searchParams.get('characterId') || null,
       p_quantity: quantity
     });
 

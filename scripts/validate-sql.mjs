@@ -25,7 +25,18 @@ function walkFiles(directory, files = []) {
 function normalizeSignature(rawParams) {
   return rawParams
     .split(',')
-    .map((param) => param.trim().replace(/\s+/g, ' '))
+    .map((param) => {
+      let normalized = param.trim().replace(/\s+/g, ' ');
+      normalized = normalized.replace(/\s+default\s+[\s\S]*$/i, '');
+      normalized = normalized.replace(/\s*=\s*[\s\S]*$/i, '');
+      normalized = normalized.replace(/^(?:inout|in|out|variadic)\s+/i, '');
+      const parts = normalized.split(' ');
+      if (parts.length > 1 && /^[a-z_][a-z0-9_]*$/i.test(parts[0])) parts.shift();
+      return parts.join(' ')
+        .replace(/\bint\b/gi, 'integer')
+        .replace(/\bdecimal\b/gi, 'numeric')
+        .toLowerCase();
+    })
     .filter(Boolean)
     .join(', ');
 }
@@ -45,7 +56,29 @@ const rlsEnabledPublicTables = new Set(
 );
 const definitions = new Map();
 const firstDefinitionLines = new Map();
-const definitionPattern = /create\s+or\s+replace\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:returns|language)\b/gi;
+const returnTypesBySignature = new Map();
+const canonicalStorageRpcNames = new Set([
+  'get_character_inventory',
+  'get_player_homes',
+  'reorder_player_homes',
+  'save_player_home',
+  'delete_player_home',
+  'add_home_inventory_item',
+  'move_inventory_item_to_home',
+  'move_home_item_to_inventory',
+  'move_item_between_homes',
+  'update_house_inventory_item_state',
+  'drop_house_inventory_item_quantity',
+  'update_mobile_home_item_state',
+  'drop_mobile_home_item_quantity',
+  'update_inventory_item_state',
+  'place_pet_item_in_stable_for_character',
+  'place_pet_item_for_character',
+  'get_location_wagon_storage',
+  'move_inventory_item_to_wagon',
+  'move_wagon_item_to_inventory'
+]);
+const definitionPattern = /create\s+(?:or\s+replace\s+)?function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:returns|language)\b/gi;
 let definitionMatch;
 
 while ((definitionMatch = definitionPattern.exec(sql))) {
@@ -58,14 +91,37 @@ while ((definitionMatch = definitionPattern.exec(sql))) {
   }
 }
 
+for (const match of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*returns\s+([a-zA-Z0-9_.]+)/gi)) {
+  const signature = `${match[1]}(${normalizeSignature(match[2])})`;
+  const returnType = match[3]
+    .replace(/^int$/i, 'integer')
+    .replace(/^decimal$/i, 'numeric')
+    .toLowerCase();
+  const returnTypes = returnTypesBySignature.get(signature) ?? new Set();
+  returnTypes.add(returnType);
+  returnTypesBySignature.set(signature, returnTypes);
+}
+
+const incompatibleReturnTypes = Array.from(returnTypesBySignature.entries())
+  .filter(([, returnTypes]) => returnTypes.size > 1)
+  .map(([signature, returnTypes]) => `${signature}: ${Array.from(returnTypes).join(' | ')}`);
+
 const duplicateOverloads = Array.from(definitions.entries())
-  .filter(([, signatures]) => signatures.size > 1)
+  .filter(([name, signatures]) => signatures.size > 1 && !canonicalStorageRpcNames.has(name))
   .map(([name, signatures]) => `${name}: ${Array.from(signatures).join(' | ')}`);
 
 const grants = new Set(
   Array.from(sql.matchAll(/grant\s+execute\s+on\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(/gi))
     .map((match) => match[1])
 );
+const invalidGrantSignatures = [];
+for (const match of sql.matchAll(/grant\s+execute\s+on\s+function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s+to\b/gi)) {
+  const name = match[1];
+  const signature = normalizeSignature(match[2]);
+  if (definitions.has(name) && !definitions.get(name).has(signature)) {
+    invalidGrantSignatures.push(`${name}(${signature}) at line ${lineNumberAt(sql, match.index)}`);
+  }
+}
 
 const grantOrderProblems = [];
 const grantsWithoutDefinitions = [];
@@ -94,6 +150,53 @@ const missingRlsTables = Array.from(createdPublicTables)
   .filter((name) => !rlsEnabledPublicTables.has(name))
   .sort();
 const failures = [];
+const partTwoSql = fs.readFileSync(sqlPaths[1], 'utf8');
+const canonicalRuntimeMarker = '-- CANONICAL STORAGE RUNTIME START';
+const canonicalRuntimeStart = partTwoSql.indexOf(canonicalRuntimeMarker);
+const canonicalRuntime = canonicalRuntimeStart >= 0 ? partTwoSql.slice(canonicalRuntimeStart) : '';
+const retiredStorageIdentifiers = [
+  'player_houses',
+  'house_inventory_items',
+  'campaign_properties',
+  'house_access_permissions',
+  'house_unit_access_permissions',
+  'mobile_storage_access_permissions',
+  'player_main_homes',
+  'player_home_display_orders',
+  'house_stable_slot_offset'
+];
+const canonicalStorageRpcs = Array.from(canonicalStorageRpcNames);
+const canonicalStorageProblems = [];
+const canonicalReturnTypes = new Map([
+  ['inventory_item_owner_user_id(public.inventory_items)', 'uuid'],
+  ['inventory_portable_property_root(uuid)', 'uuid'],
+  ['place_pet_item_in_stable_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, integer, boolean)', 'jsonb'],
+  ['place_pet_item_for_character(uuid, text, text, text, public.item_rarity, numeric, boolean, jsonb, text, text, text, integer, boolean)', 'jsonb']
+]);
+
+if (canonicalRuntimeStart < 0) {
+  canonicalStorageProblems.push('canonical runtime marker is missing');
+} else {
+  for (const identifier of retiredStorageIdentifiers) {
+    const match = new RegExp(`\\b${identifier}\\b`, 'i').exec(canonicalRuntime);
+    if (match) {
+      canonicalStorageProblems.push(`${identifier} is referenced after the canonical runtime boundary at line ${lineNumberAt(partTwoSql, canonicalRuntimeStart + match.index)}`);
+    }
+  }
+  for (const match of canonicalRuntime.matchAll(/(?:slot_index|slot|stable_slot)\s*(?:\+|-)\s*1000|1000\s*(?:\+|-)\s*(?:slot_index|slot|stable_slot)/gi)) {
+    canonicalStorageProblems.push(`stable-slot offset arithmetic appears at line ${lineNumberAt(partTwoSql, canonicalRuntimeStart + match.index)}`);
+  }
+  for (const rpcName of canonicalStorageRpcs) {
+    const count = Array.from(canonicalRuntime.matchAll(new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${rpcName}\\s*\\(`, 'gi'))).length;
+    if (count !== 1) canonicalStorageProblems.push(`${rpcName} has ${count} canonical runtime definitions; expected exactly 1`);
+  }
+  for (const [signature, expectedReturnType] of canonicalReturnTypes) {
+    const returnTypes = returnTypesBySignature.get(signature);
+    if (!returnTypes?.has(expectedReturnType)) {
+      canonicalStorageProblems.push(`${signature} must return ${expectedReturnType}`);
+    }
+  }
+}
 const requiredCityPayloadFields = [
   'description',
   'primaryColor',
@@ -191,6 +294,14 @@ if (grantsWithoutDefinitions.length) {
   failures.push(`Execute grants without SQL definitions:\n${grantsWithoutDefinitions.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
+if (invalidGrantSignatures.length) {
+  failures.push(`Execute grants without matching function signatures:\n${invalidGrantSignatures.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (incompatibleReturnTypes.length) {
+  failures.push(`Function signatures with incompatible return types:\n${incompatibleReturnTypes.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
 if (grantOrderProblems.length) {
   failures.push(`Execute grants before SQL definitions:\n${grantOrderProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
@@ -205,6 +316,10 @@ if (compositeIntoProblems.length) {
 
 if (cityContractProblems.length) {
   failures.push(`Incomplete discovered-city SQL contracts:\n${cityContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (canonicalStorageProblems.length) {
+  failures.push(`Canonical storage contract violations:\n${canonicalStorageProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (failures.length) {

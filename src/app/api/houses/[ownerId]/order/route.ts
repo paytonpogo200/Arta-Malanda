@@ -14,6 +14,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ own
     const { data, error } = await supabase.rpc('reorder_player_homes', {
       p_session_token: token,
       p_owner_user_id: ownerId,
+      p_actor_character_id: body.actorCharacterId || null,
       p_homes: Array.isArray(body.homes) ? body.homes : []
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

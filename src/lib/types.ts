@@ -173,6 +173,7 @@ export type LoadoutSlot =
 export type InventoryItem = {
   id: string;
   characterId: string;
+  propertyId: string | null;
   parentItemId: string | null;
   name: string;
   displayName?: string;
@@ -215,9 +216,6 @@ export type WalletBalance = {
   amount: number;
 };
 
-export type PropertyType = 'animal' | 'wagon' | 'pet' | 'mount' | 'other';
-export type PropertyLocation = 'with_character' | 'at_house';
-
 export type House = {
   id: string;
   ownerUserId: string;
@@ -227,10 +225,11 @@ export type House = {
   cityName: string;
   inventorySlots: number;
   stableSlots: number;
-  propertySlots: number;
   locked: boolean;
   isMain: boolean;
   displayOrder: number;
+  accessible: boolean;
+  accessReason: string;
   kind: 'house' | 'stable' | 'wagon-home' | 'caged-wagon';
   storageItemId?: string | null;
   storageCharacterId?: string | null;
@@ -243,26 +242,6 @@ export type HouseAccess = {
   dm: boolean;
   house: boolean;
   stable: boolean;
-};
-
-export type HousePermission = {
-  ownerUserId: string;
-  granteeUserId: string;
-  granteeName: string;
-  house: boolean;
-  stable: boolean;
-};
-
-export type CampaignProperty = {
-  id: string;
-  ownerUserId: string;
-  caretakerCharacterId: string | null;
-  name: string;
-  type: PropertyType;
-  location: PropertyLocation;
-  isPet: boolean;
-  slotIndex: number;
-  storageCapacity: number;
 };
 
 export type BattleTerrain = {

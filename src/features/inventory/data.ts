@@ -60,6 +60,7 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
   return {
     id: String(source.id ?? ''),
     characterId: String(source.characterId ?? ''),
+    propertyId: source.propertyId ? String(source.propertyId) : null,
     parentItemId: source.parentItemId ? String(source.parentItemId) : null,
     name: String(source.name ?? 'Unknown item'),
     displayName: source.displayName ? String(source.displayName) : undefined,

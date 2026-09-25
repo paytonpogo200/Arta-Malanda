@@ -166,7 +166,7 @@ alter table public.inventory_items add constraint inventory_items_visible_or_sto
 
 create unique index if not exists inventory_container_slot_unique
   on public.inventory_items (character_id, coalesce(parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid), slot_index)
-  where loadout_slot is null;
+  where loadout_slot is null and not (is_storage and storage_active);
 
 create unique index if not exists inventory_loadout_slot_unique
   on public.inventory_items (character_id, loadout_slot)
@@ -3198,8 +3198,8 @@ begin
 
   if v_make_storage_container then
     v_storage_kind := public.additional_storage_kind(v_item_name, v_item_type);
-    v_storage_should_activate := v_storage_kind is null
-      or not public.character_storage_container_exists(p_character_id, v_item_name);
+    v_storage_should_activate := v_storage_kind is not null
+      and not public.character_storage_container_exists(p_character_id, v_item_name);
     v_normal_slot := case
       when v_storage_should_activate then null
       else coalesce(p_slot_index, public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots))
@@ -3238,6 +3238,7 @@ begin
     and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
     and i.loadout_slot is null
     and i.slot_index = p_slot_index
+    and not (p_parent_item_id is null and i.is_storage and i.storage_active)
   limit 1;
 
   if v_target.id is not null then
@@ -6777,6 +6778,7 @@ begin
     and coalesce(i.parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid) = coalesce(p_parent_item_id, '00000000-0000-0000-0000-000000000000'::uuid)
     and i.loadout_slot is null
     and i.slot_index = v_slot_index
+    and not (p_parent_item_id is null and i.is_storage and i.storage_active)
   limit 1;
 
   if v_target.id is not null then
@@ -9899,8 +9901,8 @@ begin
 
   if v_product.item_type = 'storage'::text or v_is_storage then
     v_storage_kind := public.additional_storage_kind(v_item_name, v_product.item_type);
-    v_storage_active := v_storage_kind is null
-      or not public.character_storage_container_exists(v_character.id, v_item_name);
+    v_storage_active := v_storage_kind is not null
+      and not public.character_storage_container_exists(v_character.id, v_item_name);
     v_storage_slot := case
       when v_storage_active then public.next_storage_container_slot(v_character.id)
       else public.find_first_free_inventory_slot(v_character.id, null, v_character.inventory_slots)

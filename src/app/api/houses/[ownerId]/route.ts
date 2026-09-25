@@ -16,7 +16,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ own
       p_session_token: token,
       p_owner_user_id: ownerId,
       p_selected_home_id: request.nextUrl.searchParams.get('homeId') || null,
-      p_selected_source: request.nextUrl.searchParams.get('source') || null
+      p_selected_source: request.nextUrl.searchParams.get('source') || null,
+      p_actor_character_id: request.nextUrl.searchParams.get('characterId') || null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
@@ -41,6 +42,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ o
       p_owner_user_id: ownerId,
       p_home_id: patch.homeId || null,
       p_home_source: patch.source || 'static',
+      p_actor_character_id: patch.actorCharacterId || null,
       p_patch: patch
     });
 
@@ -66,6 +68,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ow
       p_owner_user_id: ownerId,
       p_home_id: null,
       p_home_source: 'static',
+      p_actor_character_id: patch.actorCharacterId || null,
       p_patch: patch
     });
 
@@ -89,7 +92,8 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
       p_session_token: token,
       p_owner_user_id: ownerId,
       p_home_id: request.nextUrl.searchParams.get('homeId') || null,
-      p_home_source: request.nextUrl.searchParams.get('source') || 'static'
+      p_home_source: request.nextUrl.searchParams.get('source') || 'static',
+      p_actor_character_id: request.nextUrl.searchParams.get('characterId') || null
     });
 
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

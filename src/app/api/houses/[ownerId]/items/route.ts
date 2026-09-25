@@ -17,6 +17,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ ow
       p_session_token: token,
       p_owner_user_id: ownerId,
       p_home_id: body.homeId || null,
+      p_actor_character_id: body.actorCharacterId || null,
       p_parent_item_id: body.parentItemId || null,
       p_slot_index: Number(body.slotIndex ?? 0),
       p_item_name: String(body.name ?? ''),

@@ -14,6 +14,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const { data, error } = await supabase.rpc('update_mobile_home_item_state', {
       p_session_token: token,
       p_item_id: id,
+      p_actor_character_id: patch.actorCharacterId || null,
       p_patch: patch
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });
@@ -34,6 +35,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     const { data, error } = await supabase.rpc('drop_mobile_home_item_quantity', {
       p_session_token: token,
       p_item_id: id,
+      p_actor_character_id: request.nextUrl.searchParams.get('characterId') || null,
       p_quantity: quantity
     });
     if (error) return NextResponse.json({ error: error.message, code: error.code, details: error.details, hint: error.hint }, { status: 400 });

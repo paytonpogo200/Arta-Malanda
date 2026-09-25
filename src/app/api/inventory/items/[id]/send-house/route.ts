@@ -16,6 +16,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const { data, error } = await supabase.rpc('move_inventory_item_to_home', {
       p_session_token: token,
       p_item_id: id,
+      p_actor_character_id: body.actorCharacterId || null,
       p_home_id: body.homeId || null,
       p_home_source: body.source || null,
       p_slot_index: body && typeof body === 'object' && 'slotIndex' in body ? Number(body.slotIndex ?? 0) : null,
