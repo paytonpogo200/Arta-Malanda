@@ -6859,6 +6859,18 @@ $$;
 
 -- Active additional storage is deployed beside the base inventory. It uses a
 -- zero-based sentinel position and never occupies a visible base slot.
+update public.inventory_items
+set storage_active = false
+where storage_active
+  and (
+    character_id is null
+    or property_id is not null
+    or parent_item_id is not null
+    or loadout_slot is not null
+    or not is_storage
+    or public.additional_storage_kind(item_name, item_type) is null
+  );
+
 update public.inventory_items candidate
 set storage_active = true,
     slot_index = 0
@@ -7134,6 +7146,16 @@ set search_path = public
 as $$
 begin
   if current_setting('app.canonical_storage_move', true) = 'on' then return new; end if;
+  if new.storage_active and (
+    new.character_id is null
+    or new.property_id is not null
+    or new.parent_item_id is not null
+    or new.loadout_slot is not null
+    or not new.is_storage
+    or public.additional_storage_kind(new.item_name, new.item_type) is null
+  ) then
+    raise exception 'Only a carried root additional-storage item can be active.';
+  end if;
   perform public.assert_inventory_item_placement(
     new.id, new.item_name, new.item_type, new.character_id, new.property_id,
     new.parent_item_id, new.slot_index, new.loadout_slot
@@ -7144,7 +7166,7 @@ $$;
 
 drop trigger if exists validate_inventory_item_placement_trigger on public.inventory_items;
 create trigger validate_inventory_item_placement_trigger
-before insert or update of character_id, property_id, parent_item_id, slot_index, loadout_slot, item_name, item_type
+before insert or update of character_id, property_id, parent_item_id, slot_index, loadout_slot, item_name, item_type, is_storage, storage_active
 on public.inventory_items for each row execute function public.validate_inventory_item_placement();
 
 create or replace function public.storage_property_accessible(
@@ -7244,6 +7266,73 @@ begin
 end;
 $$;
 
+create or replace function public.ensure_character_additional_storage_activation(p_character_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_kind text;
+  v_candidate_id uuid;
+begin
+  if p_character_id is null then return; end if;
+
+  update public.inventory_items item
+  set storage_active = false,
+      updated_at = now()
+  where item.character_id = p_character_id
+    and item.storage_active
+    and (
+      item.property_id is not null
+      or item.parent_item_id is not null
+      or item.loadout_slot is not null
+      or not item.is_storage
+      or public.additional_storage_kind(item.item_name, item.item_type) is null
+    );
+
+  for v_kind in
+    select distinct public.additional_storage_kind(item.item_name, item.item_type)
+    from public.inventory_items item
+    where item.character_id = p_character_id
+      and item.property_id is null
+      and item.parent_item_id is null
+      and item.loadout_slot is null
+      and item.is_storage
+      and public.additional_storage_kind(item.item_name, item.item_type) is not null
+  loop
+    if not exists (
+      select 1 from public.inventory_items active
+      where active.character_id = p_character_id
+        and active.property_id is null
+        and active.parent_item_id is null
+        and active.loadout_slot is null
+        and active.is_storage
+        and active.storage_active
+        and public.additional_storage_kind(active.item_name, active.item_type) = v_kind
+    ) then
+      select item.id into v_candidate_id
+      from public.inventory_items item
+      where item.character_id = p_character_id
+        and item.property_id is null
+        and item.parent_item_id is null
+        and item.loadout_slot is null
+        and item.is_storage
+        and not item.storage_active
+        and public.additional_storage_kind(item.item_name, item.item_type) = v_kind
+      order by item.created_at, item.id
+      limit 1;
+      if v_candidate_id is not null then
+        update public.inventory_items
+        set storage_active = true, slot_index = 0, updated_at = now()
+        where id = v_candidate_id;
+      end if;
+    end if;
+    v_candidate_id := null;
+  end loop;
+end;
+$$;
+
 create or replace function public.move_inventory_item_instance(
   p_profile public.profiles,
   p_actor_character_id uuid,
@@ -7334,6 +7423,10 @@ begin
   v_source_slot_index := v_item.slot_index;
   v_source_loadout_slot := v_item.loadout_slot;
 
+  if v_target.id is not null and v_item.storage_active then
+    raise exception 'Move active additional storage into an empty destination slot.';
+  end if;
+
   if v_target.id is not null then
     perform public.assert_inventory_item_control(p_profile, v_target, p_actor_character_id);
     perform public.assert_inventory_item_placement(
@@ -7360,6 +7453,12 @@ begin
   set parent_item_id = p_destination_parent_item_id,
       slot_index = p_destination_slot_index,
       loadout_slot = p_destination_loadout_slot,
+      storage_active = case
+        when public.additional_storage_kind(item_name, item_type) is not null
+          and (p_destination_property_id is not null or p_destination_parent_item_id is not null or p_destination_loadout_slot is not null)
+        then false
+        else storage_active
+      end,
       updated_at = now()
   where id = v_item.id;
 
@@ -7375,10 +7474,21 @@ begin
     set parent_item_id = v_source_parent_item_id,
         slot_index = v_source_slot_index,
         loadout_slot = v_source_loadout_slot,
+        storage_active = case
+          when public.additional_storage_kind(item_name, item_type) is not null
+            and (v_source_property_id is not null or v_source_parent_item_id is not null or v_source_loadout_slot is not null)
+          then false
+          else storage_active
+        end,
         updated_at = now()
     where id = v_target.id;
   end if;
   perform set_config('app.canonical_storage_move', 'off', true);
+
+  perform public.ensure_character_additional_storage_activation(v_source_character_id);
+  if p_destination_character_id is distinct from v_source_character_id then
+    perform public.ensure_character_additional_storage_activation(p_destination_character_id);
+  end if;
 
   select * into v_item from public.inventory_items where id = v_item.id;
   perform public.assert_inventory_item_placement(v_item.id, v_item.item_name, v_item.item_type, v_item.character_id, v_item.property_id, v_item.parent_item_id, v_item.slot_index, v_item.loadout_slot);
@@ -7775,6 +7885,7 @@ begin
     raise exception 'Character not found.';
   end if;
   perform public.ensure_dm_testing_wallet(p_character_id);
+  perform public.ensure_character_additional_storage_activation(p_character_id);
 
   return jsonb_build_object(
     'items', (
@@ -8105,7 +8216,17 @@ begin
     end if;
     insert into public.storage_properties(owner_user_id, property_kind, city_key, property_name, capacity, display_order, is_main, is_locked)
     values (p_owner_user_id, v_kind, v_city_key, v_name, greatest(0, least(500, v_capacity)),
-      coalesce((select max(display_order) + 10 from public.storage_properties where owner_user_id = p_owner_user_id), 0),
+      coalesce((
+        select max(ordered.display_order) + 10
+        from (
+          select storage.display_order from public.storage_properties storage where storage.owner_user_id = p_owner_user_id
+          union all
+          select item.storage_display_order from public.inventory_items item
+          where item.parent_item_id is null and item.loadout_slot is null
+            and public.portable_property_kind(item.item_name, item.item_type) is not null
+            and public.inventory_item_owner_user_id(item) = p_owner_user_id
+        ) ordered
+      ), 0),
       v_is_main, coalesce((p_patch->>'locked')::boolean, false)) returning * into v_property;
     return public.get_player_homes(p_session_token, p_owner_user_id, v_property.id, 'static', p_actor_character_id);
   end if;
@@ -8231,15 +8352,65 @@ begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can create property items.'; end if;
   v_property := public.assert_storage_property_access(v_profile, p_home_id, p_actor_character_id);
+  if v_property.owner_user_id is distinct from p_owner_user_id then raise exception 'That property does not belong to the selected player.'; end if;
   insert into public.inventory_items(character_id, property_id, parent_item_id, item_name, item_description, item_type, rarity, quantity, slot_index,
     is_accessory, is_storage, storage_active, storage_capacity, modifiers, enchantment, material, enhancement_count, is_two_handed,
     potion_strength, potion_property, potion_quality)
   values(null, v_property.id, p_parent_item_id, public.normalize_item_name(p_item_name), coalesce(p_item_description, ''), public.normalize_item_type(p_item_type),
     p_rarity::public.item_rarity, public.assert_valid_item_quantity(p_item_name, p_item_type, p_quantity), p_slot_index,
-    coalesce(p_is_accessory, false), coalesce(p_is_storage, false), coalesce(p_is_storage, false), greatest(0, coalesce(p_storage_capacity, 0)),
+    coalesce(p_is_accessory, false), coalesce(p_is_storage, false), false, greatest(0, coalesce(p_storage_capacity, 0)),
     coalesce(p_modifiers, '{}'::jsonb), p_enchantment, p_material, greatest(0, least(3, coalesce(p_enhancement_count, 0))),
     coalesce(p_is_two_handed, false), p_potion_strength, p_potion_property, p_potion_quality)
   returning * into v_item;
+  return public.inventory_item_record_to_json(v_item);
+end;
+$$;
+
+drop function if exists public.add_mobile_home_inventory_item(text, uuid, uuid, uuid, integer, text, text, text, numeric, boolean, integer, jsonb, text, text, integer, boolean, text, text, text, text, boolean);
+create function public.add_mobile_home_inventory_item(
+  p_session_token text, p_mobile_home_id uuid, p_actor_character_id uuid,
+  p_parent_item_id uuid, p_slot_index integer, p_item_name text, p_item_type text,
+  p_rarity text, p_quantity numeric, p_is_storage boolean, p_storage_capacity integer,
+  p_modifiers jsonb, p_enchantment text, p_material text, p_enhancement_count integer,
+  p_is_two_handed boolean, p_potion_strength text, p_potion_property text,
+  p_potion_quality text, p_item_description text, p_is_accessory boolean
+)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_mobile public.inventory_items%rowtype;
+  v_parent_item_id uuid;
+  v_item public.inventory_items%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can create property items.'; end if;
+  select item.* into v_mobile
+  from public.inventory_items item
+  where item.id = p_mobile_home_id
+    and item.parent_item_id is null
+    and public.portable_property_kind(item.item_name, item.item_type) is not null;
+  if v_mobile.id is null then raise exception 'Mobile property not found.'; end if;
+  if not public.mobile_property_accessible(v_profile, v_mobile, p_actor_character_id) then raise exception 'Mobile property is not accessible.'; end if;
+  v_parent_item_id := coalesce(p_parent_item_id, v_mobile.id);
+  if public.inventory_portable_property_root(v_parent_item_id) is distinct from v_mobile.id then
+    raise exception 'The selected slot does not belong to that mobile property.';
+  end if;
+  insert into public.inventory_items(
+    character_id, property_id, parent_item_id, item_name, item_description, item_type,
+    rarity, quantity, slot_index, is_accessory, is_storage, storage_active,
+    storage_capacity, modifiers, enchantment, material, enhancement_count,
+    is_two_handed, potion_strength, potion_property, potion_quality
+  ) values (
+    v_mobile.character_id, v_mobile.property_id, v_parent_item_id,
+    public.normalize_item_name(p_item_name), coalesce(p_item_description, ''),
+    public.normalize_item_type(p_item_type), p_rarity::public.item_rarity,
+    public.assert_valid_item_quantity(p_item_name, p_item_type, p_quantity), p_slot_index,
+    coalesce(p_is_accessory, false), coalesce(p_is_storage, false), false,
+    greatest(0, coalesce(p_storage_capacity, 0)), coalesce(p_modifiers, '{}'::jsonb),
+    p_enchantment, p_material, greatest(0, least(3, coalesce(p_enhancement_count, 0))),
+    coalesce(p_is_two_handed, false), p_potion_strength, p_potion_property, p_potion_quality
+  ) returning * into v_item;
   return public.inventory_item_record_to_json(v_item);
 end;
 $$;
@@ -8367,6 +8538,7 @@ declare
   v_character public.characters%rowtype;
   v_property public.storage_properties%rowtype;
   v_mobile public.inventory_items%rowtype;
+  v_parent public.inventory_items%rowtype;
   v_animal_destination record;
   v_home_candidate record;
   v_destination_character_id uuid;
@@ -8381,6 +8553,9 @@ begin
   select * into v_character from public.characters where id = p_actor_character_id;
   if v_character.id is null then raise exception 'Choose the acting character.'; end if;
   perform public.assert_inventory_item_control(v_profile, v_item, p_actor_character_id);
+  if p_home_id is not null and coalesce(p_home_source, '') not in ('static', 'mobile') then
+    raise exception 'Choose a valid fixed or mobile property destination.';
+  end if;
 
   if public.normalize_item_type(v_item.item_type) = 'pet' then
     if p_home_id is not null and p_home_source = 'mobile' then
@@ -8389,13 +8564,29 @@ begin
       if v_mobile.id is null or not public.mobile_property_accessible(v_profile, v_mobile, p_actor_character_id) then
         raise exception 'Caged Wagon is not accessible.';
       end if;
+      if public.inventory_item_owner_user_id(v_mobile) is distinct from public.inventory_item_owner_user_id(v_item) then
+        raise exception 'The animal and Caged Wagon must have the same owner.';
+      end if;
       v_destination_character_id := v_mobile.character_id;
       v_destination_property_id := v_mobile.property_id;
       v_destination_parent_id := coalesce(p_parent_item_id, v_mobile.id);
+      if public.inventory_portable_property_root(v_destination_parent_id) is distinct from v_mobile.id then
+        raise exception 'The selected stable slot does not belong to that Caged Wagon.';
+      end if;
       v_slot := coalesce(p_slot_index, public.first_free_container_slot(v_destination_parent_id));
     elsif p_home_id is not null then
       v_property := public.assert_storage_property_access(v_profile, p_home_id, p_actor_character_id);
       if v_property.property_kind <> 'stable' then raise exception 'Animals require a stable or Caged Wagon.'; end if;
+      if v_property.owner_user_id is distinct from public.inventory_item_owner_user_id(v_item) then
+        raise exception 'The animal and stable must have the same owner.';
+      end if;
+      if p_parent_item_id is not null then
+        select * into v_parent from public.inventory_items where id = p_parent_item_id;
+        if v_parent.id is null or v_parent.property_id is distinct from v_property.id
+          or public.inventory_portable_property_root(v_parent.id) is not null
+        then raise exception 'The selected stable slot does not belong to that fixed stable.';
+        end if;
+      end if;
       v_destination_property_id := v_property.id;
       v_destination_parent_id := p_parent_item_id;
       v_slot := coalesce(p_slot_index, case when p_parent_item_id is null
@@ -8428,12 +8619,28 @@ begin
     select * into v_mobile from public.inventory_items item where item.id = p_home_id
       and public.portable_property_kind(item.item_name, item.item_type) = 'house';
     if v_mobile.id is null or not public.mobile_property_accessible(v_profile, v_mobile, p_actor_character_id) then raise exception 'Wagon Home is not accessible.'; end if;
+    if public.inventory_item_owner_user_id(v_mobile) is distinct from public.inventory_item_owner_user_id(v_item) then
+      raise exception 'The item and Wagon Home must have the same owner.';
+    end if;
     v_destination_property_id := v_mobile.property_id;
     v_destination_parent_id := coalesce(p_parent_item_id, v_mobile.id);
+    if public.inventory_portable_property_root(v_destination_parent_id) is distinct from v_mobile.id then
+      raise exception 'The selected house slot does not belong to that Wagon Home.';
+    end if;
     v_slot := coalesce(p_slot_index, public.first_free_container_slot(v_destination_parent_id));
   elsif p_home_id is not null then
     v_property := public.assert_storage_property_access(v_profile, p_home_id, p_actor_character_id);
     if v_property.property_kind <> 'house' then raise exception 'Non-animal items require a house or Wagon Home.'; end if;
+    if v_property.owner_user_id is distinct from public.inventory_item_owner_user_id(v_item) then
+      raise exception 'The item and house must have the same owner.';
+    end if;
+    if p_parent_item_id is not null then
+      select * into v_parent from public.inventory_items where id = p_parent_item_id;
+      if v_parent.id is null or v_parent.property_id is distinct from v_property.id
+        or public.inventory_portable_property_root(v_parent.id) is not null
+      then raise exception 'The selected house slot does not belong to that fixed house.';
+      end if;
+    end if;
     v_destination_property_id := v_property.id;
     v_destination_parent_id := p_parent_item_id;
     v_slot := coalesce(p_slot_index, case when p_parent_item_id is null then public.first_free_property_slot(v_property.id) else public.first_free_container_slot(p_parent_item_id) end);
@@ -8550,6 +8757,9 @@ declare
 begin
   select * into v_profile from public.profile_from_campaign_session(p_session_token);
   if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if p_source not in ('static', 'mobile') or p_destination not in ('static', 'mobile') then
+    raise exception 'Choose valid fixed or mobile property locations.';
+  end if;
   select * into v_item from public.inventory_items where id = p_item_id;
   if v_item.id is null then raise exception 'Item not found.'; end if;
   v_owner_user_id := public.inventory_item_owner_user_id(v_item);
@@ -8962,11 +9172,18 @@ begin
     'itemId', item.id, 'itemName', item.item_name,
     'displayName', coalesce(nullif(item.display_name, ''), item.item_name),
     'rarity', item.rarity,
-    'source', case when item.property_id is not null then 'stable' else case when item.loadout_slot = 'active-pet' then 'active-pet' else 'caged-wagon' end end,
+    'source', case
+      when item.loadout_slot = 'active-pet' then 'active-pet'
+      when public.inventory_portable_property_root(item.id) is not null then 'caged-wagon'
+      else 'stable'
+    end,
     'sourceLabel', case
-      when item.property_id is not null then (select property.property_name from public.storage_properties property where property.id = item.property_id)
       when item.loadout_slot = 'active-pet' then (select character.name || ' - Active Pet' from public.characters character where character.id = item.character_id)
-      else 'Caged Wagon'
+      when public.inventory_portable_property_root(item.id) is not null then (
+        select coalesce(nullif(root.display_name, ''), root.item_name)
+        from public.inventory_items root where root.id = public.inventory_portable_property_root(item.id)
+      )
+      else property.property_name
     end
   ) order by coalesce(item.display_name, item.item_name), item.item_name), '[]'::jsonb) into v_animals
   from public.inventory_items item
@@ -8976,6 +9193,8 @@ begin
     and coalesce(property.owner_user_id, carrier.owner_user_id) = v_character.owner_user_id
     and (
       (property.id is not null and property.property_kind = 'stable' and property.city_key = v_vendor.city_key and not property.is_locked)
+      or (property.id is not null and property.property_kind = 'house' and property.city_key = v_vendor.city_key
+        and not property.is_locked and public.inventory_container_property_kind(item.parent_item_id) = 'stable')
       or (carrier.id is not null and coalesce(carrier.location_city_key, nullif(public.safe_slug(carrier.location_name), ''), 'wild') = v_vendor.city_key)
     );
   return jsonb_build_object(
@@ -9096,6 +9315,7 @@ declare
   v_storage_kind text;
   v_portable_kind text;
   v_source_owner_user_id uuid;
+  v_source_character_id uuid;
   v_activate boolean;
   v_slot integer;
 begin
@@ -9106,6 +9326,7 @@ begin
   if v_storage.loadout_slot is not null then raise exception 'Unequip that storage container before moving it.'; end if;
 
   v_source_owner_user_id := public.inventory_item_owner_user_id(v_storage);
+  v_source_character_id := v_storage.character_id;
   v_storage_kind := public.additional_storage_kind(v_storage.item_name, v_storage.item_type);
   v_portable_kind := public.portable_property_kind(v_storage.item_name, v_storage.item_type);
   v_activate := v_portable_kind is null
@@ -9149,6 +9370,8 @@ begin
       updated_at = now()
   where id = v_storage.id;
   perform set_config('app.canonical_storage_move', 'off', true);
+  perform public.ensure_character_additional_storage_activation(v_source_character_id);
+  perform public.ensure_character_additional_storage_activation(v_target.id);
 end;
 $$;
 
@@ -9462,9 +9685,11 @@ begin
   else
     perform set_config('app.canonical_storage_move', 'on', true);
     update public.inventory_items set character_id = v_wagon.character_id, property_id = null,
-      parent_item_id = v_wagon.id, slot_index = p_slot_index, loadout_slot = null, updated_at = now()
+      parent_item_id = v_wagon.id, slot_index = p_slot_index, loadout_slot = null,
+      storage_active = false, updated_at = now()
     where id = v_item.id;
     perform set_config('app.canonical_storage_move', 'off', true);
+    perform public.ensure_character_additional_storage_activation(v_actor.id);
   end if;
   insert into public.wagon_activity_log(wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
   values (v_wagon.id, v_actor.id, v_actor.name, 'stored', v_item.item_name, v_item.quantity);
@@ -9532,9 +9757,11 @@ begin
   else
     perform set_config('app.canonical_storage_move', 'on', true);
     update public.inventory_items set character_id = v_actor.id, property_id = null,
-      parent_item_id = p_parent_item_id, slot_index = v_slot, loadout_slot = null, updated_at = now()
+      parent_item_id = p_parent_item_id, slot_index = v_slot, loadout_slot = null,
+      storage_active = false, updated_at = now()
     where id = v_item.id;
     perform set_config('app.canonical_storage_move', 'off', true);
+    perform public.ensure_character_additional_storage_activation(v_actor.id);
   end if;
   insert into public.wagon_activity_log(wagon_item_id, actor_character_id, actor_name, action, item_name, quantity)
   values (v_wagon.id, v_actor.id, v_actor.name, 'taken', v_item.item_name, v_item.quantity);
@@ -9607,7 +9834,8 @@ begin
       v_slot := v_destination.capacity;
       update public.storage_properties set capacity = capacity + 1 where id = v_destination.id returning * into v_destination;
     end if;
-    update public.inventory_items set parent_item_id = null, loadout_slot = null, slot_index = 2147483646 where id = v_item.id;
+    update public.inventory_items set parent_item_id = null, loadout_slot = null,
+      slot_index = 2147483646, storage_active = false where id = v_item.id;
     with recursive tree as (
       select item.id from public.inventory_items item where item.id = v_item.id
       union all select child.id from public.inventory_items child join tree parent on child.parent_item_id = parent.id
@@ -9632,6 +9860,20 @@ begin
       and item.storage_active
   ) then
     raise exception 'Canonical storage validation failed: a Wagon Home or Caged Wagon is deployed as bonus storage.';
+  end if;
+
+  if exists (
+    select 1 from public.inventory_items item
+    where item.storage_active and (
+      item.character_id is null
+      or item.property_id is not null
+      or item.parent_item_id is not null
+      or item.loadout_slot is not null
+      or not item.is_storage
+      or public.additional_storage_kind(item.item_name, item.item_type) is null
+    )
+  ) then
+    raise exception 'Canonical storage validation failed: active additional storage has an invalid location or type.';
   end if;
 
   if exists (
@@ -9660,6 +9902,7 @@ grant execute on function public.reorder_player_homes(text, uuid, uuid, jsonb) t
 grant execute on function public.save_player_home(text, uuid, uuid, text, uuid, jsonb) to anon, authenticated;
 grant execute on function public.delete_player_home(text, uuid, uuid, text, uuid) to anon, authenticated;
 grant execute on function public.add_home_inventory_item(text, uuid, uuid, uuid, uuid, integer, text, text, text, numeric, boolean, integer, jsonb, text, text, integer, boolean, text, text, text, text, boolean) to anon, authenticated;
+grant execute on function public.add_mobile_home_inventory_item(text, uuid, uuid, uuid, integer, text, text, text, numeric, boolean, integer, jsonb, text, text, integer, boolean, text, text, text, text, boolean) to anon, authenticated;
 grant execute on function public.move_inventory_item_to_home(text, uuid, uuid, uuid, text, integer, uuid) to anon, authenticated;
 grant execute on function public.move_home_item_to_inventory(text, uuid, uuid, uuid) to anon, authenticated;
 grant execute on function public.move_item_between_homes(text, uuid, uuid, uuid, text, uuid, text, integer, uuid) to anon, authenticated;
@@ -9685,6 +9928,7 @@ grant execute on function public.apply_inventory_item_rune(text, uuid, uuid, tex
 -- Only token-authenticated public RPCs above may invoke them.
 revoke execute on function public.portable_property_kind(text, text) from public, anon, authenticated;
 revoke execute on function public.inventory_container_property_kind(uuid) from public, anon, authenticated;
+revoke execute on function public.ensure_character_additional_storage_activation(uuid) from public, anon, authenticated;
 revoke execute on function public.move_inventory_item_instance(public.profiles, uuid, uuid, uuid, uuid, uuid, integer, text) from public, anon, authenticated;
 revoke execute on function public.inventory_portable_property_root(uuid) from public, anon, authenticated;
 revoke execute on function public.storage_property_accessible(public.profiles, public.storage_properties, uuid) from public, anon, authenticated;

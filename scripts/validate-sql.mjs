@@ -64,6 +64,7 @@ const canonicalStorageRpcNames = new Set([
   'save_player_home',
   'delete_player_home',
   'add_home_inventory_item',
+  'add_mobile_home_inventory_item',
   'move_inventory_item_to_home',
   'move_home_item_to_inventory',
   'move_item_between_homes',

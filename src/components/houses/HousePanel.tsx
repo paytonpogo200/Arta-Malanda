@@ -221,6 +221,22 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
     });
   }, [caretakerCharacterId, takeTargetCharacters]);
 
+  useEffect(() => {
+    if (!selectedHome) return;
+    const detail = homeDetails[`${selectedHome.source}:${selectedHome.id}`];
+    setHomeAvailable(true);
+    setHouseName(selectedHome.name);
+    setStableName(selectedHome.stableName);
+    setHouseCityName(selectedHome.cityName);
+    setInventorySlots(selectedHome.inventorySlots);
+    setStableSlots(selectedHome.stableSlots);
+    setHouseLocked(Boolean(selectedHome.locked));
+    setHomeKind(selectedHome.kind);
+    setHomeSource(selectedHome.source);
+    setHomeIsMain(Boolean(selectedHome.isMain));
+    if (detail) setHouseAccess(detail.access);
+  }, [homeDetails, selectedHome]);
+
   useLiveRefresh(['house', 'inventory', 'wagon'], () => loadHouse(false), { enabled: Boolean(ownerUserId) });
 
   useEffect(() => {
@@ -306,10 +322,10 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
       return;
     }
     const modalHome = itemModal.home;
-    const targetCharacterId = modalHome.source === 'mobile'
-      ? modalHome.storageCharacterId || modalHome.stableStorageCharacterId || null
-      : null;
-    await requestHouseChange(targetCharacterId ? `/api/characters/${targetCharacterId}/inventory` : `/api/houses/${ownerUserId}/items`, {
+    const addUrl = modalHome.source === 'mobile'
+      ? `/api/houses/mobile-items/${modalHome.id}`
+      : `/api/houses/${ownerUserId}/items`;
+    await requestHouseChange(addUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -427,7 +443,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
       setError('Animals need an active pet slot or a Caged Wagon stable.');
       return;
     }
-    await requestHouseChange(itemModal.home.source === 'mobile' ? `/api/inventory/items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
+    await requestHouseChange(itemModal.home.source === 'mobile' ? `/api/houses/mobile-items/${itemModal.item.id}` : `/api/houses/items/${itemModal.item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
