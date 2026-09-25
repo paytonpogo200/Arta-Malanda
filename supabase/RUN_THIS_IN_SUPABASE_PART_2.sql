@@ -6366,10 +6366,38 @@ declare
   v_city_key text;
 begin
   if to_regclass('public.player_houses') is null
+    and to_regclass('public.house_inventory_items') is null
+    and to_regclass('public.campaign_properties') is null
+  then
+    if to_regclass('public.storage_properties') is null
+      or to_regprocedure('public.get_player_homes(text,uuid,uuid,text,uuid)') is null
+      or not exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'public.inventory_items'::regclass
+          and conname = 'inventory_items_canonical_location_check'
+      )
+    then
+      raise exception 'Legacy storage sources are absent, but a completed canonical storage installation could not be verified.';
+    end if;
+
+    -- A successful earlier run already preserved and migrated the legacy rows.
+    -- Skip only the one-time copy; the idempotent runtime installation below
+    -- still refreshes functions, triggers, grants, and integrity checks.
+    return;
+  end if;
+
+  if to_regclass('public.player_houses') is null
     or to_regclass('public.house_inventory_items') is null
     or to_regclass('public.campaign_properties') is null
   then
-    raise exception 'Canonical storage migration requires the legacy source tables on its first run.';
+    raise exception 'Canonical storage migration found an unsafe mixed state: some legacy source tables exist and others are missing.';
+  end if;
+
+  if to_regclass('public.player_main_homes') is null
+    or to_regclass('public.player_home_display_orders') is null
+  then
+    raise exception 'Canonical storage migration is missing required legacy home ordering tables.';
   end if;
 
   select count(*) into v_legacy_house_items from public.house_inventory_items;
@@ -7779,14 +7807,27 @@ as $$
 $$;
 
 -- Retire the parallel storage model only after every item has been preserved.
-drop table public.house_unit_access_permissions cascade;
-drop table public.house_access_permissions cascade;
-drop table public.mobile_storage_access_permissions cascade;
-drop table public.player_main_homes cascade;
-drop table public.player_home_display_orders cascade;
-drop table public.house_inventory_items cascade;
-drop table public.campaign_properties cascade;
-drop table public.player_houses cascade;
+do $$
+declare
+  v_table text;
+begin
+  foreach v_table in array array[
+    'house_unit_access_permissions',
+    'house_access_permissions',
+    'mobile_storage_access_permissions',
+    'player_main_homes',
+    'player_home_display_orders',
+    'house_inventory_items',
+    'campaign_properties',
+    'player_houses'
+  ]
+  loop
+    if to_regclass(format('public.%I', v_table)) is not null then
+      execute format('drop table public.%I cascade', v_table);
+    end if;
+  end loop;
+end;
+$$;
 
 -- CANONICAL STORAGE RUNTIME START
 -- No runtime definition below this boundary may reference a retired storage model.
