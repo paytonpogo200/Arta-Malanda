@@ -38,6 +38,12 @@ function isPortablePropertyItem(item: InventoryItem) {
   return item.isStorage && (name === 'wagon home' || name === 'caged wagon');
 }
 
+function isStableDestination(home: House, parentItemId: string | null) {
+  if (home.kind === 'stable') return true;
+  if (home.kind !== 'caged-wagon') return false;
+  return parentItemId === (home.stableStorageItemId ?? home.id);
+}
+
 type HouseSettingsDraft = {
   kind: 'house' | 'stable';
   name: string;
@@ -286,11 +292,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
   async function addItem(event: FormEvent) {
     event.preventDefault();
     if (!ownerUserId || !itemModal || itemModal.item || !itemDraft.name.trim() || !canAdd) return;
-    const modalStableParent = itemModal.home.kind === 'caged-wagon'
-      ? itemModal.home.stableStorageItemId ?? itemModal.home.id
-      : null;
-    const addingToStable = itemModal.home.kind === 'stable'
-      || itemModal.parentItemId === modalStableParent;
+    const addingToStable = isStableDestination(itemModal.home, itemModal.parentItemId);
     if (addingToStable && itemDraft.type !== 'pet') {
       setError('Only animals can be placed in stable slots.');
       return;
@@ -412,11 +414,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
   async function updateItem(event: FormEvent) {
     event.preventDefault();
     if (!itemModal?.item || !itemDraft.name.trim() || !canAdd) return;
-    const modalStableParent = itemModal.home.kind === 'caged-wagon'
-      ? itemModal.home.stableStorageItemId ?? itemModal.home.id
-      : null;
-    const editingStable = itemModal.home.kind === 'stable'
-      || itemModal.parentItemId === modalStableParent;
+    const editingStable = isStableDestination(itemModal.home, itemModal.parentItemId);
     if (editingStable && itemDraft.type !== 'pet') {
       setError('Only animals can be placed in stable slots.');
       return;
@@ -462,10 +460,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
     const sourceHome = itemHomeById.get(itemId) ?? null;
     const movingHouseItem = sourceHome ? homeDetails[`${sourceHome.source}:${sourceHome.id}`]?.items.find((item) => item.id === itemId) : undefined;
     const destinationDetail = homeDetails[`${destinationHome.source}:${destinationHome.id}`];
-    const destinationStableParent = destinationHome.kind === 'caged-wagon'
-      ? destinationHome.stableStorageItemId ?? destinationHome.id
-      : null;
-    const movingToStable = destinationHome.kind === 'stable' || parentItemId === destinationStableParent;
+    const movingToStable = isStableDestination(destinationHome, parentItemId);
     const canUseDestination = canAdd || Boolean(destinationHome.accessible && (movingToStable ? destinationDetail?.access.stable : destinationDetail?.access.house));
     if (!canUseDestination) return;
     if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
