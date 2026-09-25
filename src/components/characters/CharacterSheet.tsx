@@ -353,6 +353,7 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             tradeCharacters={characters}
             profiles={profiles}
             viewerUserId={profile.id}
+            synchronizedItems={inventoryItems}
             onItemsChanged={setInventoryItems}
             onResourceChanged={(patch) => onSaved({ ...character, ...patch })}
             spellBookTargets={characters}
@@ -375,7 +376,11 @@ export const CharacterSheet = memo(function CharacterSheet({ character, profile,
             characters={characters}
             canManage={isDm || owned}
             canAdd={isDm}
-            onCharacterInventoryChanged={() => setInventoryRefreshSignal((value) => value + 1)}
+            characterInventoryItems={inventoryItems}
+            onCharacterInventoryChanged={(nextItems) => {
+              if (nextItems) setInventoryItems(nextItems);
+              else setInventoryRefreshSignal((value) => value + 1);
+            }}
           />
         </div>
 

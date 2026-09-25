@@ -18,7 +18,7 @@ import { CURRENCY_SYSTEMS, formatCurrencyValue, normalizeCitiesPayload, normaliz
 import type { CampaignProfile } from '@/features/characters/data';
 import { activeAttributeValue, calculateCharacterSheetStats } from '@/features/characters/stats';
 import { normalizeHousePayload } from '@/features/houses/data';
-import { acceptsLoadoutItem, normalizeCharacterInventoryPayload, normalizeInventoryItem, quantityStepForItem } from '@/features/inventory/data';
+import { acceptsLoadoutItem, inventoryItemsCanStack, normalizeCharacterInventoryPayload, normalizeInventoryItem, normalizeInventoryItemName, quantityStepForItem } from '@/features/inventory/data';
 import { normalizeWagonPayload, type WagonActivity, type WagonStorage } from '@/features/inventory/wagons';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
@@ -74,23 +74,6 @@ function sameContainer(item: InventoryItem, parentItemId: string | null) {
   return (item.parentItemId ?? null) === parentItemId && item.loadoutSlot === null;
 }
 
-function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
-  if (!a.stackable || !b.stackable || a.type === 'pet' || b.type === 'pet' || a.isStorage || b.isStorage) return false;
-  return normalizedItemName(a.name) === normalizedItemName(b.name)
-    && a.type === b.type
-    && a.rarity === b.rarity
-    && (a.enchantment ?? '') === (b.enchantment ?? '')
-    && (a.runeName ?? '') === (b.runeName ?? '')
-    && (a.material ?? '') === (b.material ?? '')
-    && (a.potionStrength ?? '') === (b.potionStrength ?? '')
-    && (a.potionProperty ?? '') === (b.potionProperty ?? '')
-    && (a.potionQuality ?? '') === (b.potionQuality ?? '')
-    && a.enhancementCount === b.enhancementCount
-    && a.isTwoHanded === b.isTwoHanded
-    && a.isAccessory === b.isAccessory
-    && JSON.stringify(a.modifiers) === JSON.stringify(b.modifiers);
-}
-
 function isReadableBookItem(item: InventoryItem) {
   return item.type === 'book';
 }
@@ -118,15 +101,8 @@ function firstOpenSlot(items: InventoryItem[], parentItemId: string | null, capa
   return null;
 }
 
-function normalizedItemName(name: string) {
-  const clean = name.trim().toLowerCase();
-  if (clean === 'glass flask' || clean === 'glass flasks' || clean === 'empty flasks') return 'empty flask';
-  if (clean === 'mana recovery potion') return 'mana potion';
-  return clean;
-}
-
 function isEmptyFlask(item: Pick<InventoryItem, 'name'> | Pick<ItemDraft, 'name'>) {
-  return normalizedItemName(item.name) === 'empty flask';
+  return normalizeInventoryItemName(item.name) === 'empty flask';
 }
 
 function isPotionConsumable(item: InventoryItem) {
@@ -179,6 +155,7 @@ export function InventoryPanel({
   showBattleStats = false,
   classTemplate,
   onItemsChanged,
+  synchronizedItems,
   onResourceChanged,
   spellBookTargets = [],
   onSpellBookUsed
@@ -193,6 +170,7 @@ export function InventoryPanel({
   showBattleStats?: boolean;
   classTemplate?: ClassTemplate;
   onItemsChanged?: (items: InventoryItem[]) => void;
+  synchronizedItems?: InventoryItem[];
   onResourceChanged?: (patch: { currentHp?: number; currentMana?: number }) => void;
   spellBookTargets?: Character[];
   onSpellBookUsed?: (result: SpellBookUseResult) => void;
@@ -299,6 +277,11 @@ export function InventoryPanel({
     setWallet([]);
     setLoading(true);
   }, [character.id]);
+
+  useEffect(() => {
+    if (!inventoryLoadedRef.current || !synchronizedItems) return;
+    setItems(synchronizedItems);
+  }, [synchronizedItems]);
 
   useLiveRefresh(['inventory', 'house', 'wagon', 'characters', 'trades'], () => {
     void loadInventory(false);
@@ -574,7 +557,6 @@ export function InventoryPanel({
       if (!response.ok) throw new Error(payload.error ?? 'Inventory action failed.');
       const updated = payload.item ? normalizeInventoryItem(payload.item) : null;
       if (!updated) {
-        await loadInventory(false);
         setItems((current) => {
           const next = current.filter((item) => item.id !== itemId);
           onItemsChanged?.(next);
@@ -583,8 +565,12 @@ export function InventoryPanel({
         setModal((current) => current?.item?.id === itemId ? null : current);
         return;
       }
+      setItems((current) => {
+        const next = current.map((item) => item.id === updated.id ? updated : item);
+        onItemsChanged?.(next);
+        return next;
+      });
       setModal((current) => current?.item?.id === updated.id ? { ...current, item: updated } : current);
-      await loadInventory(false);
     } catch (actionError) {
       setItems(previousItems);
       onItemsChanged?.(previousItems);

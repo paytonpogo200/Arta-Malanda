@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ChevronDown, ChevronUp, Home, Loader2, Lock, PawPrint, RefreshCw, Settings, Trash2, Unlock } from 'lucide-react';
 import { EMPTY_ITEM_DRAFT, ItemEditorFields, draftFromInventoryItem, itemDraftPayload, type ItemDraft } from '@/components/inventory/ItemEditorFields';
 import { InventorySlot } from '@/components/inventory/InventorySlot';
@@ -13,7 +13,7 @@ import { normalizeUpdateAssetsPayload } from '@/features/assets/data';
 import type { CampaignProfile } from '@/features/characters/data';
 import { normalizeCitiesPayload } from '@/features/cities/data';
 import { normalizeHousePayload, type HousePayload } from '@/features/houses/data';
-import { quantityStepForItem } from '@/features/inventory/data';
+import { inventoryItemsCanStack, quantityStepForItem } from '@/features/inventory/data';
 import { useDragAutoScroll } from '@/hooks/useDragAutoScroll';
 import { useLiveRefresh } from '@/hooks/useLiveRefresh';
 import type { Character, House, InventoryItem, LoadoutModifierKey, ShopVendor, Spell } from '@/lib/types';
@@ -26,7 +26,8 @@ type HousePanelProps = {
   characters?: Character[];
   canManage: boolean;
   canAdd: boolean;
-  onCharacterInventoryChanged?: () => void;
+  characterInventoryItems?: InventoryItem[];
+  onCharacterInventoryChanged?: (items?: InventoryItem[]) => void;
 };
 
 function sameContainer(item: InventoryItem, parentItemId: string | null) {
@@ -44,6 +45,120 @@ function isStableDestination(home: House, parentItemId: string | null) {
   return parentItemId === (home.stableStorageItemId ?? home.id);
 }
 
+function itemTree(items: InventoryItem[], rootId: string) {
+  const ids = new Set([rootId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of items) {
+      if (item.parentItemId && ids.has(item.parentItemId) && !ids.has(item.id)) {
+        ids.add(item.id);
+        changed = true;
+      }
+    }
+  }
+  return items.filter((item) => ids.has(item.id));
+}
+
+function relocatedTree(
+  tree: InventoryItem[],
+  rootId: string,
+  rootPlacement: Pick<InventoryItem, 'characterId' | 'propertyId' | 'parentItemId' | 'slotIndex' | 'loadoutSlot'>
+) {
+  return tree.map((item) => item.id === rootId ? {
+    ...item,
+    ...rootPlacement,
+    storageActive: item.isStorage ? false : item.storageActive
+  } : {
+    ...item,
+    characterId: rootPlacement.characterId,
+    propertyId: rootPlacement.propertyId
+  });
+}
+
+function optimisticHouseMove(
+  currentDetails: Record<string, HousePayload>,
+  characterItems: InventoryItem[],
+  sourceHome: House | null,
+  destinationHome: House,
+  itemId: string,
+  destinationParentId: string | null,
+  destinationSlot: number
+) {
+  const sourceKey = sourceHome ? `${sourceHome.source}:${sourceHome.id}` : null;
+  const destinationKey = `${destinationHome.source}:${destinationHome.id}`;
+  const sourceItems = sourceKey ? currentDetails[sourceKey]?.items ?? [] : characterItems;
+  const destinationItems = currentDetails[destinationKey]?.items ?? [];
+  const movingItem = sourceItems.find((item) => item.id === itemId);
+  if (!movingItem || !currentDetails[destinationKey]) return null;
+
+  const targetItem = destinationItems.find((item) => item.id !== itemId
+    && sameContainer(item, destinationParentId)
+    && item.slotIndex === destinationSlot);
+  const movingIds = new Set(itemTree(sourceItems, movingItem.id).map((item) => item.id));
+  const targetIds = new Set(targetItem ? itemTree(destinationItems, targetItem.id).map((item) => item.id) : []);
+  const nextDetails = { ...currentDetails };
+  let nextCharacterItems = characterItems;
+
+  if (targetItem && inventoryItemsCanStack(targetItem, movingItem)) {
+    const removeMoving = (items: InventoryItem[]) => items
+      .filter((item) => !movingIds.has(item.id))
+      .map((item) => item.id === targetItem.id ? { ...item, quantity: item.quantity + movingItem.quantity } : item);
+    if (sourceKey === destinationKey) {
+      nextDetails[destinationKey] = { ...currentDetails[destinationKey], items: removeMoving(destinationItems) };
+    } else {
+      if (sourceKey) nextDetails[sourceKey] = {
+        ...currentDetails[sourceKey],
+        items: sourceItems.filter((item) => !movingIds.has(item.id))
+      };
+      else nextCharacterItems = characterItems.filter((item) => !movingIds.has(item.id));
+      nextDetails[destinationKey] = {
+        ...currentDetails[destinationKey],
+        items: destinationItems.map((item) => item.id === targetItem.id ? { ...item, quantity: item.quantity + movingItem.quantity } : item)
+      };
+    }
+    return { homeDetails: nextDetails, characterItems: nextCharacterItems };
+  }
+
+  const destinationPlacement = {
+    characterId: destinationHome.source === 'mobile'
+      ? destinationHome.storageCharacterId ?? destinationHome.stableStorageCharacterId ?? ''
+      : '',
+    propertyId: destinationHome.source === 'static' ? destinationHome.id : null,
+    parentItemId: destinationParentId,
+    slotIndex: destinationSlot,
+    loadoutSlot: null
+  } satisfies Pick<InventoryItem, 'characterId' | 'propertyId' | 'parentItemId' | 'slotIndex' | 'loadoutSlot'>;
+  const sourcePlacement = {
+    characterId: movingItem.characterId,
+    propertyId: movingItem.propertyId,
+    parentItemId: movingItem.parentItemId,
+    slotIndex: movingItem.slotIndex,
+    loadoutSlot: movingItem.loadoutSlot
+  } satisfies Pick<InventoryItem, 'characterId' | 'propertyId' | 'parentItemId' | 'slotIndex' | 'loadoutSlot'>;
+  const movedTree = relocatedTree(itemTree(sourceItems, movingItem.id), movingItem.id, destinationPlacement);
+  const swappedTree = targetItem
+    ? relocatedTree(itemTree(destinationItems, targetItem.id), targetItem.id, sourcePlacement)
+    : [];
+
+  if (sourceKey === destinationKey) {
+    const untouched = sourceItems.filter((item) => !movingIds.has(item.id) && !targetIds.has(item.id));
+    nextDetails[destinationKey] = { ...currentDetails[destinationKey], items: [...untouched, ...movedTree, ...swappedTree] };
+  } else {
+    if (sourceKey) nextDetails[sourceKey] = {
+      ...currentDetails[sourceKey],
+      items: [...sourceItems.filter((item) => !movingIds.has(item.id)), ...swappedTree]
+    };
+    else nextCharacterItems = [...characterItems.filter((item) => !movingIds.has(item.id)), ...swappedTree];
+    nextDetails[destinationKey] = {
+      ...currentDetails[destinationKey],
+      items: [...destinationItems.filter((item) => !targetIds.has(item.id)), ...movedTree]
+    };
+  }
+
+  return { homeDetails: nextDetails, characterItems: nextCharacterItems };
+}
+
 type HouseSettingsDraft = {
   kind: 'house' | 'stable';
   name: string;
@@ -55,7 +170,7 @@ type HouseSettingsDraft = {
   isMain: boolean;
 };
 
-export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, characters = [], canAdd, onCharacterInventoryChanged }: HousePanelProps) {
+export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, characters = [], canAdd, characterInventoryItems = [], onCharacterInventoryChanged }: HousePanelProps) {
   const [homes, setHomes] = useState<House[]>([]);
   const [homeDetails, setHomeDetails] = useState<Record<string, HousePayload>>({});
   const [selectedHomeKey, setSelectedHomeKey] = useState('');
@@ -95,6 +210,7 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
   const [homeSource, setHomeSource] = useState<'static' | 'mobile'>('static');
   const [homeIsMain, setHomeIsMain] = useState(false);
   const [homeAvailable, setHomeAvailable] = useState(false);
+  const movePendingRef = useRef(false);
   useDragAutoScroll();
 
   const canCustomizeHouse = canAdd || houseAccess.house || houseAccess.stable;
@@ -472,20 +588,23 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
   }
 
   async function moveItem(itemId: string, slotIndex: number, parentItemId: string | null, destinationHome: House = selectedHome as House) {
-    if (!destinationHome) return;
+    if (!destinationHome || movePendingRef.current) return;
     const sourceHome = itemHomeById.get(itemId) ?? null;
     const movingHouseItem = sourceHome ? homeDetails[`${sourceHome.source}:${sourceHome.id}`]?.items.find((item) => item.id === itemId) : undefined;
+    const movingItem = movingHouseItem ?? characterInventoryItems.find((item) => item.id === itemId);
     const destinationDetail = homeDetails[`${destinationHome.source}:${destinationHome.id}`];
     const movingToStable = isStableDestination(destinationHome, parentItemId);
     const canUseDestination = canAdd || Boolean(destinationHome.accessible && (movingToStable ? destinationDetail?.access.stable : destinationDetail?.access.house));
     if (!canUseDestination) return;
-    if (movingHouseItem && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
-    if (movingHouseItem?.type === 'pet' && !movingToStable) {
+    if (!movingItem) return;
+    if (movingHouseItem && sourceHome?.id === destinationHome.id && sourceHome.source === destinationHome.source
+      && sameContainer(movingHouseItem, parentItemId) && movingHouseItem.slotIndex === slotIndex) return;
+    if (movingItem.type === 'pet' && !movingToStable) {
       setError('Animals can only be placed in stable slots.');
       return;
     }
     if (movingToStable) {
-      if (movingHouseItem && movingHouseItem.type !== 'pet') {
+      if (movingItem.type !== 'pet') {
         setError('Only animals can be placed in stable slots.');
         return;
       }
@@ -496,11 +615,33 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
     }
 
     const destinationKey = `${destinationHome.source}:${destinationHome.id}`;
+    const previousDetails = homeDetails;
+    const previousCharacterItems = characterInventoryItems;
+    const optimistic = optimisticHouseMove(
+      previousDetails,
+      previousCharacterItems,
+      sourceHome,
+      destinationHome,
+      itemId,
+      parentItemId,
+      slotIndex
+    );
+    if (!optimistic) return;
+
+    movePendingRef.current = true;
+    setSaving(true);
+    setError('');
     setTargetSlot(`${destinationKey}:${parentItemId ?? 'main'}:${slotIndex}`);
-    if (sourceHome) {
-      const sourceKey = `${sourceHome.source}:${sourceHome.id}`;
-      if (sourceKey !== destinationKey) {
-        await requestHouseChange('/api/houses/transfer', {
+    setHomeDetails(optimistic.homeDetails);
+    if (!sourceHome) onCharacterInventoryChanged?.(optimistic.characterItems);
+
+    try {
+      let url: string;
+      let init: RequestInit;
+      const sourceKey = sourceHome ? `${sourceHome.source}:${sourceHome.id}` : '';
+      if (sourceHome && sourceKey !== destinationKey) {
+        url = '/api/houses/transfer';
+        init = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -513,21 +654,42 @@ export function HousePanel({ ownerUserId, caretakerCharacterId, viewerUserId, ch
             parentItemId,
             actorCharacterId: caretakerCharacterId
           })
-        });
-      } else await requestHouseChange(sourceHome.source === 'mobile' ? `/api/houses/mobile-items/${itemId}` : `/api/houses/items/${itemId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotIndex, parentItemId, actorCharacterId: caretakerCharacterId })
-      });
-    } else {
-      await requestHouseChange(`/api/inventory/items/${itemId}/send-house`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ homeId: destinationHome.id, source: destinationHome.source, slotIndex, parentItemId, actorCharacterId: caretakerCharacterId })
-      });
-      onCharacterInventoryChanged?.();
+        };
+      } else if (sourceHome) {
+        url = sourceHome.source === 'mobile' ? `/api/houses/mobile-items/${itemId}` : `/api/houses/items/${itemId}`;
+        init = {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slotIndex, parentItemId, actorCharacterId: caretakerCharacterId })
+        };
+      } else {
+        url = `/api/inventory/items/${itemId}/send-house`;
+        init = {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ homeId: destinationHome.id, source: destinationHome.source, slotIndex, parentItemId, actorCharacterId: caretakerCharacterId })
+        };
+      }
+
+      const response = await fetch(url, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Item could not be moved.');
+
+      if (payload && typeof payload === 'object' && Array.isArray(payload.homes)) {
+        const normalized = normalizeHousePayload(payload);
+        const confirmedKey = normalized.house ? `${normalized.house.source}:${normalized.house.id}` : destinationKey;
+        setHomes(normalized.homes);
+        setHomeDetails((current) => ({ ...current, [confirmedKey]: normalized }));
+      }
+    } catch (moveError) {
+      setHomeDetails((current) => current === optimistic.homeDetails ? previousDetails : current);
+      if (!sourceHome) onCharacterInventoryChanged?.(previousCharacterItems);
+      setError(moveError instanceof Error ? moveError.message : 'Item could not be moved.');
+    } finally {
+      movePendingRef.current = false;
+      setSaving(false);
+      window.setTimeout(() => setTargetSlot(null), 120);
     }
-    window.setTimeout(() => setTargetSlot(null), 120);
   }
 
   async function savePetDisplayName(event: FormEvent) {

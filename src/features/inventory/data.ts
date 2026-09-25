@@ -90,6 +90,30 @@ export function normalizeInventoryItem(value: unknown): InventoryItem {
   };
 }
 
+export function normalizeInventoryItemName(name: string) {
+  const clean = name.trim().toLowerCase();
+  if (clean === 'glass flask' || clean === 'glass flasks' || clean === 'empty flasks') return 'empty flask';
+  if (clean === 'mana recovery potion') return 'mana potion';
+  return clean;
+}
+
+export function inventoryItemsCanStack(a: InventoryItem, b: InventoryItem) {
+  if (!a.stackable || !b.stackable || a.type === 'pet' || b.type === 'pet' || a.isStorage || b.isStorage) return false;
+  return normalizeInventoryItemName(a.name) === normalizeInventoryItemName(b.name)
+    && a.type === b.type
+    && a.rarity === b.rarity
+    && (a.enchantment ?? '') === (b.enchantment ?? '')
+    && (a.runeName ?? '') === (b.runeName ?? '')
+    && (a.material ?? '') === (b.material ?? '')
+    && (a.potionStrength ?? '') === (b.potionStrength ?? '')
+    && (a.potionProperty ?? '') === (b.potionProperty ?? '')
+    && (a.potionQuality ?? '') === (b.potionQuality ?? '')
+    && a.enhancementCount === b.enhancementCount
+    && a.isTwoHanded === b.isTwoHanded
+    && a.isAccessory === b.isAccessory
+    && JSON.stringify(a.modifiers) === JSON.stringify(b.modifiers);
+}
+
 export function itemAllowsDecimalQuantity(item: Pick<InventoryItem, 'type' | 'name'> | { type: ItemType; name: string }) {
   const name = item.name.toLowerCase();
   return (item.type === 'material' || item.type === 'ore') && (
