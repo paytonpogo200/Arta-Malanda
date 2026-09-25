@@ -8286,14 +8286,14 @@ create or replace function public.place_pet_item_in_stable_for_character(
   p_display_name text,
   p_item_description text,
   p_rarity public.item_rarity,
-  p_quantity numeric,
-  p_is_accessory boolean,
-  p_modifiers jsonb,
-  p_enchantment text,
-  p_rune_name text,
-  p_material text,
-  p_enhancement_count integer,
-  p_is_two_handed boolean
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count integer default 0,
+  p_is_two_handed boolean default false
 )
 returns jsonb
 language plpgsql
@@ -8339,14 +8339,14 @@ create or replace function public.place_pet_item_for_character(
   p_display_name text,
   p_item_description text,
   p_rarity public.item_rarity,
-  p_quantity numeric,
-  p_is_accessory boolean,
-  p_modifiers jsonb,
-  p_enchantment text,
-  p_rune_name text,
-  p_material text,
-  p_enhancement_count integer,
-  p_is_two_handed boolean
+  p_quantity numeric default 1,
+  p_is_accessory boolean default false,
+  p_modifiers jsonb default '{}'::jsonb,
+  p_enchantment text default null,
+  p_rune_name text default null,
+  p_material text default null,
+  p_enhancement_count integer default 0,
+  p_is_two_handed boolean default false
 )
 returns jsonb language sql security definer set search_path = public, extensions as $$
   select public.place_pet_item_in_stable_for_character(p_character_id, p_item_name, p_display_name, p_item_description,

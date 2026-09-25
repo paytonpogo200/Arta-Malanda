@@ -106,6 +106,47 @@ const incompatibleReturnTypes = Array.from(returnTypesBySignature.entries())
   .filter(([, returnTypes]) => returnTypes.size > 1)
   .map(([signature, returnTypes]) => `${signature}: ${Array.from(returnTypes).join(' | ')}`);
 
+const functionLifecycleEvents = [];
+for (const match of sql.matchAll(/create\s+(or\s+replace\s+)?function\s+public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:returns|language)\b/gi)) {
+  functionLifecycleEvents.push({
+    kind: 'create',
+    replace: Boolean(match[1]),
+    name: match[2],
+    signature: normalizeSignature(match[3]),
+    defaultCount: (match[3].match(/\bdefault\b/gi) ?? []).length,
+    index: match.index
+  });
+}
+for (const match of sql.matchAll(/drop\s+function\s+(?:if\s+exists\s+)?public\.([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*(?:cascade|restrict)?\s*;/gi)) {
+  functionLifecycleEvents.push({
+    kind: 'drop',
+    name: match[1],
+    signature: normalizeSignature(match[2]),
+    index: match.index
+  });
+}
+functionLifecycleEvents.sort((left, right) => left.index - right.index);
+
+const liveFunctionDefinitions = new Map();
+const functionReplacementProblems = [];
+for (const event of functionLifecycleEvents) {
+  const key = `${event.name}(${event.signature})`;
+  if (event.kind === 'drop') {
+    liveFunctionDefinitions.delete(key);
+    continue;
+  }
+  const previous = liveFunctionDefinitions.get(key);
+  if (previous && event.replace && event.defaultCount < previous.defaultCount) {
+    functionReplacementProblems.push(
+      `${key} removes parameter defaults at line ${lineNumberAt(sql, event.index)}; PostgreSQL requires preserving them or dropping the function first`
+    );
+  }
+  if (previous && !event.replace) {
+    functionReplacementProblems.push(`${key} is recreated without a preceding DROP at line ${lineNumberAt(sql, event.index)}`);
+  }
+  liveFunctionDefinitions.set(key, event);
+}
+
 const duplicateOverloads = Array.from(definitions.entries())
   .filter(([name, signatures]) => signatures.size > 1 && !canonicalStorageRpcNames.has(name))
   .map(([name, signatures]) => `${name}: ${Array.from(signatures).join(' | ')}`);
@@ -300,6 +341,10 @@ if (invalidGrantSignatures.length) {
 
 if (incompatibleReturnTypes.length) {
   failures.push(`Function signatures with incompatible return types:\n${incompatibleReturnTypes.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (functionReplacementProblems.length) {
+  failures.push(`Unsafe PostgreSQL function replacements:\n${functionReplacementProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (grantOrderProblems.length) {
