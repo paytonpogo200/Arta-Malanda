@@ -6349,6 +6349,7 @@ drop index if exists public.inventory_character_slot_unique;
 drop index if exists public.inventory_property_slot_unique;
 drop index if exists public.inventory_character_root_slot_unique;
 drop index if exists public.inventory_character_active_storage_kind_unique;
+drop index if exists public.inventory_property_root_slot_unique;
 drop index if exists public.inventory_child_slot_unique;
 drop index if exists public.inventory_character_loadout_slot_unique;
 drop index if exists public.inventory_items_property_idx;
