@@ -252,6 +252,13 @@ export type BattleTerrain = {
   type: 'blocked';
 };
 
+export type BattleTilePaint = {
+  battleId: string;
+  x: number;
+  y: number;
+  color: string;
+};
+
 export type City = {
   id: string;
   key: string;

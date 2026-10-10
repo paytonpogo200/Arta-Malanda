@@ -1,12 +1,13 @@
 import { normalizeCharacter, normalizeClassTemplate } from '@/features/characters/data';
 import { normalizeInventoryItem } from '@/features/inventory/data';
 import { normalizeBestiaryEntity } from '@/features/bestiary/data';
-import type { Battle, BattleTerrain, BestiaryEntity, Character, ClassTemplate, Combatant, CombatStatus, InventoryItem } from '@/lib/types';
+import type { Battle, BattleTerrain, BattleTilePaint, BestiaryEntity, Character, ClassTemplate, Combatant, CombatStatus, InventoryItem } from '@/lib/types';
 
 export type BattleRoomPayload = {
   battle: Battle | null;
   combatants: Combatant[];
   terrain: BattleTerrain[];
+  tilePaint: BattleTilePaint[];
   characters: Character[];
   classes: ClassTemplate[];
   inventoryItems: InventoryItem[];
@@ -72,6 +73,16 @@ export function normalizeBattleTerrain(value: unknown): BattleTerrain {
   };
 }
 
+export function normalizeBattleTilePaint(value: unknown): BattleTilePaint | null {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const battleId = String(source.battleId ?? '');
+  const color = String(source.color ?? '').trim().toLowerCase();
+  const x = numberFrom(source.x, -1);
+  const y = numberFrom(source.y, -1);
+  if (!battleId || !/^#[0-9a-f]{6}$/.test(color) || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return null;
+  return { battleId, x, y, color };
+}
+
 export function normalizeBattleRoomPayload(value: unknown): BattleRoomPayload {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
 
@@ -79,6 +90,7 @@ export function normalizeBattleRoomPayload(value: unknown): BattleRoomPayload {
     battle: normalizeBattle(source.battle),
     combatants: Array.isArray(source.combatants) ? source.combatants.map(normalizeCombatant).filter((entry) => entry.id) : [],
     terrain: Array.isArray(source.terrain) ? source.terrain.map(normalizeBattleTerrain).filter((entry) => entry.id) : [],
+    tilePaint: Array.isArray(source.tilePaint) ? source.tilePaint.map(normalizeBattleTilePaint).filter((entry): entry is BattleTilePaint => entry !== null) : [],
     characters: Array.isArray(source.characters) ? source.characters.map(normalizeCharacter).filter((entry) => entry.id) : [],
     classes: Array.isArray(source.classes) ? source.classes.map(normalizeClassTemplate).filter((entry) => entry.key) : [],
     inventoryItems: Array.isArray(source.inventoryItems) ? source.inventoryItems.map(normalizeInventoryItem).filter((entry) => entry.id) : [],

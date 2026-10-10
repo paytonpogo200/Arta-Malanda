@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Clock3, CopyPlus, Eye, FlaskConical, Heart, Loader2, Plus, ShieldAlert, ShieldCheck, Sparkles, Swords, Trash2, UserRound, XCircle } from 'lucide-react';
 import { BattleMap } from '@/components/battle/BattleMap';
 import { CombatStatusBadges } from '@/components/battle/CombatStatusBadges';
@@ -42,6 +42,7 @@ const EMPTY_ROOM: BattleRoomPayload = {
   battle: null,
   combatants: [],
   terrain: [],
+  tilePaint: [],
   characters: [],
   classes: [],
   inventoryItems: [],
@@ -106,6 +107,8 @@ function CombatantStatField({
 
 export function BattleRoom({ profile }: { profile: Profile }) {
   const [room, setRoom] = useState<BattleRoomPayload>(EMPTY_ROOM);
+  const tilePaintWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const tilePaintRevisionRef = useRef(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedCombatantId, setSelectedCombatantId] = useState<string | null>(null);
   const [bestiaryEntityId, setBestiaryEntityId] = useState('');
@@ -421,6 +424,49 @@ export function BattleRoom({ profile }: { profile: Profile }) {
     }
   }
 
+  function paintBattleTiles(cells: { x: number; y: number }[], color: string) {
+    if (!canUseDmTools || !room.battle || !cells.length) return;
+    const battleId = room.battle.id;
+    const revision = ++tilePaintRevisionRef.current;
+    setError('');
+    setRoom((current) => {
+      const byCell = new Map(current.tilePaint.map((entry) => [`${entry.x}:${entry.y}`, entry]));
+      cells.forEach((cell) => byCell.set(`${cell.x}:${cell.y}`, { battleId, x: cell.x, y: cell.y, color }));
+      return { ...current, tilePaint: [...byCell.values()] };
+    });
+
+    tilePaintWriteQueueRef.current = tilePaintWriteQueueRef.current.then(async () => {
+      const response = await fetch('/api/battle/tile-paint', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cells, color })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Battlefield tiles could not be painted.');
+      if (tilePaintRevisionRef.current === revision) setRoom(normalizeBattleRoomPayload(payload));
+    }).catch((paintError) => {
+      setError(paintError instanceof Error ? paintError.message : 'Battlefield tiles could not be painted.');
+      void loadRoom(false);
+    });
+  }
+
+  function clearBattleTilePaint() {
+    if (!canUseDmTools || !room.battle || !room.tilePaint.length) return;
+    const revision = ++tilePaintRevisionRef.current;
+    setError('');
+    setRoom((current) => ({ ...current, tilePaint: [] }));
+
+    tilePaintWriteQueueRef.current = tilePaintWriteQueueRef.current.then(async () => {
+      const response = await fetch('/api/battle/tile-paint', { method: 'DELETE' });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? 'Battlefield tile paint could not be cleared.');
+      if (tilePaintRevisionRef.current === revision) setRoom(normalizeBattleRoomPayload(payload));
+    }).catch((paintError) => {
+      setError(paintError instanceof Error ? paintError.message : 'Battlefield tile paint could not be cleared.');
+      void loadRoom(false);
+    });
+  }
+
   async function addBestiaryCombatant() {
     if (!canUseDmTools || !bestiaryEntityId) return;
     setSaving(true);
@@ -534,6 +580,7 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         battle={room.battle}
         tokens={orderedTokens}
         terrain={room.terrain}
+        tilePaint={room.tilePaint}
         profile={profile}
         canEditMap={canUseDmTools}
         viewingCharacterId={viewedCharacter?.id ?? null}
@@ -547,6 +594,8 @@ export function BattleRoom({ profile }: { profile: Profile }) {
         onTerrainAdd={(cells) => void setTerrain(cells)}
         onTerrainRemove={(cells) => void removeTerrain(cells)}
         onTerrainClear={() => void clearTerrain()}
+        onTilePaint={paintBattleTiles}
+        onTilePaintClear={clearBattleTilePaint}
       />
 
       <Card>

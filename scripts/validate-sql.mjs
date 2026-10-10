@@ -297,6 +297,23 @@ for (const requiredFragment of [
   }
 }
 
+const battleTilePaintContractProblems = [];
+if (!createdPublicTables.has('battle_tile_paint')) battleTilePaintContractProblems.push('battle_tile_paint table is missing');
+if (!rlsEnabledPublicTables.has('battle_tile_paint')) battleTilePaintContractProblems.push('battle_tile_paint must have row-level security enabled');
+for (const rpc of ['set_battle_tile_paint', 'clear_battle_tile_paint']) {
+  if (!definitions.has(rpc)) battleTilePaintContractProblems.push(`${rpc} RPC is missing`);
+  if (!grants.has(rpc)) battleTilePaintContractProblems.push(`${rpc} RPC is not granted to the application roles`);
+}
+const battleRoomBody = sql.match(/create\s+or\s+replace\s+function\s+public\.get_battle_room[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+if (!battleRoomBody.includes("'tilePaint'")) battleTilePaintContractProblems.push('get_battle_room does not return tilePaint');
+const setBattleTilePaintBody = sql.match(/create\s+or\s+replace\s+function\s+public\.set_battle_tile_paint[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+for (const requiredFragment of ["role <> 'dm'", 'on conflict (battle_id, x, y)', 'is distinct from excluded.color']) {
+  if (!setBattleTilePaintBody.toLowerCase().includes(requiredFragment)) battleTilePaintContractProblems.push(`set_battle_tile_paint is missing safeguard: ${requiredFragment}`);
+}
+const clearBattleTilePaintBody = sql.match(/create\s+or\s+replace\s+function\s+public\.clear_battle_tile_paint[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+if (!clearBattleTilePaintBody.toLowerCase().includes('delete from public.battle_tile_paint')) battleTilePaintContractProblems.push('clear_battle_tile_paint does not clear the sparse paint table');
+if (!/create\s+trigger\s+app_live_battle_tile_paint[\s\S]*?for\s+each\s+statement/i.test(partTwoSql)) battleTilePaintContractProblems.push('tile paint live refresh must emit once per batch statement');
+
 const destructiveSeedPatterns = [
   {
     label: 'market product seed conflict updates can reset DM-edited shop names, sections, prices, or stock',
@@ -403,6 +420,10 @@ if (cityContractProblems.length) {
 
 if (tradingPostContractProblems.length) {
   failures.push(`Trading Post contract violations:\n${tradingPostContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (battleTilePaintContractProblems.length) {
+  failures.push(`Battle tile paint contract violations:\n${battleTilePaintContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (canonicalStorageProblems.length) {

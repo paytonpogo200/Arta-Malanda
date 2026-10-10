@@ -252,6 +252,17 @@ create table if not exists public.battle_terrain (
   unique (battle_id, x, y)
 );
 
+-- Sparse visual-only tile colors. A missing row means the map's default tile style.
+create table if not exists public.battle_tile_paint (
+  battle_id uuid not null references public.battles(id) on delete cascade,
+  x int not null check (x >= 0),
+  y int not null check (y >= 0),
+  color text not null check (color ~ '^#[0-9a-fA-F]{6}$'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (battle_id, x, y)
+);
+
 create index if not exists profiles_username_idx on public.profiles(username);
 create index if not exists app_sessions_profile_idx on public.app_sessions(profile_id);
 create index if not exists app_sessions_valid_idx on public.app_sessions(token_hash, expires_at) where revoked_at is null;
@@ -478,6 +489,7 @@ alter table public.inventory_items enable row level security;
 alter table public.battles enable row level security;
 alter table public.combatants enable row level security;
 alter table public.battle_terrain enable row level security;
+alter table public.battle_tile_paint enable row level security;
 
 revoke all on table public.profiles from anon, authenticated;
 revoke all on table public.dm_lock from anon, authenticated;
@@ -488,6 +500,7 @@ revoke all on table public.inventory_items from anon, authenticated;
 revoke all on table public.battles from anon, authenticated;
 revoke all on table public.combatants from anon, authenticated;
 revoke all on table public.battle_terrain from anon, authenticated;
+revoke all on table public.battle_tile_paint from anon, authenticated;
 
 grant usage on schema public to anon, authenticated;
 grant execute on function public.create_campaign_account(text, text, text, boolean) to anon, authenticated;
@@ -7285,6 +7298,19 @@ as $$
   )
 $$;
 
+create or replace function public.battle_tile_paint_record_to_json(p_paint public.battle_tile_paint)
+returns jsonb
+language sql
+stable
+as $$
+  select jsonb_build_object(
+    'battleId', p_paint.battle_id,
+    'x', p_paint.x,
+    'y', p_paint.y,
+    'color', lower(p_paint.color)
+  )
+$$;
+
 create or replace function public.get_battle_room(p_session_token text)
 returns jsonb
 language plpgsql
@@ -7319,6 +7345,12 @@ begin
       from public.battle_terrain t
       where v_battle.id is not null
         and t.battle_id = v_battle.id
+    ),
+    'tilePaint', (
+      select coalesce(jsonb_agg(public.battle_tile_paint_record_to_json(p) order by p.y, p.x), '[]'::jsonb)
+      from public.battle_tile_paint p
+      where v_battle.id is not null
+        and p.battle_id = v_battle.id
     ),
     'characters', (
       select coalesce(jsonb_agg(public.character_record_to_json(ch) order by ch.kind, ch.name), '[]'::jsonb)
@@ -7895,6 +7927,79 @@ begin
 end;
 $$;
 
+create or replace function public.set_battle_tile_paint(
+  p_session_token text,
+  p_color text,
+  p_cells jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+  v_color text := lower(trim(coalesce(p_color, '')));
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can paint battlefield tiles.'; end if;
+  if v_color !~ '^#[0-9a-f]{6}$' then raise exception 'Choose a valid six-digit tile color.'; end if;
+  if jsonb_typeof(coalesce(p_cells, '[]'::jsonb)) <> 'array' then raise exception 'Painted cells must be supplied as a list.'; end if;
+
+  select * into v_battle
+  from public.battles
+  where status = 'active'::public.battle_status
+  order by created_at desc
+  limit 1
+  for update;
+  if v_battle.id is null then raise exception 'No active encounter.'; end if;
+
+  insert into public.battle_tile_paint (battle_id, x, y, color)
+  select v_battle.id, cells.x, cells.y, v_color
+  from (
+    select distinct parsed.x, parsed.y
+    from jsonb_to_recordset(coalesce(p_cells, '[]'::jsonb)) as parsed(x int, y int)
+  ) cells
+  where cells.x >= 0 and cells.x < v_battle.grid_width
+    and cells.y >= 0 and cells.y < v_battle.grid_height
+  on conflict (battle_id, x, y) do update
+  set color = excluded.color,
+      updated_at = now()
+  where public.battle_tile_paint.color is distinct from excluded.color;
+
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
+create or replace function public.clear_battle_tile_paint(p_session_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_battle public.battles%rowtype;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  if v_profile.role <> 'dm'::public.user_role then raise exception 'Only the Dungeon Master can clear battlefield tile paint.'; end if;
+
+  select * into v_battle
+  from public.battles
+  where status = 'active'::public.battle_status
+  order by created_at desc
+  limit 1
+  for update;
+  if v_battle.id is null then raise exception 'No active encounter.'; end if;
+
+  delete from public.battle_tile_paint where battle_id = v_battle.id;
+  return public.get_battle_room(p_session_token);
+end;
+$$;
+
 create or replace function public.add_bestiary_to_battle(
   p_session_token text,
   p_entity_id uuid
@@ -8042,6 +8147,7 @@ grant execute on function public.character_battle_resource_max(uuid, text) to an
 grant execute on function public.combatant_statuses_to_json(public.combatants) to anon, authenticated;
 grant execute on function public.combatant_record_to_json(public.combatants) to anon, authenticated;
 grant execute on function public.battle_terrain_record_to_json(public.battle_terrain) to anon, authenticated;
+grant execute on function public.battle_tile_paint_record_to_json(public.battle_tile_paint) to anon, authenticated;
 grant execute on function public.get_battle_room(text) to anon, authenticated;
 grant execute on function public.start_campaign_battle(text, uuid[], int, int) to anon, authenticated;
 grant execute on function public.update_combatant_state(text, uuid, jsonb) to anon, authenticated;
@@ -8051,6 +8157,8 @@ grant execute on function public.remove_combatant_from_battle(text, uuid) to ano
 grant execute on function public.end_active_battle(text) to anon, authenticated;
 grant execute on function public.set_battle_terrain(text, jsonb) to anon, authenticated;
 grant execute on function public.clear_battle_terrain(text, jsonb) to anon, authenticated;
+grant execute on function public.set_battle_tile_paint(text, text, jsonb) to anon, authenticated;
+grant execute on function public.clear_battle_tile_paint(text) to anon, authenticated;
 grant execute on function public.add_bestiary_to_battle(text, uuid) to anon, authenticated;
 
 

@@ -5428,6 +5428,20 @@ begin
 end;
 $$;
 
+-- Tile painting writes an entire drag gesture in one statement, so one live signal
+-- is enough regardless of how many sparse cells were inserted or repainted.
+create or replace function public.touch_battle_tile_paint_live_update_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform public.touch_app_live_update('battle', null);
+  return null;
+end;
+$$;
+
 do $$
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
@@ -5492,6 +5506,11 @@ drop trigger if exists app_live_battle_terrain on public.battle_terrain;
 create trigger app_live_battle_terrain
 after insert or update or delete on public.battle_terrain
 for each row execute function public.touch_app_live_update_trigger('battle');
+
+drop trigger if exists app_live_battle_tile_paint on public.battle_tile_paint;
+create trigger app_live_battle_tile_paint
+after insert or update or delete on public.battle_tile_paint
+for each statement execute function public.touch_battle_tile_paint_live_update_trigger();
 
 drop trigger if exists app_live_bestiary_entities on public.bestiary_entities;
 create trigger app_live_bestiary_entities
