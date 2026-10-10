@@ -214,7 +214,7 @@ export function NotificationHub({ profile, notices, onRefresh }: NotificationHub
                     </button>
                   </div>
                   {notice.body && <p className="mt-2 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">{cleanNotificationText(notice.body)}</p>}
-                  {notice.kind === 'trade' && notice.sourceId && (
+                  {notice.kind === 'trade' && notice.sourceType === 'trade' && notice.sourceId && (
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <Button variant="teal" onClick={() => respondToTrade(notice.sourceId!, 'accepted')} disabled={busyId.startsWith(notice.sourceId)}>
                         Accept

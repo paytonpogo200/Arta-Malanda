@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Hammer, Lock, PackageCheck, PawPrint, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Handshake, Hammer, Lock, PackageCheck, PawPrint, Pencil, Plus, RefreshCw, Search, Settings, ShoppingBag, Sparkles, Star, Store, Trash2, Unlock, Users, WandSparkles, X } from 'lucide-react';
+import { TradingPostPanel } from '@/components/cities/TradingPostPanel';
 import { BookReader, BOOK_PAGE_MAX_CHARS, bookContentFromPages, pagesFromBookContent } from '@/components/books/BookReader';
 import { ItemIcon } from '@/components/inventory/ItemIcon';
 import { Button } from '@/components/ui/Button';
@@ -88,7 +89,7 @@ type VendorDraft = {
   npcName: string;
   facility: string;
   category: string;
-  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable' | 'trading_post';
   payoutCharacterId: string;
   boardingFeeCoin: number;
   hidden: boolean;
@@ -334,7 +335,8 @@ const SHOP_BLUEPRINTS: Array<{ key: VendorDraft['blueprintType']; label: string;
   { key: 'brewery', label: 'Brewery', facility: 'Brewery', category: 'Alchemy Services', description: 'Uses the Calostrynn brewery style with editable sale sections.' },
   { key: 'spell_registrar', label: 'Spell Registrar', facility: 'Spell Registrar', category: 'Spells', description: 'Category-based spell shop for existing or custom spells.' },
   { key: 'library', label: 'Library', facility: 'Library', category: 'Documents', description: 'Blank book shelves for DM-authored display books and one-of-a-kind sale books.' },
-  { key: 'stable', label: 'Stable', facility: 'Stable', category: 'Animal Services', description: 'Animal stalls for sale and rent, with pet purchases sent straight to the stable.' }
+  { key: 'stable', label: 'Stable', facility: 'Stable', category: 'Animal Services', description: 'Animal stalls for sale and rent, with pet purchases sent straight to the stable.' },
+  { key: 'trading_post', label: 'Trading Post', facility: 'Trading Post', category: 'Player Exchange', description: 'Shopkeeper-reviewed player listings with item and currency offers.' }
 ];
 
 function blueprintInfo(blueprint: VendorDraft['blueprintType']) {
@@ -343,6 +345,7 @@ function blueprintInfo(blueprint: VendorDraft['blueprintType']) {
 
 function BlueprintIcon({ blueprint, size = 18 }: { blueprint: VendorDraft['blueprintType']; size?: number }) {
   if (blueprint === 'stable') return <PawPrint size={size} />;
+  if (blueprint === 'trading_post') return <Handshake size={size} />;
   if (blueprint === 'spell_registrar') return <WandSparkles size={size} />;
   if (blueprint === 'library') return <ItemIcon type="book" size={size} />;
   if (blueprint === 'blacksmith') return <Hammer size={size} />;
@@ -357,6 +360,7 @@ function blueprintSections(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'spell_registrar') return [...SPELL_SERVICE_SECTIONS];
   if (blueprint === 'library') return [];
   if (blueprint === 'stable') return ['Sale Stalls', 'Rental Stalls', 'Holding Pens'];
+  if (blueprint === 'trading_post') return [];
   return ['Wares'];
 }
 
@@ -365,6 +369,7 @@ function defaultSectionForBlueprint(blueprint: VendorDraft['blueprintType']) {
   if (blueprint === 'spell_registrar') return 'Utility Spells';
   if (blueprint === 'brewery') return 'Finished Potions';
   if (blueprint === 'stable') return 'Sale Stalls';
+  if (blueprint === 'trading_post') return '';
   return 'Wares';
 }
 
@@ -555,6 +560,7 @@ function normalizeBrewResult(value: unknown): BrewResult | null {
 }
 
 function productCountText(vendor: ShopVendor) {
+  if (isTradingPostVendor(vendor)) return 'Player exchange';
   const visible = vendor.products.filter((product) => product.available).length;
   const total = vendor.products.length;
   const label = isStableVendor(vendor) ? 'animal' : 'ware';
@@ -589,6 +595,10 @@ function isLibraryVendor(vendor: ShopVendor) {
 
 function isStableVendor(vendor: ShopVendor) {
   return vendor.blueprintType === 'stable' || `${vendor.key} ${vendor.name} ${vendor.facility} ${vendor.category}`.toLowerCase().includes('stable');
+}
+
+function isTradingPostVendor(vendor: ShopVendor) {
+  return vendor.blueprintType === 'trading_post';
 }
 
 function isSpellProduct(product: MarketProduct) {
@@ -1158,7 +1168,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
     canManageVendor(vendor) || canPriceStableVendor(vendor)
   ), [canManageVendor, canPriceStableVendor]);
   const canStockVendor = useCallback((vendor: ShopVendor | null | undefined) => (
-    Boolean(vendor?.payoutCharacterId && (isDm || isShopkeeperForVendor(vendor)))
+    Boolean(vendor?.payoutCharacterId && !isTradingPostVendor(vendor) && (isDm || isShopkeeperForVendor(vendor)))
   ), [isDm, isShopkeeperForVendor]);
   const stockKeeper = payoutCharacterForVendor(stockingVendor);
   const stockSections = stockingVendor
@@ -2347,6 +2357,13 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
             />
           )}
         </div>
+      ) : isTradingPostVendor(selectedVendor) ? (
+        <TradingPostPanel
+          vendor={selectedVendor}
+          city={selectedCity}
+          selectedCharacterId={selectedShopper?.id ?? ''}
+          canUseService={canShop}
+        />
       ) : isBlacksmithVendor(selectedVendor) ? (
         <BlacksmithPage
           vendor={selectedVendor}
@@ -3074,7 +3091,17 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[18rem_1fr]">
+            {isTradingPostVendor(managingVendor) ? (
+              <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-5">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--brass)]/45 bg-[var(--brass)]/10 text-[var(--brass)]"><Handshake size={21} /></span>
+                  <div>
+                    <h3 className="font-black">Trading Post administration</h3>
+                    <p className="mt-1 text-sm leading-6 text-[var(--muted)]">Assign the shopkeeper and update the service name through Shop settings. Listing approval, active-listing removal, and player offers are managed directly inside the Trading Post.</p>
+                  </div>
+                </div>
+              </div>
+            ) : <div className="grid gap-4 xl:grid-cols-[18rem_1fr]">
               <div className="rounded-2xl border border-[var(--line)] bg-black/15 p-3">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
@@ -3196,7 +3223,7 @@ export function CitiesPanel({ profile }: { profile: Profile }) {
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
           </div>
         </Modal>
       )}

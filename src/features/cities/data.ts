@@ -235,6 +235,7 @@ export function normalizeVendor(value: unknown): ShopVendor {
     || source.blueprintType === 'spell_registrar'
     || source.blueprintType === 'library'
     || source.blueprintType === 'stable'
+    || source.blueprintType === 'trading_post'
     ? source.blueprintType
     : 'market';
   return {

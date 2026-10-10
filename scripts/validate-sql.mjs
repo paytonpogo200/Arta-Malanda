@@ -260,6 +260,43 @@ for (const sqlPath of sqlPaths) {
   if (!cityLoader.includes("'constructionProjects'")) cityContractProblems.push(`${label}: discovered cities payload is missing constructionProjects`);
 }
 
+const tradingPostContractProblems = [];
+const tradingPostTables = [
+  'trading_post_listings',
+  'trading_post_offers',
+  'trading_post_offer_items',
+  'trading_post_offer_currency'
+];
+const tradingPostRpcs = [
+  'get_trading_post',
+  'submit_trading_post_listing',
+  'review_trading_post_listing',
+  'close_trading_post_listing',
+  'create_trading_post_offer',
+  'resolve_trading_post_offer'
+];
+for (const table of tradingPostTables) {
+  if (!createdPublicTables.has(table)) tradingPostContractProblems.push(`${table} table is missing`);
+  if (!rlsEnabledPublicTables.has(table)) tradingPostContractProblems.push(`${table} must have row-level security enabled`);
+}
+for (const rpc of tradingPostRpcs) {
+  if (!definitions.has(rpc)) tradingPostContractProblems.push(`${rpc} RPC is missing`);
+  if (!grants.has(rpc)) tradingPostContractProblems.push(`${rpc} RPC is not granted to the application roles`);
+}
+const resolveTradingPostBody = sql.match(/create\s+or\s+replace\s+function\s+public\.resolve_trading_post_offer[\s\S]*?\bas\s+\$\$([\s\S]*?)\$\$;/i)?.[1] ?? '';
+for (const requiredFragment of [
+  'for update',
+  'assert_trade_currency_available',
+  'transfer_trade_inventory_item',
+  'transfer_trade_currency',
+  "status = 'unavailable'",
+  "status = 'completed'"
+]) {
+  if (!resolveTradingPostBody.toLowerCase().includes(requiredFragment)) {
+    tradingPostContractProblems.push(`resolve_trading_post_offer is missing transaction safeguard: ${requiredFragment}`);
+  }
+}
+
 const destructiveSeedPatterns = [
   {
     label: 'market product seed conflict updates can reset DM-edited shop names, sections, prices, or stock',
@@ -362,6 +399,10 @@ if (compositeIntoProblems.length) {
 
 if (cityContractProblems.length) {
   failures.push(`Incomplete discovered-city SQL contracts:\n${cityContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
+}
+
+if (tradingPostContractProblems.length) {
+  failures.push(`Trading Post contract violations:\n${tradingPostContractProblems.map((entry) => `- ${entry}`).join('\n')}`);
 }
 
 if (canonicalStorageProblems.length) {

@@ -9228,7 +9228,7 @@ add column if not exists boarding_fee_coin int not null default 0 check (boardin
 
 alter table public.shop_vendors
   drop constraint if exists shop_vendors_blueprint_type_check,
-  add constraint shop_vendors_blueprint_type_check check (blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable'));
+  add constraint shop_vendors_blueprint_type_check check (blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable', 'trading_post'));
 
 alter table public.market_products
   add column if not exists product_kind text not null default 'item',

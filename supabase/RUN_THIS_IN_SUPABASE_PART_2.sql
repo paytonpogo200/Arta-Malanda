@@ -59,7 +59,7 @@ begin
     facility = case when v_patch ? 'facility' then coalesce(nullif(trim(v_patch->>'facility'), ''), facility) else facility end,
     category = case when v_patch ? 'category' then coalesce(nullif(trim(v_patch->>'category'), ''), category) else category end,
     blueprint_type = case
-      when v_patch ? 'blueprintType' and v_patch->>'blueprintType' in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable') then v_patch->>'blueprintType'
+      when v_patch ? 'blueprintType' and v_patch->>'blueprintType' in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable', 'trading_post') then v_patch->>'blueprintType'
       else blueprint_type
     end,
     payout_character_id = case
@@ -337,7 +337,7 @@ declare
 begin
   v_profile := public.require_dm_profile(p_session_token);
 
-  if v_blueprint not in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable') then
+  if v_blueprint not in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable', 'trading_post') then
     raise exception 'Unsupported shop blueprint.';
   end if;
 
@@ -9991,5 +9991,841 @@ revoke execute on function public.crafting_selection_item(uuid, text, uuid, text
 revoke execute on function public.consume_crafting_selection(uuid, text, uuid, numeric, text) from public, anon, authenticated;
 revoke execute on function public.brewery_available_items(uuid, text) from public, anon, authenticated;
 revoke execute on function public.construction_source_item_accessible(public.profiles, public.characters, public.inventory_items) from public, anon, authenticated;
+
+-- ============================================================
+-- Velmora Trading Post
+-- Listings and offers remain non-reserving until one offer is accepted. The
+-- acceptance RPC locks and revalidates every involved row before moving value.
+
+alter table public.shop_vendors
+  drop constraint if exists shop_vendors_blueprint_type_check,
+  add constraint shop_vendors_blueprint_type_check check (
+    blueprint_type in ('market', 'blacksmith', 'armory', 'brewery', 'spell_registrar', 'library', 'stable', 'trading_post')
+  );
+
+create table if not exists public.trading_post_listings (
+  id uuid primary key default gen_random_uuid(),
+  vendor_id uuid not null references public.shop_vendors(id) on delete cascade,
+  seller_user_id uuid not null references public.profiles(id) on delete cascade,
+  seller_character_id uuid not null references public.characters(id) on delete cascade,
+  listed_item_id uuid references public.inventory_items(id) on delete set null,
+  item_snapshot jsonb not null check (jsonb_typeof(item_snapshot) = 'object'),
+  quantity numeric(12,1) not null check (quantity > 0),
+  status text not null default 'pending_approval' check (status in ('pending_approval', 'active', 'declined', 'withdrawn', 'completed', 'removed')),
+  review_note text not null default '',
+  reviewed_by_user_id uuid references public.profiles(id) on delete set null,
+  approved_at timestamptz,
+  closed_at timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.trading_post_offers (
+  id uuid primary key default gen_random_uuid(),
+  listing_id uuid not null references public.trading_post_listings(id) on delete cascade,
+  offerer_user_id uuid not null references public.profiles(id) on delete cascade,
+  offerer_character_id uuid not null references public.characters(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined', 'cancelled', 'unavailable')),
+  message text not null default '',
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.trading_post_offer_items (
+  id uuid primary key default gen_random_uuid(),
+  offer_id uuid not null references public.trading_post_offers(id) on delete cascade,
+  inventory_item_id uuid references public.inventory_items(id) on delete set null,
+  item_snapshot jsonb not null check (jsonb_typeof(item_snapshot) = 'object'),
+  quantity numeric(12,1) not null check (quantity > 0),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.trading_post_offer_currency (
+  offer_id uuid not null references public.trading_post_offers(id) on delete cascade,
+  currency_unit_id uuid not null references public.currency_units(id) on delete restrict,
+  amount integer not null check (amount > 0),
+  created_at timestamptz not null default now(),
+  primary key (offer_id, currency_unit_id)
+);
+
+create unique index if not exists trading_post_open_item_listing_unique
+  on public.trading_post_listings(listed_item_id)
+  where listed_item_id is not null and status in ('pending_approval', 'active');
+create index if not exists trading_post_listings_vendor_status_idx
+  on public.trading_post_listings(vendor_id, status, created_at desc);
+create index if not exists trading_post_listings_seller_idx
+  on public.trading_post_listings(seller_user_id, created_at desc);
+create unique index if not exists trading_post_pending_offer_character_unique
+  on public.trading_post_offers(listing_id, offerer_character_id)
+  where status = 'pending';
+create index if not exists trading_post_offers_listing_idx
+  on public.trading_post_offers(listing_id, status, created_at desc);
+create index if not exists trading_post_offers_offerer_idx
+  on public.trading_post_offers(offerer_user_id, created_at desc);
+create unique index if not exists trading_post_offer_item_unique
+  on public.trading_post_offer_items(offer_id, inventory_item_id)
+  where inventory_item_id is not null;
+
+alter table public.trading_post_listings enable row level security;
+alter table public.trading_post_offers enable row level security;
+alter table public.trading_post_offer_items enable row level security;
+alter table public.trading_post_offer_currency enable row level security;
+revoke all on public.trading_post_listings from anon, authenticated;
+revoke all on public.trading_post_offers from anon, authenticated;
+revoke all on public.trading_post_offer_items from anon, authenticated;
+revoke all on public.trading_post_offer_currency from anon, authenticated;
+
+drop trigger if exists trading_post_listings_touch_updated_at on public.trading_post_listings;
+create trigger trading_post_listings_touch_updated_at before update on public.trading_post_listings
+for each row execute function public.touch_updated_at();
+drop trigger if exists trading_post_offers_touch_updated_at on public.trading_post_offers;
+create trigger trading_post_offers_touch_updated_at before update on public.trading_post_offers
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists app_live_trading_post_listings on public.trading_post_listings;
+create trigger app_live_trading_post_listings after insert or update or delete on public.trading_post_listings
+for each row execute function public.touch_app_live_update_trigger('trading-post,cities,notifications');
+drop trigger if exists app_live_trading_post_offers on public.trading_post_offers;
+create trigger app_live_trading_post_offers after insert or update or delete on public.trading_post_offers
+for each row execute function public.touch_app_live_update_trigger('trading-post,notifications');
+drop trigger if exists app_live_trading_post_offer_items on public.trading_post_offer_items;
+create trigger app_live_trading_post_offer_items after insert or update or delete on public.trading_post_offer_items
+for each row execute function public.touch_app_live_update_trigger('trading-post,inventory');
+drop trigger if exists app_live_trading_post_offer_currency on public.trading_post_offer_currency;
+create trigger app_live_trading_post_offer_currency after insert or update or delete on public.trading_post_offer_currency
+for each row execute function public.touch_app_live_update_trigger('trading-post,wallet');
+
+do $$
+declare
+  v_city_key text;
+begin
+  select city.city_key into v_city_key
+  from public.cities city
+  where city.city_key in ('velmora', 'the-ruined-city', 'ruined-city')
+     or lower(city.name) = 'velmora'
+     or lower(city.name) like '%velmora%'
+  order by case
+    when city.city_key = 'velmora' then 0
+    when lower(city.name) = 'velmora' then 1
+    when lower(city.name) like '%velmora%' then 2
+    when city.city_key = 'the-ruined-city' then 3
+    else 4
+  end
+  limit 1;
+
+  if v_city_key is not null then
+    insert into public.shop_vendors (
+      city_key, vendor_key, name, npc_name, facility, category,
+      blueprint_type, is_custom, is_hidden, display_order
+    )
+    values (
+      v_city_key, 'velmora-trading-post', 'Trading Post', 'Unassigned Shopkeeper',
+      'Trading Post', 'Player Exchange', 'trading_post', true, false,
+      coalesce((select max(display_order) + 10 from public.shop_vendors where city_key = v_city_key), 10)
+    )
+    on conflict (vendor_key) do nothing;
+  end if;
+end;
+$$;
+
+create or replace function public.trading_post_item_snapshot(
+  p_item public.inventory_items,
+  p_quantity numeric
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'itemId', p_item.id,
+    'name', p_item.item_name,
+    'displayName', coalesce(p_item.display_name, ''),
+    'description', coalesce(p_item.item_description, ''),
+    'type', p_item.item_type,
+    'rarity', p_item.rarity,
+    'quantity', p_quantity,
+    'modifiers', p_item.modifiers,
+    'enchantment', p_item.enchantment,
+    'runeName', p_item.rune_name,
+    'material', p_item.material,
+    'enhancementCount', p_item.enhancement_count,
+    'isAccessory', p_item.is_accessory,
+    'isTwoHanded', p_item.is_two_handed,
+    'potionStrength', p_item.potion_strength,
+    'potionProperty', p_item.potion_property,
+    'potionQuality', p_item.potion_quality,
+    'spellBookForm', p_item.spell_book_form
+  )
+$$;
+
+create or replace function public.trading_post_listing_record_to_json(
+  p_listing public.trading_post_listings
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_listing.id,
+    'vendorId', p_listing.vendor_id,
+    'sellerUserId', p_listing.seller_user_id,
+    'sellerCharacterId', p_listing.seller_character_id,
+    'sellerPlayerName', coalesce((select profile.display_name from public.profiles profile where profile.id = p_listing.seller_user_id), 'Unknown Player'),
+    'sellerCharacterName', coalesce((select character.name from public.characters character where character.id = p_listing.seller_character_id), 'Unknown Character'),
+    'item', p_listing.item_snapshot || jsonb_build_object('itemId', p_listing.listed_item_id, 'quantity', p_listing.quantity),
+    'quantity', p_listing.quantity,
+    'status', p_listing.status,
+    'reviewNote', p_listing.review_note,
+    'reviewedByName', coalesce((select profile.display_name from public.profiles profile where profile.id = p_listing.reviewed_by_user_id), ''),
+    'offerCount', (select count(*) from public.trading_post_offers offer where offer.listing_id = p_listing.id and offer.status = 'pending'),
+    'createdAt', p_listing.created_at,
+    'approvedAt', p_listing.approved_at,
+    'closedAt', p_listing.closed_at,
+    'completedAt', p_listing.completed_at
+  )
+$$;
+
+create or replace function public.trading_post_offer_record_to_json(
+  p_offer public.trading_post_offers
+)
+returns jsonb
+language sql
+stable
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'id', p_offer.id,
+    'listingId', p_offer.listing_id,
+    'offererUserId', p_offer.offerer_user_id,
+    'offererCharacterId', p_offer.offerer_character_id,
+    'offererPlayerName', coalesce((select profile.display_name from public.profiles profile where profile.id = p_offer.offerer_user_id), 'Unknown Player'),
+    'offererCharacterName', coalesce((select character.name from public.characters character where character.id = p_offer.offerer_character_id), 'Unknown Character'),
+    'status', p_offer.status,
+    'message', p_offer.message,
+    'items', (
+      select coalesce(jsonb_agg(item.item_snapshot || jsonb_build_object(
+        'itemId', item.inventory_item_id,
+        'quantity', item.quantity
+      ) order by item.created_at, item.id), '[]'::jsonb)
+      from public.trading_post_offer_items item
+      where item.offer_id = p_offer.id
+    ),
+    'currency', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'unitId', unit.id,
+        'systemKey', unit.currency_system_key,
+        'key', unit.unit_key,
+        'name', unit.name,
+        'symbol', unit.symbol,
+        'order', unit.unit_order,
+        'amount', currency.amount
+      ) order by unit.unit_order), '[]'::jsonb)
+      from public.trading_post_offer_currency currency
+      join public.currency_units unit on unit.id = currency.currency_unit_id
+      where currency.offer_id = p_offer.id
+    ),
+    'listing', public.trading_post_listing_record_to_json((
+      select listing from public.trading_post_listings listing where listing.id = p_offer.listing_id
+    )),
+    'createdAt', p_offer.created_at,
+    'resolvedAt', p_offer.resolved_at
+  )
+$$;
+
+create or replace function public.create_trading_post_notification(
+  p_recipient_user_id uuid,
+  p_title text,
+  p_body text,
+  p_source_type text,
+  p_source_id uuid,
+  p_location_name text default ''
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if p_recipient_user_id is null then return; end if;
+  insert into public.campaign_notifications (
+    recipient_user_id, title, body, notice_kind, source_type, source_id, location_name
+  ) values (
+    p_recipient_user_id, p_title, p_body, 'trade', p_source_type, p_source_id, coalesce(p_location_name, '')
+  );
+end;
+$$;
+
+create or replace function public.get_trading_post(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_character_id uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_character public.characters%rowtype;
+  v_can_manage boolean := false;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null or v_vendor.blueprint_type <> 'trading_post' then raise exception 'Trading Post not found.'; end if;
+  v_can_manage := v_profile.role = 'dm'::public.user_role or public.profile_runs_shop_vendor(v_profile, v_vendor);
+
+  if p_character_id is not null then
+    v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  else
+    select character.* into v_character
+    from public.characters character
+    where character.owner_user_id = v_profile.id or v_profile.role = 'dm'::public.user_role
+    order by case when character.owner_user_id = v_profile.id then 0 else 1 end, character.name
+    limit 1;
+  end if;
+  if v_character.id is not null then
+    perform public.ensure_dm_testing_wallet(v_character.id);
+    perform public.ensure_character_additional_storage_activation(v_character.id);
+  end if;
+
+  return jsonb_build_object(
+    'vendor', jsonb_build_object(
+      'id', v_vendor.id,
+      'name', v_vendor.name,
+      'cityKey', v_vendor.city_key,
+      'shopkeeperName', coalesce((select character.name from public.characters character where character.id = v_vendor.payout_character_id), nullif(v_vendor.npc_name, ''), 'Unassigned Shopkeeper'),
+      'canManage', v_can_manage
+    ),
+    'characters', (
+      select coalesce(jsonb_agg(public.character_record_to_json(character) order by character.name), '[]'::jsonb)
+      from public.characters character
+      where character.owner_user_id = v_profile.id or v_profile.role = 'dm'::public.user_role
+    ),
+    'selectedCharacterId', v_character.id,
+    'inventory', case when v_character.id is null then '[]'::jsonb else (
+      select coalesce(jsonb_agg(public.inventory_item_record_to_json(item) order by item.slot_index, item.item_name, item.id), '[]'::jsonb)
+      from public.inventory_items item
+      where item.character_id = v_character.id
+        and item.property_id is null
+        and item.loadout_slot is null
+        and public.normalize_item_type(item.item_type) <> 'pet'
+        and (item.parent_item_id is null or public.inventory_portable_property_root(item.id) is null)
+    ) end,
+    'wallet', case when v_character.id is null then '[]'::jsonb else (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'unit', jsonb_build_object(
+          'id', unit.id, 'systemKey', unit.currency_system_key, 'key', unit.unit_key,
+          'name', unit.name, 'symbol', unit.symbol, 'order', unit.unit_order
+        ),
+        'amount', coalesce(balance.amount, 0)
+      ) order by unit.unit_order), '[]'::jsonb)
+      from public.currency_units unit
+      left join public.character_wallet_balances balance
+        on balance.currency_unit_id = unit.id and balance.character_id = v_character.id
+      where unit.currency_system_key = 'common'
+    ) end,
+    'activeListings', (
+      select coalesce(jsonb_agg(public.trading_post_listing_record_to_json(listing) order by listing.approved_at desc, listing.created_at desc), '[]'::jsonb)
+      from public.trading_post_listings listing
+      where listing.vendor_id = v_vendor.id and listing.status = 'active'
+    ),
+    'myListings', (
+      select coalesce(jsonb_agg(public.trading_post_listing_record_to_json(listing) order by listing.created_at desc), '[]'::jsonb)
+      from public.trading_post_listings listing
+      where listing.vendor_id = v_vendor.id
+        and (listing.seller_user_id = v_profile.id or v_profile.role = 'dm'::public.user_role)
+    ),
+    'pendingReview', case when not v_can_manage then '[]'::jsonb else (
+      select coalesce(jsonb_agg(public.trading_post_listing_record_to_json(listing) order by listing.created_at), '[]'::jsonb)
+      from public.trading_post_listings listing
+      where listing.vendor_id = v_vendor.id and listing.status = 'pending_approval'
+    ) end,
+    'offersReceived', (
+      select coalesce(jsonb_agg(public.trading_post_offer_record_to_json(offer) order by offer.created_at desc), '[]'::jsonb)
+      from public.trading_post_offers offer
+      join public.trading_post_listings listing on listing.id = offer.listing_id
+      where listing.vendor_id = v_vendor.id
+        and (listing.seller_user_id = v_profile.id or v_profile.role = 'dm'::public.user_role)
+    ),
+    'offersSent', (
+      select coalesce(jsonb_agg(public.trading_post_offer_record_to_json(offer) order by offer.created_at desc), '[]'::jsonb)
+      from public.trading_post_offers offer
+      join public.trading_post_listings listing on listing.id = offer.listing_id
+      where listing.vendor_id = v_vendor.id
+        and (offer.offerer_user_id = v_profile.id or v_profile.role = 'dm'::public.user_role)
+    )
+  );
+end;
+$$;
+
+create or replace function public.submit_trading_post_listing(
+  p_session_token text,
+  p_vendor_id uuid,
+  p_character_id uuid,
+  p_item_id uuid,
+  p_quantity numeric
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_character public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_listing public.trading_post_listings%rowtype;
+  v_quantity numeric;
+  v_recipient record;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_vendor from public.shop_vendors where id = p_vendor_id;
+  if v_vendor.id is null or v_vendor.blueprint_type <> 'trading_post' then raise exception 'Trading Post not found.'; end if;
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  if v_character.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
+  perform public.assert_character_can_use_vendor(v_character, v_vendor.vendor_key);
+
+  select * into v_item from public.inventory_items where id = p_item_id for update;
+  if v_item.id is null or v_item.character_id is distinct from v_character.id
+    or v_item.property_id is not null
+    or (v_item.parent_item_id is not null and public.inventory_portable_property_root(v_item.id) is not null)
+  then raise exception 'That item is not in the selected character inventory.'; end if;
+  if v_item.loadout_slot is not null then raise exception 'Unequip that item before listing it.'; end if;
+  if public.normalize_item_type(v_item.item_type) = 'pet' then raise exception 'Animals cannot be entered through the Trading Post.'; end if;
+  v_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, p_quantity);
+  if v_item.is_storage then v_quantity := 1; end if;
+  if v_quantity > v_item.quantity then raise exception 'You cannot list more than you currently own.'; end if;
+  if exists (select 1 from public.trading_post_listings listing where listing.listed_item_id = v_item.id and listing.status in ('pending_approval', 'active')) then
+    raise exception 'That inventory stack already has an open Trading Post listing.';
+  end if;
+
+  insert into public.trading_post_listings (
+    vendor_id, seller_user_id, seller_character_id, listed_item_id, item_snapshot, quantity
+  ) values (
+    v_vendor.id, v_character.owner_user_id, v_character.id, v_item.id,
+    public.trading_post_item_snapshot(v_item, v_quantity), v_quantity
+  ) returning * into v_listing;
+
+  perform public.create_trading_post_notification(
+    v_character.owner_user_id, 'Trade goods submitted',
+    coalesce(v_item.display_name, v_item.item_name) || ' is awaiting shopkeeper approval.',
+    'trading_post_listing', v_listing.id, v_character.location_name
+  );
+  for v_recipient in
+    select distinct recipient.id
+    from (
+      select profile.id from public.profiles profile where profile.role = 'dm'::public.user_role
+      union
+      select character.owner_user_id from public.characters character where character.id = v_vendor.payout_character_id
+    ) recipient
+    where recipient.id is not null and recipient.id is distinct from v_character.owner_user_id
+  loop
+    perform public.create_trading_post_notification(
+      v_recipient.id, 'Trading Post submission awaiting review',
+      v_character.name || ' submitted ' || public.format_item_quantity(v_quantity) || ' ' || coalesce(v_item.display_name, v_item.item_name) || '.',
+      'trading_post_listing', v_listing.id, v_character.location_name
+    );
+  end loop;
+  return public.get_trading_post(p_session_token, v_vendor.id, v_character.id);
+end;
+$$;
+
+create or replace function public.review_trading_post_listing(
+  p_session_token text,
+  p_listing_id uuid,
+  p_action text,
+  p_review_note text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_listing public.trading_post_listings%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_action text := lower(trim(coalesce(p_action, '')));
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_listing from public.trading_post_listings where id = p_listing_id for update;
+  if v_listing.id is null then raise exception 'Listing not found.'; end if;
+  select * into v_vendor from public.shop_vendors where id = v_listing.vendor_id;
+  if v_profile.role <> 'dm'::public.user_role and not public.profile_runs_shop_vendor(v_profile, v_vendor) then
+    raise exception 'Only the Trading Post shopkeeper can review submissions.';
+  end if;
+  if v_listing.status <> 'pending_approval' then raise exception 'That submission has already been reviewed.'; end if;
+  if v_action not in ('approve', 'decline') then raise exception 'Choose approve or decline.'; end if;
+
+  if v_action = 'approve' then
+    if not exists (
+      select 1 from public.characters character
+      where character.id = v_listing.seller_character_id
+        and character.owner_user_id = v_listing.seller_user_id
+    ) then raise exception 'The submitting character is no longer controlled by the same player.'; end if;
+    select * into v_item from public.inventory_items where id = v_listing.listed_item_id for update;
+    if v_item.id is null or v_item.character_id is distinct from v_listing.seller_character_id or v_item.quantity < v_listing.quantity then
+      raise exception 'The submitted item is no longer available in the required quantity.';
+    end if;
+    update public.trading_post_listings set
+      status = 'active', review_note = trim(coalesce(p_review_note, '')),
+      reviewed_by_user_id = v_profile.id, approved_at = now()
+    where id = v_listing.id returning * into v_listing;
+    perform public.create_trading_post_notification(
+      v_listing.seller_user_id, 'Trading Post listing approved',
+      coalesce(nullif(v_listing.item_snapshot->>'displayName', ''), v_listing.item_snapshot->>'name', 'Your item') || ' is now visible on the Trading Block.',
+      'trading_post_listing', v_listing.id
+    );
+  else
+    update public.trading_post_listings set
+      status = 'declined', review_note = trim(coalesce(p_review_note, '')),
+      reviewed_by_user_id = v_profile.id, closed_at = now()
+    where id = v_listing.id returning * into v_listing;
+    perform public.create_trading_post_notification(
+      v_listing.seller_user_id, 'Trading Post listing declined',
+      case when trim(coalesce(p_review_note, '')) = '' then 'The shopkeeper declined this submission.' else trim(p_review_note) end,
+      'trading_post_listing', v_listing.id
+    );
+  end if;
+  return public.get_trading_post(p_session_token, v_vendor.id, null);
+end;
+$$;
+
+create or replace function public.close_trading_post_listing(
+  p_session_token text,
+  p_listing_id uuid,
+  p_action text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_listing public.trading_post_listings%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_action text := lower(trim(coalesce(p_action, '')));
+  v_offer record;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_listing from public.trading_post_listings where id = p_listing_id for update;
+  if v_listing.id is null then raise exception 'Listing not found.'; end if;
+  select * into v_vendor from public.shop_vendors where id = v_listing.vendor_id;
+  if v_listing.status not in ('pending_approval', 'active') then raise exception 'That listing is already closed.'; end if;
+  if v_action = 'withdraw' then
+    if v_listing.seller_user_id <> v_profile.id then raise exception 'Only the listing owner can withdraw it.'; end if;
+  elsif v_action = 'remove' then
+    if v_profile.role <> 'dm'::public.user_role and not public.profile_runs_shop_vendor(v_profile, v_vendor) then
+      raise exception 'Only the Trading Post shopkeeper can remove listings.';
+    end if;
+  else
+    raise exception 'Choose withdraw or remove.';
+  end if;
+
+  update public.trading_post_listings set
+    status = case when v_action = 'withdraw' then 'withdrawn' else 'removed' end,
+    closed_at = now()
+  where id = v_listing.id returning * into v_listing;
+
+  for v_offer in
+    with closed as (
+      update public.trading_post_offers set status = 'unavailable', resolved_at = now()
+      where listing_id = v_listing.id and status = 'pending'
+      returning id, offerer_user_id
+    ) select * from closed
+  loop
+    perform public.create_trading_post_notification(
+      v_offer.offerer_user_id, 'Trading Post offer unavailable',
+      'The listing was ' || case when v_action = 'withdraw' then 'withdrawn by its owner.' else 'removed by the shopkeeper.' end,
+      'trading_post_offer', v_offer.id
+    );
+  end loop;
+  if v_action = 'remove' then
+    perform public.create_trading_post_notification(
+      v_listing.seller_user_id, 'Trading Post listing removed',
+      'The shopkeeper removed your listing from the Trading Block.',
+      'trading_post_listing', v_listing.id
+    );
+  else
+    perform public.create_trading_post_notification(
+      v_listing.seller_user_id, 'Trading Post listing withdrawn',
+      'Your listing was withdrawn and every pending offer was closed.',
+      'trading_post_listing', v_listing.id
+    );
+  end if;
+  return public.get_trading_post(p_session_token, v_vendor.id, null);
+end;
+$$;
+
+create or replace function public.create_trading_post_offer(
+  p_session_token text,
+  p_listing_id uuid,
+  p_character_id uuid,
+  p_items jsonb default '[]'::jsonb,
+  p_currency jsonb default '[]'::jsonb,
+  p_message text default ''
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_listing public.trading_post_listings%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_character public.characters%rowtype;
+  v_item public.inventory_items%rowtype;
+  v_offer public.trading_post_offers%rowtype;
+  v_entry jsonb;
+  v_item_id uuid;
+  v_unit_id uuid;
+  v_quantity numeric;
+  v_amount integer;
+  v_seen_items uuid[] := array[]::uuid[];
+  v_seen_units uuid[] := array[]::uuid[];
+  v_item_count integer := 0;
+  v_currency_count integer := 0;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  select * into v_listing from public.trading_post_listings where id = p_listing_id for update;
+  if v_listing.id is null or v_listing.status <> 'active' then raise exception 'That listing is no longer available.'; end if;
+  select * into v_vendor from public.shop_vendors where id = v_listing.vendor_id;
+  v_character := public.assert_inventory_access(v_profile, p_character_id, false);
+  if v_character.owner_user_id is null then raise exception 'That character is not assigned to a player.'; end if;
+  perform public.assert_character_can_use_vendor(v_character, v_vendor.vendor_key);
+  if v_character.owner_user_id = v_listing.seller_user_id then raise exception 'You cannot make an offer on your own listing.'; end if;
+  if jsonb_typeof(coalesce(p_items, '[]'::jsonb)) <> 'array' or jsonb_typeof(coalesce(p_currency, '[]'::jsonb)) <> 'array' then
+    raise exception 'Trade offer contents must be lists.';
+  end if;
+  if exists (select 1 from public.trading_post_offers offer where offer.listing_id = v_listing.id and offer.offerer_character_id = v_character.id and offer.status = 'pending') then
+    raise exception 'This character already has a pending offer on that listing.';
+  end if;
+
+  insert into public.trading_post_offers (
+    listing_id, offerer_user_id, offerer_character_id, message
+  ) values (
+    v_listing.id, v_character.owner_user_id, v_character.id, left(trim(coalesce(p_message, '')), 1000)
+  ) returning * into v_offer;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) loop
+    v_item_id := nullif(coalesce(v_entry->>'itemId', v_entry->>'id'), '')::uuid;
+    if v_item_id is null then continue; end if;
+    if v_item_id = any(v_seen_items) then raise exception 'Each offered inventory stack may only be selected once.'; end if;
+    v_seen_items := array_append(v_seen_items, v_item_id);
+    select * into v_item from public.inventory_items where id = v_item_id for update;
+    if v_item.id is null or v_item.character_id is distinct from v_character.id
+      or v_item.property_id is not null
+      or (v_item.parent_item_id is not null and public.inventory_portable_property_root(v_item.id) is not null)
+    then raise exception 'An offered item is not in the selected character inventory.'; end if;
+    if v_item.loadout_slot is not null then raise exception 'Unequip offered items first.'; end if;
+    if public.normalize_item_type(v_item.item_type) = 'pet' then raise exception 'Animals cannot be offered through the Trading Post.'; end if;
+    v_quantity := public.assert_valid_item_quantity(v_item.item_name, v_item.item_type, coalesce(nullif(v_entry->>'quantity', '')::numeric, 0));
+    if v_item.is_storage then v_quantity := 1; end if;
+    if v_quantity > v_item.quantity then raise exception 'An offered item quantity exceeds what is currently owned.'; end if;
+    insert into public.trading_post_offer_items (offer_id, inventory_item_id, item_snapshot, quantity)
+    values (v_offer.id, v_item.id, public.trading_post_item_snapshot(v_item, v_quantity), v_quantity);
+    v_item_count := v_item_count + 1;
+  end loop;
+
+  for v_entry in select * from jsonb_array_elements(coalesce(p_currency, '[]'::jsonb)) loop
+    v_unit_id := nullif(coalesce(v_entry->>'unitId', v_entry->>'id'), '')::uuid;
+    v_amount := greatest(0, floor(coalesce(nullif(v_entry->>'amount', '')::numeric, 0))::integer);
+    if v_unit_id is null or v_amount = 0 then continue; end if;
+    if v_unit_id = any(v_seen_units) then raise exception 'Each currency denomination may only be entered once.'; end if;
+    v_seen_units := array_append(v_seen_units, v_unit_id);
+    if not exists (select 1 from public.currency_units unit where unit.id = v_unit_id and unit.currency_system_key = 'common') then
+      raise exception 'Velmora Trading Post offers use Global Currency only.';
+    end if;
+    if coalesce((select balance.amount from public.character_wallet_balances balance where balance.character_id = v_character.id and balance.currency_unit_id = v_unit_id), 0) < v_amount then
+      raise exception 'You cannot offer more currency than you currently own.';
+    end if;
+    insert into public.trading_post_offer_currency (offer_id, currency_unit_id, amount)
+    values (v_offer.id, v_unit_id, v_amount);
+    v_currency_count := v_currency_count + 1;
+  end loop;
+  if v_item_count = 0 and v_currency_count = 0 then raise exception 'Add at least one item or currency amount to this offer.'; end if;
+
+  perform public.create_trading_post_notification(
+    v_listing.seller_user_id, 'New Trading Post offer',
+    v_character.name || ' made an offer for ' || coalesce(nullif(v_listing.item_snapshot->>'displayName', ''), v_listing.item_snapshot->>'name', 'your listing') || '.',
+    'trading_post_offer', v_offer.id, v_character.location_name
+  );
+  return public.get_trading_post(p_session_token, v_vendor.id, v_character.id);
+end;
+$$;
+
+create or replace function public.resolve_trading_post_offer(
+  p_session_token text,
+  p_offer_id uuid,
+  p_action text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_offer public.trading_post_offers%rowtype;
+  v_listing public.trading_post_listings%rowtype;
+  v_vendor public.shop_vendors%rowtype;
+  v_listed_item public.inventory_items%rowtype;
+  v_offered_item public.inventory_items%rowtype;
+  v_action text := lower(trim(coalesce(p_action, '')));
+  v_currency jsonb;
+  v_offer_item record;
+  v_other record;
+begin
+  select * into v_profile from public.profile_from_campaign_session(p_session_token);
+  if v_profile.id is null then raise exception 'Invalid or expired session.'; end if;
+  -- Every offer resolution locks the parent listing first. This gives competing
+  -- accept/cancel requests one lock order and prevents cross-offer deadlocks.
+  select * into v_offer from public.trading_post_offers where id = p_offer_id;
+  if v_offer.id is null then raise exception 'Offer not found.'; end if;
+  select * into v_listing from public.trading_post_listings where id = v_offer.listing_id for update;
+  if v_listing.id is null then raise exception 'Listing not found.'; end if;
+  select * into v_offer from public.trading_post_offers where id = p_offer_id for update;
+  if v_offer.id is null then raise exception 'Offer not found.'; end if;
+  select * into v_vendor from public.shop_vendors where id = v_listing.vendor_id;
+  if v_offer.status <> 'pending' then raise exception 'That offer has already been resolved.'; end if;
+
+  if v_action = 'cancel' then
+    if v_offer.offerer_user_id <> v_profile.id then raise exception 'Only the offering player can cancel this offer.'; end if;
+    update public.trading_post_offers set status = 'cancelled', resolved_at = now() where id = v_offer.id returning * into v_offer;
+    perform public.create_trading_post_notification(
+      v_listing.seller_user_id, 'Trading Post offer cancelled',
+      'A bidder cancelled an offer on your listing.', 'trading_post_offer', v_offer.id
+    );
+    return public.get_trading_post(p_session_token, v_vendor.id, v_offer.offerer_character_id);
+  end if;
+
+  if v_listing.seller_user_id <> v_profile.id then raise exception 'Only the listing owner can accept or decline offers.'; end if;
+  if v_action = 'decline' then
+    update public.trading_post_offers set status = 'declined', resolved_at = now() where id = v_offer.id returning * into v_offer;
+    perform public.create_trading_post_notification(
+      v_offer.offerer_user_id, 'Trading Post offer declined',
+      'The listing owner declined your offer.', 'trading_post_offer', v_offer.id
+    );
+    return public.get_trading_post(p_session_token, v_vendor.id, v_listing.seller_character_id);
+  end if;
+  if v_action <> 'accept' then raise exception 'Choose accept, decline, or cancel.'; end if;
+  if v_listing.status <> 'active' then raise exception 'That listing is no longer active.'; end if;
+  if not exists (
+    select 1 from public.characters character
+    where character.id = v_listing.seller_character_id
+      and character.owner_user_id = v_listing.seller_user_id
+  ) then raise exception 'The listing owner no longer controls the character holding the listed item.'; end if;
+  if not exists (
+    select 1 from public.characters character
+    where character.id = v_offer.offerer_character_id
+      and character.owner_user_id = v_offer.offerer_user_id
+  ) then raise exception 'The bidder no longer controls the character that made this offer.'; end if;
+
+  perform 1 from public.inventory_items item
+  where item.id = v_listing.listed_item_id
+     or item.id in (select offered.inventory_item_id from public.trading_post_offer_items offered where offered.offer_id = v_offer.id)
+  order by item.id
+  for update;
+
+  select * into v_listed_item from public.inventory_items where id = v_listing.listed_item_id;
+  if v_listed_item.id is null or v_listed_item.character_id is distinct from v_listing.seller_character_id
+    or v_listed_item.quantity < v_listing.quantity or v_listed_item.loadout_slot is not null
+  then raise exception 'The listed item or required quantity is no longer available.'; end if;
+
+  for v_offer_item in
+    select item.inventory_item_id, item.quantity
+    from public.trading_post_offer_items item
+    where item.offer_id = v_offer.id
+    order by item.inventory_item_id
+  loop
+    select * into v_offered_item from public.inventory_items where id = v_offer_item.inventory_item_id;
+    if v_offered_item.id is null or v_offered_item.character_id is distinct from v_offer.offerer_character_id
+      or v_offered_item.quantity < v_offer_item.quantity or v_offered_item.loadout_slot is not null
+    then raise exception 'One or more offered items are no longer available in the promised quantity.'; end if;
+  end loop;
+
+  select coalesce(jsonb_agg(jsonb_build_object('unitId', currency.currency_unit_id, 'amount', currency.amount) order by currency.currency_unit_id), '[]'::jsonb)
+  into v_currency
+  from public.trading_post_offer_currency currency
+  where currency.offer_id = v_offer.id;
+  perform 1 from public.character_wallet_balances balance
+  where balance.character_id in (v_offer.offerer_character_id, v_listing.seller_character_id)
+    and balance.currency_unit_id in (select currency.currency_unit_id from public.trading_post_offer_currency currency where currency.offer_id = v_offer.id)
+  order by balance.character_id, balance.currency_unit_id
+  for update;
+  perform public.assert_trade_currency_available(v_offer.offerer_character_id, v_currency);
+
+  perform public.transfer_trade_inventory_item(
+    v_listed_item.id, v_listing.seller_character_id, v_offer.offerer_character_id, v_listing.quantity
+  );
+  for v_offer_item in
+    select item.inventory_item_id, item.quantity
+    from public.trading_post_offer_items item
+    where item.offer_id = v_offer.id
+    order by item.inventory_item_id
+  loop
+    perform public.transfer_trade_inventory_item(
+      v_offer_item.inventory_item_id, v_offer.offerer_character_id, v_listing.seller_character_id, v_offer_item.quantity
+    );
+  end loop;
+  perform public.transfer_trade_currency(v_offer.offerer_character_id, v_listing.seller_character_id, v_currency);
+
+  update public.trading_post_offers set status = 'accepted', resolved_at = now()
+  where id = v_offer.id returning * into v_offer;
+  update public.trading_post_listings set status = 'completed', completed_at = now(), closed_at = now()
+  where id = v_listing.id returning * into v_listing;
+
+  for v_other in
+    with closed as (
+      update public.trading_post_offers set status = 'unavailable', resolved_at = now()
+      where listing_id = v_listing.id and id <> v_offer.id and status = 'pending'
+      returning id, offerer_user_id
+    ) select * from closed
+  loop
+    perform public.create_trading_post_notification(
+      v_other.offerer_user_id, 'Trading Post listing completed',
+      'Another offer was accepted, so your pending offer is no longer available.',
+      'trading_post_offer', v_other.id
+    );
+  end loop;
+  perform public.create_trading_post_notification(
+    v_listing.seller_user_id, 'Trading Post trade completed',
+    'You accepted an offer and the exchange completed successfully.',
+    'trading_post_offer', v_offer.id
+  );
+  perform public.create_trading_post_notification(
+    v_offer.offerer_user_id, 'Trading Post offer accepted',
+    'Your offer was accepted and the exchange completed successfully.',
+    'trading_post_offer', v_offer.id
+  );
+  return public.get_trading_post(p_session_token, v_vendor.id, v_listing.seller_character_id);
+end;
+$$;
+
+grant execute on function public.get_trading_post(text, uuid, uuid) to anon, authenticated;
+grant execute on function public.submit_trading_post_listing(text, uuid, uuid, uuid, numeric) to anon, authenticated;
+grant execute on function public.review_trading_post_listing(text, uuid, text, text) to anon, authenticated;
+grant execute on function public.close_trading_post_listing(text, uuid, text) to anon, authenticated;
+grant execute on function public.create_trading_post_offer(text, uuid, uuid, jsonb, jsonb, text) to anon, authenticated;
+grant execute on function public.resolve_trading_post_offer(text, uuid, text) to anon, authenticated;
+revoke execute on function public.trading_post_item_snapshot(public.inventory_items, numeric) from public, anon, authenticated;
+revoke execute on function public.trading_post_listing_record_to_json(public.trading_post_listings) from public, anon, authenticated;
+revoke execute on function public.trading_post_offer_record_to_json(public.trading_post_offers) from public, anon, authenticated;
+revoke execute on function public.create_trading_post_notification(uuid, text, text, text, uuid, text) from public, anon, authenticated;
 
 commit;

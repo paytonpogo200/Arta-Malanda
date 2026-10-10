@@ -339,7 +339,7 @@ export type ShopVendor = {
   npcName: string;
   facility: string;
   category: string;
-  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable';
+  blueprintType: 'market' | 'blacksmith' | 'armory' | 'brewery' | 'spell_registrar' | 'library' | 'stable' | 'trading_post';
   payoutCharacterId: string | null;
   boardingFeeCoin: number;
   custom: boolean;
